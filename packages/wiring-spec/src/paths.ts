@@ -18,6 +18,9 @@ export const PATHS = {
   categories: () => '/config/categories',
   llmSettings: () => '/config/llm',
   audit: (caseId: string) => `/audit?case_id=${caseId}`,
+  evidence: (reportId: string) => `/reports/${reportId}/evidence`,
+  erase: (externalId: string) => `/subjects/${externalId}/erase`,
+  erasure: (id: string) => `/erasures/${id}`,
 } as const
 
 /** Facts on the event bus, read as a passive consumer of the contracts. */
@@ -35,10 +38,13 @@ export const EVENTS = {
   actionConfirmed: 'action.confirmed.v1',
   actionFailed: 'action.failed.v1',
   actionsRetried: 'case.actions_retried.v1',
+  erasureRequested: 'subject.erasure_requested.v1',
+  erased: 'subject.erased.v1',
 } as const
 
 /** Webhook types: the tenant's public contract, which phase 1 does not change. */
 export const WEBHOOKS = {
   reportTriaged: 'report.triaged',
   actionRequested: 'action.requested',
+  subjectErased: 'subject.erased',
 } as const

@@ -1,285 +1,120 @@
-import { manualClock, type ManualClock, type TenantRef } from '@flagwise/kernel'
+// Erasure on an in-memory bus: privacy waits for an answer from every consumer group the request
+// reached, as the bus reports them, and completes once all have answered.
+import { currentType, eventContract } from '@flagwise/contracts'
+import { manualClock, type TenantRef } from '@flagwise/kernel'
+import { createMemoryBus, memoryUnitOfWork, type BusEvent, type MemoryBus } from '@flagwise/platform'
 import { beforeEach, describe, expect, it } from 'vitest'
-import {
-  ERASURE_DEADLINE_MS,
-  ERASURE_MODULES,
-  ErasureError,
-  VersionConflictError,
-  checkOverdue,
-  recordModuleErased,
-  retryPending,
-  startErasure,
-  type ErasureDeps,
-  type ErasureEvent,
-  type ErasureRecord,
-  type ErasureRepository,
-} from '../src/app/erasure.ts'
+import { ERASURE_DEADLINE_MS, erasureStatus, privacyService, subscribePrivacy, type ErasureRecord, type ErasureStore, type PrivacyService } from '../src/index.ts'
 
-const tenant: TenantRef = { orgId: 'org_1', appId: 'app_a', livemode: true }
-const T0 = new Date('2026-11-03T09:00:00.000Z')
-const H = 3_600_000
-const same = (a: TenantRef, b: TenantRef) => a.orgId === b.orgId && a.appId === b.appId && a.livemode === b.livemode
+const tenant: TenantRef = { orgId: 'org_jane', appId: 'app_a', livemode: true }
+const T0 = new Date('2026-11-19T09:00:00.000Z')
 
-class Repo implements ErasureRepository {
+class Erasures implements ErasureStore {
   readonly rows = new Map<string, ErasureRecord>()
-  updates = 0
-  inserts = 0
-  failUpdatesWith: Error[] = []
-  beforeUpdate: (() => void) | undefined
-  async findById(t: TenantRef, id: string) {
-    const r = this.rows.get(id)
-    return r && same(r.tenant, t) ? Object.freeze(structuredClone(r)) : null
+  async find(_t: TenantRef, id: string) {
+    return this.rows.get(id) ?? null
   }
-  async findActive(t: TenantRef, subject: string) {
-    const r = [...this.rows.values()].find((x) => same(x.tenant, t) && x.subjectExternalId === subject && x.status === 'in_progress')
-    return r ? Object.freeze(structuredClone(r)) : null
+  async findActive(_t: TenantRef, subject: string) {
+    return [...this.rows.values()].find((r) => r.subjectExternalId === subject && !r.completedAt) ?? null
   }
   async insert(r: ErasureRecord) {
-    this.inserts++
-    this.rows.set(r.id, structuredClone(r))
+    if (await this.findActive(tenant, r.subjectExternalId)) return false
+    this.rows.set(r.id, r)
+    return true
   }
-  async update(r: ErasureRecord, expected: number) {
-    this.updates++
-    this.beforeUpdate?.()
-    const forced = this.failUpdatesWith.shift()
-    if (forced) throw forced
-    if (this.rows.get(r.id)?.version !== expected) throw new VersionConflictError(r.id)
-    this.rows.set(r.id, structuredClone(r))
+  async save(r: ErasureRecord) {
+    this.rows.set(r.id, r)
   }
 }
 
-let repo: Repo
-let events: ErasureEvent[]
-let clock: ManualClock
-let deps: ErasureDeps
-let ids: number
+let bus: MemoryBus
+let erasures: Erasures
+let privacy: PrivacyService
+let n: number
+
+/** A service's erasure group that answers with `status`, or throws while `down` says so. */
+const holder = (group: string, status: 'erased' | 'nothing_held' | 'retained', down = () => false) =>
+  bus.subscribe(
+    group,
+    [currentType('subject.erasure_requested')],
+    async (e: BusEvent) => {
+      if (down()) throw new Error(`${group} is down`)
+      const { erasureId } = e.data as { erasureId: string }
+      const data = { erasureId, group, status, heldItems: status === 'retained' ? 2 : 0, reason: status === 'retained' ? 'legal_hold' : null, occurredAt: T0.toISOString() }
+      await bus.publish({ id: `subject.erased:${erasureId}:${group}`, type: currentType('subject.erased'), key: erasureId, data, tenant })
+    },
+    { maxAttempts: 2 },
+  )
 
 beforeEach(() => {
-  repo = new Repo()
-  events = []
-  clock = manualClock(T0)
-  ids = 0
-  deps = { erasures: repo, events: { publish: async (e) => void events.push(e) }, clock, newErasureId: () => `ers_${++ids}` }
+  bus = createMemoryBus({ contract: eventContract })
+  erasures = new Erasures()
+  n = 0
+  const deps = { uow: memoryUnitOfWork(bus, { erasures }), clock: manualClock(T0), newErasureId: () => `ers_${++n}` }
+  subscribePrivacy(bus, deps)
+  privacy = privacyService(deps)
 })
 
-const start = (subjectExternalId = 'u_5531') => startErasure(deps, { tenant, subjectExternalId })
-const ack = (module: string, heldItems = 0, erasureId = 'ers_1') => recordModuleErased(deps, { tenant, erasureId, module, heldItems })
+const completed = () => bus.log().filter((l) => l.event.type === 'erasure.completed.v1').map((l) => l.event)
 
-async function rejectsWith(p: Promise<unknown>, code: string) {
-  const err = await p.then(
-    () => expect.unreachable('should have thrown'),
-    (e: unknown) => e,
-  )
-  expect(err).toBeInstanceOf(ErasureError)
-  expect((err as ErasureError).code).toBe(code)
-}
-
-describe('startErasure', () => {
-  it('creates an erasure and asks every module', async () => {
-    const { erasure, created } = await start()
+describe('erasure', () => {
+  it('asks every group that takes the request and completes once each has answered', async () => {
+    holder('intake.erasure', 'erased')
+    holder('policy.erasure', 'nothing_held')
+    holder('cases.erasure', 'retained')
+    const { erasure, created } = await privacy.erase(tenant, 'u_john_doe')
     expect(created).toBe(true)
-    expect(erasure).toEqual({
-      id: 'ers_1',
-      tenant,
-      subjectExternalId: 'u_5531',
-      requestedAt: T0,
-      deadlineAt: new Date(T0.getTime() + 24 * H),
-      status: 'in_progress',
-      acks: {},
-      overdueNotified: false,
-      completedAt: null,
-      version: 1,
+    expect(erasure).toMatchObject({ id: 'ers_1', deadlineAt: new Date(T0.getTime() + ERASURE_DEADLINE_MS), expected: null })
+    await bus.drain()
+
+    const done = erasures.rows.get('ers_1')!
+    expect(done.expected).toEqual(['cases.erasure', 'intake.erasure', 'policy.erasure'])
+    expect(done.groups).toMatchObject({
+      'intake.erasure': { status: 'erased' },
+      'policy.erasure': { status: 'nothing_held' },
+      'cases.erasure': { status: 'retained', heldItems: 2, reason: 'legal_hold' },
     })
-    expect(repo.rows.get('ers_1')).toEqual(erasure)
-    expect(events).toEqual([
-      { type: 'subject.erasure_requested', tenant, erasureId: 'ers_1', subjectExternalId: 'u_5531', modules: [...ERASURE_MODULES], occurredAt: T0 },
-    ])
+    expect(done).toMatchObject({ completedAt: T0, heldItems: 2 })
+    expect(erasureStatus(done, T0)).toBe('completed')
+    expect(completed()).toEqual([expect.objectContaining({ id: 'erasure.completed:ers_1', key: 'ers_1', data: { erasureId: 'ers_1', subjectExternalId: 'u_john_doe', heldItems: 2, occurredAt: T0.toISOString() } })])
   })
 
-  it('returns the running erasure instead of starting another', async () => {
-    await start()
-    clock.advance(H)
-    const again = await start()
-    expect(again.created).toBe(false)
-    expect(again.erasure.id).toBe('ers_1')
-    expect(repo.inserts).toBe(1)
-    expect(events).toHaveLength(1)
+  it('answers with the erasure in progress instead of starting another, and starts anew once it completed', async () => {
+    holder('intake.erasure', 'erased', () => true)
+    await privacy.erase(tenant, 'u_john_doe')
+    expect(await privacy.erase(tenant, 'u_john_doe')).toMatchObject({ erasure: { id: 'ers_1' }, created: false })
+    expect((await privacy.erase(tenant, 'u_jane_doe')).erasure.id).toBe('ers_2')
   })
 
-  it('starts a new one once the previous erasure completed', async () => {
-    await start()
-    for (const m of ERASURE_MODULES) await ack(m)
-    expect((await start()).erasure.id).toBe('ers_2')
+  it('keeps a group that is down as failed and waits for it, completing once it answers after all', async () => {
+    let down = true
+    holder('intake.erasure', 'erased')
+    holder('triage.erasure', 'erased', () => down)
+    await privacy.erase(tenant, 'u_john_doe')
+    await bus.drain()
+    expect(erasures.rows.get('ers_1')).toMatchObject({ completedAt: null, groups: { 'intake.erasure': { status: 'erased' }, 'triage.erasure': { status: 'failed', error: 'triage.erasure is down' } } })
+    expect(erasureStatus(erasures.rows.get('ers_1')!, new Date(T0.getTime() + ERASURE_DEADLINE_MS))).toBe('overdue')
+    expect(completed()).toEqual([])
+
+    down = false
+    expect(bus.retryDeadLetter('triage.erasure', 'subject.erasure_requested:ers_1')).toBe(true)
+    await bus.drain()
+    expect(erasures.rows.get('ers_1')).toMatchObject({ groups: { 'triage.erasure': { status: 'erased', error: null } } })
+    expect(completed()).toHaveLength(1)
   })
 
-  it('keeps subjects apart', async () => {
-    await start('u_1')
-    expect((await start('u_2')).created).toBe(true)
-  })
+  it('completes at once when no group takes the request, and keeps only the first answer of a group', async () => {
+    await privacy.erase(tenant, 'u_john_doe')
+    await bus.drain()
+    expect(completed()).toHaveLength(1)
 
-  it('has a 24 hour deadline', () => {
-    expect(ERASURE_DEADLINE_MS).toBe(24 * H)
-  })
-})
-
-describe('recordModuleErased', () => {
-  it('records acks and completes when the last module reports', async () => {
-    await start()
-    const held: Record<string, number> = { cases: 2, audit: 1 }
-    for (const [i, m] of ERASURE_MODULES.entries()) {
-      clock.advance(H)
-      const r = await ack(m, held[m] ?? 0)
-      expect(r.version).toBe(i + 2)
-      expect(r.status).toBe(i === ERASURE_MODULES.length - 1 ? 'completed' : 'in_progress')
-    }
-    const done = repo.rows.get('ers_1')!
-    expect(done.completedAt).toEqual(new Date(T0.getTime() + 7 * H))
-    expect(done.acks.cases).toEqual({ at: new Date(T0.getTime() + 2 * H), heldItems: 2 })
-    expect(events.slice(1)).toEqual([
-      { type: 'subject.erased', tenant, erasureId: 'ers_1', subjectExternalId: 'u_5531', heldItems: 3, occurredAt: new Date(T0.getTime() + 7 * H) },
-    ])
-  })
-
-  it('accepts acks in any order', async () => {
-    await start()
-    for (const m of [...ERASURE_MODULES].reverse()) await ack(m)
-    expect(repo.rows.get('ers_1')?.status).toBe('completed')
-    expect(events.filter((e) => e.type === 'subject.erased')).toHaveLength(1)
-  })
-
-  it('ignores a module reporting twice', async () => {
-    await start()
-    await ack('cases', 2)
-    clock.advance(H)
-    const r = await ack('cases', 5)
-    expect(r.version).toBe(2)
-    expect(r.acks.cases).toEqual({ at: T0, heldItems: 2 })
-    expect(repo.updates).toBe(1)
-  })
-
-  it('ignores acks after completion', async () => {
-    await start()
-    for (const m of ERASURE_MODULES) await ack(m)
-    const before = repo.updates
-    await ack('cases')
-    expect(repo.updates).toBe(before)
-    expect(events.filter((e) => e.type === 'subject.erased')).toHaveLength(1)
-  })
-
-  it('checks erasure, module and held items, in that order', async () => {
-    await rejectsWith(ack('cases'), 'not_found')
-    await start()
-    await rejectsWith(ack('billing'), 'unknown_module')
-    await rejectsWith(ack('billing', -1), 'unknown_module')
-    await rejectsWith(ack('cases', -1), 'invalid_held_items')
-    await rejectsWith(ack('cases', 1.5), 'invalid_held_items')
-    await rejectsWith(recordModuleErased(deps, { tenant: { ...tenant, appId: 'app_b' }, erasureId: 'ers_1', module: 'cases', heldItems: 0 }), 'not_found')
-  })
-
-  it('retries when another module wrote at the same time', async () => {
-    await start()
-    let first = true
-    repo.beforeUpdate = () => {
-      if (first) {
-        first = false
-        const r = repo.rows.get('ers_1')!
-        repo.rows.set('ers_1', { ...r, acks: { ...r.acks, scoring: { at: T0, heldItems: 4 } }, version: r.version + 1 })
-      }
-    }
-    const r = await ack('cases', 1)
-    expect(Object.keys(r.acks).sort()).toEqual(['cases', 'scoring'])
-    expect(r.version).toBe(3)
-  })
-
-  it('completes on the retry when the other writer was the second-to-last module', async () => {
-    await start()
-    for (const m of ERASURE_MODULES.slice(0, 5)) await ack(m)
-    let first = true
-    repo.beforeUpdate = () => {
-      if (first) {
-        first = false
-        const r = repo.rows.get('ers_1')!
-        repo.rows.set('ers_1', { ...r, acks: { ...r.acks, audit: { at: T0, heldItems: 1 } }, version: r.version + 1 })
-      }
-    }
-    const r = await ack('metrics')
-    expect(r.status).toBe('completed')
-    expect(events.filter((e) => e.type === 'subject.erased')).toEqual([expect.objectContaining({ heldItems: 1 })])
-  })
-
-  it('gives up after three conflicts', async () => {
-    await start()
-    repo.failUpdatesWith = [1, 2, 3].map(() => new VersionConflictError('ers_1'))
-    await expect(ack('cases')).rejects.toBeInstanceOf(VersionConflictError)
-    expect(repo.updates).toBe(3)
-  })
-})
-
-describe('retryPending', () => {
-  it('asks only the modules that have not reported', async () => {
-    await start()
-    await ack('cases')
-    await ack('audit')
-    clock.advance(H)
-    expect(await retryPending(deps, { tenant, erasureId: 'ers_1' })).toEqual(['intake', 'scoring', 'appeals', 'delivery', 'metrics'])
-    expect(events.at(-1)).toEqual({
-      type: 'subject.erasure_requested',
-      tenant,
-      erasureId: 'ers_1',
-      subjectExternalId: 'u_5531',
-      modules: ['intake', 'scoring', 'appeals', 'delivery', 'metrics'],
-      occurredAt: new Date(T0.getTime() + H),
-    })
-    expect(repo.updates).toBe(2)
-  })
-
-  it('does nothing for a completed erasure and refuses an unknown one', async () => {
-    await start()
-    for (const m of ERASURE_MODULES) await ack(m)
-    const count = events.length
-    expect(await retryPending(deps, { tenant, erasureId: 'ers_1' })).toEqual([])
-    expect(events).toHaveLength(count)
-    await rejectsWith(retryPending(deps, { tenant, erasureId: 'ers_x' }), 'not_found')
-  })
-})
-
-describe('checkOverdue', () => {
-  const check = () => checkOverdue(deps, { tenant, erasureId: 'ers_1' })
-
-  it('alerts once when the deadline passes with modules missing', async () => {
-    await start()
-    await ack('cases')
-    clock.set(new Date(T0.getTime() + 24 * H - 1))
-    expect(await check()).toBe(false)
-    clock.set(new Date(T0.getTime() + 24 * H))
-    expect(await check()).toBe(true)
-    expect(events.at(-1)).toEqual({
-      type: 'erasure.overdue',
-      tenant,
-      erasureId: 'ers_1',
-      subjectExternalId: 'u_5531',
-      pendingModules: ['intake', 'scoring', 'appeals', 'delivery', 'audit', 'metrics'],
-      occurredAt: new Date(T0.getTime() + 24 * H),
-    })
-    expect(repo.rows.get('ers_1')).toMatchObject({ overdueNotified: true, version: 3 })
-    clock.advance(H)
-    expect(await check()).toBe(false)
-    expect(events.filter((e) => e.type === 'erasure.overdue')).toHaveLength(1)
-  })
-
-  it('does not alert for a completed erasure', async () => {
-    await start()
-    for (const m of ERASURE_MODULES) await ack(m)
-    clock.advance(48 * H)
-    expect(await check()).toBe(false)
-  })
-
-  it('refuses an unknown erasure and does not retry conflicts', async () => {
-    await rejectsWith(check(), 'not_found')
-    await start()
-    clock.advance(25 * H)
-    repo.failUpdatesWith = [new VersionConflictError('ers_1')]
-    await expect(check()).rejects.toBeInstanceOf(VersionConflictError)
-    expect(events.filter((e) => e.type === 'erasure.overdue')).toEqual([])
+    holder('intake.erasure', 'erased')
+    holder('cases.erasure', 'erased', () => true)
+    await privacy.erase(tenant, 'u_jane_doe')
+    await bus.drain()
+    const answer = { erasureId: 'ers_2', group: 'intake.erasure', status: 'retained', heldItems: 5, reason: 'legal_hold', occurredAt: T0.toISOString() }
+    await bus.publish({ id: 'subject.erased:again', type: currentType('subject.erased'), key: 'ers_2', data: answer, tenant })
+    await bus.drain()
+    expect(erasures.rows.get('ers_2')!.groups['intake.erasure']).toMatchObject({ status: 'erased', heldItems: 0 })
   })
 })

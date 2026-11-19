@@ -251,4 +251,21 @@ describe.skipIf(!testDatabaseUrl)('webhooks on Postgres', () => {
     await send()
     expect(verify(secret!, posted[0]!.headers, posted[0]!.body, { clock }).ok).toBe(true)
   })
+
+  it("replaces an erased account's id in the webhook bodies that name it, and only there", async () => {
+    const body = (subject: string) => JSON.stringify({ id: 'evt_x', type: 'action.requested', data: { action_key: 'ban', subject_external_id: subject } })
+    await withTenant(db, scopeOfRef(tenant), async (tx) => {
+      const store = pgWebhookStore(tx)
+      await store.insertEvent(tenant, { id: 'evt_john', sourceId: 'action.requested:acr_1', type: 'action.requested', body: body('u_john_doe'), createdAt: clock.now() })
+      await store.insertEvent(tenant, { id: 'evt_jim', sourceId: 'action.requested:acr_2', type: 'action.requested', body: body('u_jim_doe'), createdAt: clock.now() })
+    })
+    expect(await withTenant(db, scopeOfRef(tenant), (tx) => pgWebhookStore(tx).eraseAccount(tenant, 'u_john_doe', 'erased_ers_1'))).toBe(1)
+    const bodies = await withTenant(db, scopeOfRef(tenant), (tx) =>
+      tx.execute<{ id: string; body: string }>(sql`SELECT id, body FROM delivery.webhook_events WHERE id IN ('evt_john', 'evt_jim') ORDER BY id`),
+    )
+    expect(bodies.rows.map((r) => [r.id, JSON.parse(r.body).data.subject_external_id])).toEqual([
+      ['evt_jim', 'u_jim_doe'],
+      ['evt_john', 'erased_ers_1'],
+    ])
+  })
 })

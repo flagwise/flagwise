@@ -3,3 +3,9 @@
 import { defineModule } from '@flagwise/kernel'
 
 export const privacyModule = defineModule({ name: 'privacy' })
+
+export * from './app/erasure.ts'
+export { privacyService, subscribePrivacy, type PrivacyService, type PrivacyServiceDeps } from './app/handlers.ts'
+export { privacyRoutes, type PrivacyRoutesDeps } from './api/routes.ts'
+export { pgErasureStore, pgPrivacyDeps, privacyMigrations } from './infra/pg-erasure-store.ts'
+export { privacyTables } from './infra/schema.ts'

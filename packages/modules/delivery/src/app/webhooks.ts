@@ -74,6 +74,8 @@ export interface WebhookStore {
   insertEvent(tenant: TenantRef, event: StoredEvent): Promise<StoredEvent>
   /** A pending delivery due at `dueAt`; nothing when the event already has one for the endpoint. */
   insertDelivery(tenant: TenantRef, delivery: { readonly eventId: string; readonly endpointId: string; readonly createdAt: Date; readonly dueAt: Date }): Promise<void>
+  /** Replaces the account's id with `erasedId` in the webhook bodies that name it (`data.subject_external_id`); how many it changed. */
+  eraseAccount(tenant: TenantRef, externalId: string, erasedId: string): Promise<number>
 }
 
 export interface StoredEvent {

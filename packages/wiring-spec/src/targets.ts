@@ -27,6 +27,7 @@ export const ENFORCED: readonly string[] = [
   'policy-copies', // item 4
   'composition-only', // items 5+6
   'own-tables-only', // items 5+6
+  'erasure-acks', // item 9
 ]
 
 export const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
@@ -176,7 +177,8 @@ async function eventCatalog(): Promise<CheckResult> {
   const seenTypes = Object.keys(seen.events).sort()
   if (!catalog) return result(false, `no EVENT_CATALOG in @flagwise/contracts; ${seenTypes.length} event types seen`)
 
-  const owners = services()
+  // The bus's own facts are the platform's; an answer every service gives (subject.erased) is any's.
+  const owners = [...services(), 'platform', 'any']
   const problems: string[] = []
   for (const [type, e] of Object.entries(catalog)) {
     const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(e.version ?? '')
@@ -206,7 +208,9 @@ async function eventCatalog(): Promise<CheckResult> {
 /** 6. Every service that stores data acks erasure. */
 function erasureAcks(): CheckResult {
   const holders = services().filter((n) => existsSync(join(MODULES_DIR, n, 'src/infra/schema.ts')))
-  const missing = holders.filter((n) => !sourceFiles(join(MODULES_DIR, n, 'src')).some((f) => read(f).includes("'subject.erasure_requested'") && read(f).includes("'subject.erased'")))
+  // It subscribes to the request and answers: with subject.erased itself or contracts' erasureAnswer.
+  const answers = (text: string) => text.includes("'subject.erasure_requested'") && (text.includes("'subject.erased'") || text.includes('erasureAnswer('))
+  const missing = holders.filter((n) => !sourceFiles(join(MODULES_DIR, n, 'src')).some((f) => answers(read(f))))
   return {
     id: 'erasure-acks',
     title: 'Every service that stores data handles subject.erasure_requested and acks subject.erased',

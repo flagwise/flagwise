@@ -112,6 +112,9 @@ export interface ReportScreening {
   /** The P0 signals found, in P0_SIGNALS order, each once. */
   readonly p0Signals: readonly string[]
   readonly injectionSuspected: boolean
+  /** The reported account and the reporter, for finding an account's reports when it is erased. */
+  readonly reportedExternalId?: string | null
+  readonly reporterExternalId?: string | null
 }
 
 /** Classification access inside one tenant transaction. */
@@ -129,6 +132,12 @@ export interface ClassificationStore {
   /** Keeps a report's screening; one already kept for the report stays as it is. */
   keepScreening(screening: ReportScreening): Promise<void>
   findScreening(tenant: TenantRef, reportId: string): Promise<ReportScreening | null>
+  /**
+   * Erases an account: replaces its id with `erasedId` in the screenings of its reports (as
+   * reported or reporter) and drops the LLM summary of the classifications made from those
+   * reports. Returns how many reports it had.
+   */
+  eraseAccount(tenant: TenantRef, externalId: string, erasedId: string): Promise<number>
 }
 
 export interface ClassifyDeps {

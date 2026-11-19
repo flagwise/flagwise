@@ -76,6 +76,15 @@ export function pgWebhookStore(tx: TenantTx): WebhookStore & SendStore {
       return true
     },
 
+    async eraseAccount(tenant, externalId, erasedId) {
+      const changed = await tx
+        .update(events)
+        .set({ body: sql`jsonb_set(${events.body}::jsonb, '{data,subject_external_id}', to_jsonb(${erasedId}::text))::text` })
+        .where(and(tenantOf(events, tenant), sql`${events.body}::jsonb #>> '{data,subject_external_id}' = ${externalId}`))
+        .returning({ id: events.id })
+      return changed.length
+    },
+
     async insertEvent(tenant, e) {
       await tx
         .insert(events)

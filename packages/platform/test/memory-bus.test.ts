@@ -297,3 +297,20 @@ describe('with a contract', () => {
     expect(seen.map((e) => e.schemaVersion)).toEqual(['1.2.0'])
   })
 })
+
+describe('tracked events', () => {
+  it('follow a tracked event with the groups it reached, and a dead letter of it with its group', async () => {
+    const bus = createMemoryBus()
+    bus.subscribe('b', ['x'], async () => {})
+    bus.subscribe('a', ['x'], async () => {
+      throw new Error('down')
+    }, { maxAttempts: 1 })
+    await bus.publish([{ id: 'e1', type: 'x', key: 'ers_1', data: null, track: true }, { id: 'e2', type: 'x', key: 'k', data: null }])
+    await bus.drain()
+    const facts = bus.log().filter((l) => l.event.type.startsWith('bus.')).map((l) => ({ id: l.event.id, key: l.event.key, data: l.event.data }))
+    expect(facts).toEqual([
+      { id: 'bus.event_fanned_out:e1', key: 'ers_1', data: { eventId: 'e1', type: 'x', groups: ['a', 'b'] } },
+      { id: 'bus.delivery_dead_lettered:e1:a:1', key: 'ers_1', data: { eventId: 'e1', type: 'x', group: 'a', attempts: 1, error: 'down' } },
+    ])
+  })
+})

@@ -15,7 +15,7 @@ export interface EventSpec<N extends string = string, M extends number = number,
   readonly major: M
   /** Semver of the schema; its major is the type's. */
   readonly version: string
-  /** The one service that publishes it. */
+  /** The one service that publishes it; `platform` for the bus's own facts, `any` for an answer every service may give. */
   readonly owner: string
   readonly meaning: string
   /** The data, as consumers receive it (JSON). */
@@ -343,6 +343,56 @@ const SPECS = [
     owner: 'policy',
     meaning: "An app's policy changed in a mode: the whole policy as of its new version, which counts up from 1 per app and mode.",
     schema: z.strictObject({ appId: id, version: z.int().min(1), policy: policySchema, occurredAt: time }),
+  }),
+  spec({
+    name: 'subject.erasure_requested',
+    major: 1,
+    version: '1.0.0',
+    owner: 'privacy',
+    meaning: "A tenant asked to erase an account's personal data. Published tracked: every group it reaches answers with subject.erased.",
+    schema: z.strictObject({ erasureId: id, subjectExternalId: id, occurredAt: time }),
+  }),
+  spec({
+    name: 'subject.erased',
+    major: 1,
+    version: '1.0.0',
+    owner: 'any',
+    meaning: "One consumer group's answer to subject.erasure_requested: it erased the account's data, held none, or kept some under a legal hold.",
+    schema: z.strictObject({
+      erasureId: id,
+      /** The consumer group that answers, as the bus named it in bus.event_fanned_out. */
+      group: id,
+      status: z.enum(['erased', 'nothing_held', 'retained']),
+      /** How many items it kept under a legal hold (status retained). */
+      heldItems: z.int().min(0),
+      /** Why it kept them (status retained), else null. */
+      reason: z.string().nullable(),
+      occurredAt: time,
+    }),
+  }),
+  spec({
+    name: 'erasure.completed',
+    major: 1,
+    version: '1.0.0',
+    owner: 'privacy',
+    meaning: 'Every consumer group that got an erasure request answered it; held items are what legal holds kept.',
+    schema: z.strictObject({ erasureId: id, subjectExternalId: id, heldItems: z.int().min(0), occurredAt: time }),
+  }),
+  spec({
+    name: 'bus.event_fanned_out',
+    major: 1,
+    version: '1.0.0',
+    owner: 'platform',
+    meaning: 'The bus queued a tracked event for these consumer groups (none when no group takes its type).',
+    schema: z.strictObject({ eventId: id, type: id, groups: ids }),
+  }),
+  spec({
+    name: 'bus.delivery_dead_lettered',
+    major: 1,
+    version: '1.0.0',
+    owner: 'platform',
+    meaning: "A consumer group's delivery of a tracked event ran out of attempts and moved to the dead letters.",
+    schema: z.strictObject({ eventId: id, type: id, group: id, attempts: z.int().min(1), error: z.string() }),
   }),
 ] as const
 

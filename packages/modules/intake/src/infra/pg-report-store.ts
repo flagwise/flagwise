@@ -4,7 +4,7 @@
 
 import type { TenantRef } from '@flagwise/kernel'
 import { loadMigrations, scopeOfRef, withTenant, type Database, type EventBus, type MigrationSet, type TenantTx } from '@flagwise/platform'
-import { and, eq, gte, isNull, lt } from 'drizzle-orm'
+import { and, eq, gte, isNull, lt, or, sql } from 'drizzle-orm'
 import type { IntakeDeps, Report, ReportStore } from '../app/reports.ts'
 import { reportsTable as t } from './schema.ts'
 
@@ -25,6 +25,7 @@ export function pgReportStore(tx: TenantTx): ReportStore {
     receivedAt: r.receivedAt,
     caseId: r.caseId,
     joinedExistingCase: r.joinedExistingCase,
+    ...(r.erasedAt && { erasedAt: r.erasedAt }),
   })
 
   return {
@@ -66,6 +67,27 @@ export function pgReportStore(tx: TenantTx): ReportStore {
         .onConflictDoNothing({ target: [t.orgId, t.appId, t.livemode, t.idempotencyKey] })
         .returning({ id: t.id })
       return inserted.length === 1
+    },
+
+    async reportsOf(tenant, externalId) {
+      const rows = await tx
+        .select()
+        .from(t)
+        .where(and(tenantOf(tenant), or(eq(t.reporterExternalId, externalId), eq(t.reportedExternalId, externalId))))
+      return rows.map(toReport)
+    },
+
+    async eraseAccount(tenant, externalId, erasedId, at) {
+      const changed = await tx
+        .update(t)
+        .set({
+          reporterExternalId: sql`CASE WHEN ${t.reporterExternalId} = ${externalId} THEN ${erasedId} ELSE ${t.reporterExternalId} END`,
+          reportedExternalId: sql`CASE WHEN ${t.reportedExternalId} = ${externalId} THEN ${erasedId} ELSE ${t.reportedExternalId} END`,
+          erasedAt: sql`COALESCE(${t.erasedAt}, ${at.toISOString()}::timestamptz)`,
+        })
+        .where(and(tenantOf(tenant), or(eq(t.reporterExternalId, externalId), eq(t.reportedExternalId, externalId))))
+        .returning({ id: t.id })
+      return changed.length
     },
 
     async setCase(tenant, reportId, caseId, joinedExistingCase) {

@@ -23,6 +23,7 @@ export const triageCasesTable = schema.table('cases', {
   everClaimed: boolean('ever_claimed').notNull().default(false),
   corrected: boolean('corrected').notNull().default(false),
   decided: boolean('decided').notNull().default(false),
+  subjectExternalId: text('subject_external_id'),
 })
 
 export const triageTables = [policyCopiesTable, triageCasesTable] as const

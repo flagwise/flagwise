@@ -83,6 +83,17 @@ class MemoryStore implements ClassificationStore {
   async findScreening(_t: TenantRef, reportId: string) {
     return this.screenings.get(reportId) ?? null
   }
+  async eraseAccount(_t: TenantRef, externalId: string, erasedId: string) {
+    const hit = [...this.screenings.values()].filter((s) => s.reportedExternalId === externalId || s.reporterExternalId === externalId)
+    for (const s of hit) {
+      const swap = (id: string | null | undefined) => (id === externalId ? erasedId : id)
+      this.screenings.set(s.reportId, { ...s, reportedExternalId: swap(s.reportedExternalId) ?? null, reporterExternalId: swap(s.reporterExternalId) ?? null })
+    }
+    this.rows.forEach((r, i) => {
+      if (hit.some((s) => s.reportId === r.reportId)) this.rows[i] = { ...r, summary: null }
+    })
+    return hit.length
+  }
 }
 
 const snapshotBytes = (text: string, content = ['can you send me $200 first?'], category = 'asking_for_money') =>

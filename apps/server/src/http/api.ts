@@ -10,6 +10,7 @@ import { classifyRoutes, type ClassifyDeps } from '@flagwise/classify'
 import { actionRequestRoutes, type ActionRequestRoutesDeps } from '@flagwise/delivery'
 import { intakeRoutes, type IntakeDeps } from '@flagwise/intake'
 import { configRoutes, type ConfigRoutesDeps } from '@flagwise/policy'
+import { privacyRoutes, type PrivacyRoutesDeps } from '@flagwise/privacy'
 import { pgKeyDirectory, resolveApiKey, type KeyResolution } from '@flagwise/tenancy'
 import { Hono, type Context } from 'hono'
 
@@ -31,6 +32,8 @@ export interface ApiDeps {
   readonly config?: ConfigRoutesDeps
   /** The audit routes; left out, they answer 404. */
   readonly audit?: AuditRoutesDeps
+  /** The erasure routes; left out, they answer 404. */
+  readonly privacy?: PrivacyRoutesDeps
   /** Where Idempotency-Keys of POST requests are kept; left out, the header is ignored. */
   readonly idempotency?: IdempotencyStore
   /** Called with errors that become a 500, for logging; default writes a JSON line to stderr. */
@@ -133,6 +136,7 @@ export function createApi(deps: ApiDeps): Hono<ApiEnv> {
   if (deps.actionRequests) api.route('/', actionRequestRoutes(deps.actionRequests))
   if (deps.config) api.route('/', configRoutes(deps.config))
   if (deps.audit) api.route('/', auditRoutes(deps.audit))
+  if (deps.privacy) api.route('/', privacyRoutes(deps.privacy))
   api.all('*', () => {
     throw new FlagwiseError('not_found', 'No such endpoint')
   })

@@ -156,7 +156,7 @@ describe.skipIf(!testDatabaseUrl)('migrate', () => {
   afterAll(async () => t?.drop())
 
   it('applies platform first, then each set once', async () => {
-    expect(await migrate(t.ownerUrl, [sample], t.roles)).toEqual(['platform/0001_tenant_context', 'platform/0002_event_bus', 'platform/0003_event_origin', 'platform/0004_idempotency_keys', 'platform/0005_event_contracts', 'sample/0001_notes'])
+    expect(await migrate(t.ownerUrl, [sample], t.roles)).toEqual(['platform/0001_tenant_context', 'platform/0002_event_bus', 'platform/0003_event_origin', 'platform/0004_idempotency_keys', 'platform/0005_event_contracts', 'platform/0006_tracked_events_and_retention', 'sample/0001_notes'])
     expect(await migrate(t.ownerUrl, [sample], t.roles)).toEqual([])
   })
 
@@ -392,7 +392,7 @@ describe.skipIf(!testDatabaseUrl)('pendingMigrations', () => {
   })
 
   it('lists every migration before the first run, none after, and ignores applied ones not given', async () => {
-    const all = ['platform/0001_tenant_context', 'platform/0002_event_bus', 'platform/0003_event_origin', 'platform/0004_idempotency_keys', 'platform/0005_event_contracts', 'sample/0001_notes']
+    const all = ['platform/0001_tenant_context', 'platform/0002_event_bus', 'platform/0003_event_origin', 'platform/0004_idempotency_keys', 'platform/0005_event_contracts', 'platform/0006_tracked_events_and_retention', 'sample/0001_notes']
     expect(await pendingMigrations(db, [sample])).toEqual(all)
     // A migration job between creating the schema and granting it: still everything, not an error.
     const owner = new pg.Client({ connectionString: t.ownerUrl })

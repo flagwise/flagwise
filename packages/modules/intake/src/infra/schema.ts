@@ -18,6 +18,7 @@ export const reportsTable = schema.table('reports', {
   receivedAt: timestamp('received_at', { withTimezone: true }).notNull(),
   caseId: text('case_id'),
   joinedExistingCase: boolean('joined_existing_case'),
+  erasedAt: timestamp('erased_at', { withTimezone: true, mode: 'date' }),
 })
 
 export const intakeTables = [reportsTable] as const

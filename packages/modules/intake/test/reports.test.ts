@@ -4,6 +4,8 @@ import { FlagwiseError, manualClock, type ManualClock, type TenantRef } from '@f
 import { memoryStorage } from '@flagwise/platform'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  eraseAccount,
+  getEvidence,
   getReport,
   recordReportCase,
   submitReport,
@@ -46,6 +48,19 @@ class MemoryReportStore implements ReportStore {
     this.rows[i] = { ...this.rows[i]!, caseId, joinedExistingCase }
     return true
   }
+  async reportsOf(tenant: TenantRef, externalId: string) {
+    return this.rows.filter((r) => sameTenant(r.tenant, tenant) && (r.reporterExternalId === externalId || r.reportedExternalId === externalId))
+  }
+  async eraseAccount(tenant: TenantRef, externalId: string, erasedId: string, at: Date) {
+    let n = 0
+    this.rows.forEach((r, i) => {
+      if (!sameTenant(r.tenant, tenant) || (r.reporterExternalId !== externalId && r.reportedExternalId !== externalId)) return
+      const swap = (id: string) => (id === externalId ? erasedId : id)
+      this.rows[i] = { ...r, reporterExternalId: swap(r.reporterExternalId), reportedExternalId: swap(r.reportedExternalId), erasedAt: r.erasedAt ?? at }
+      n++
+    })
+    return n
+  }
 }
 
 const body = (overrides: Record<string, unknown> = {}) =>
@@ -76,7 +91,7 @@ describe('intake reports', () => {
       // Events are kept only when the run succeeds, as in a transaction.
       async run(_tenant, fn) {
         const held: ReportReceivedEvent[] = []
-        const result = await fn({ reports: store, publish: async (e) => void held.push(e) })
+        const result = await fn({ reports: store, publish: async (e) => void held.push(e as ReportReceivedEvent) })
         events.push(...held)
         return result
       },
@@ -229,6 +244,23 @@ describe('intake reports', () => {
     expect(await recordReportCase(deps, { tenant: A, reportId: 'rpt_1', caseId: 'case_2', joinedExistingCase: false })).toBe(false)
     expect(await getReport(deps, A, 'rpt_1')).toMatchObject({ caseId: 'case_1', joinedExistingCase: true })
     expect(await recordReportCase(deps, { tenant: A, reportId: 'rpt_nope', caseId: 'case_1', joinedExistingCase: false })).toBe(false)
+  })
+
+  it("erases an account's reports, as reporter and as reported: snapshot deleted, id replaced, evidence gone", async () => {
+    await submitReport(deps, { tenant: A, body: body() })
+    await submitReport(deps, { tenant: A, body: body({ reporter: { external_id: 'u_john_doe' }, reported: { external_id: 'u_jim_doe' } }) })
+    await submitReport(deps, { tenant: A, body: body({ reporter: { external_id: 'u_jane_doe' }, reported: { external_id: 'u_jim_doe' } }) })
+    const had = await deps.run(A, (tx) => eraseAccount(deps, tx, A, 'u_john_doe', 'erased_ers_1'))
+    expect(had).toBe(2)
+    expect(storage.keys().sort()).toEqual(['apps/app_a/rpt_3'])
+    expect(store.rows.map((r) => [r.id, r.reporterExternalId, r.reportedExternalId, r.erasedAt ?? null])).toEqual([
+      ['rpt_1', 'u_jane_doe', 'erased_ers_1', clock.now()],
+      ['rpt_2', 'erased_ers_1', 'u_jim_doe', clock.now()],
+      ['rpt_3', 'u_jane_doe', 'u_jim_doe', null],
+    ])
+    expect(await errorOf(getEvidence(deps, A, 'rpt_1'))).toMatchObject({ code: 'gone' })
+    // Asked again: nothing left to erase.
+    expect(await deps.run(A, (tx) => eraseAccount(deps, tx, A, 'u_john_doe', 'erased_ers_1'))).toBe(0)
   })
 
   it('finds a report only in its own tenant', async () => {

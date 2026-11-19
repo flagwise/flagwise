@@ -2,7 +2,7 @@
 // app's policy, classifies each new case and publishes case.classified, and asks the LLM again,
 // with growing waits, for a case rules classified because the LLM failed.
 
-import { currentType, policyCategory, policyIn, type EventData, type Policy } from '@flagwise/contracts'
+import { currentType, erasedId, erasureAnswer, policyCategory, policyIn, type EventData, type Policy } from '@flagwise/contracts'
 import { subscribeCopy, tenantOf, type DocumentCopy, type EventBus } from '@flagwise/platform'
 import { classifyCase, recordScreening, retryClassification } from './classify-case.ts'
 import type { ClassificationRecord, ClassifyDeps } from './ports.ts'
@@ -33,8 +33,10 @@ export function classifyDepsWithPolicy(deps: Omit<ClassifyDeps, 'llmEnabled' | '
 /**
  * Subscribes classify's groups (event -> effect):
  * - 'classify.policy': policy.updated -> its copy of the app's policy (first).
- * - 'classify.screenings': report.received -> recordScreening with its P0 signals and injection
- *   flag; a report.received from before 1.1.0 carries neither and is skipped.
+ * - 'classify.screenings': report.received -> recordScreening with its P0 signals, injection flag
+ *   and accounts; a report.received from before 1.1.0 carries neither and is skipped.
+ * - 'classify.erasure': subject.erasure_requested -> the account's id replaced in its reports'
+ *   screenings and their classifications' LLM summaries dropped; answers erased, or nothing_held.
  * - 'classify': case.opened -> classifyCase with the case and its report, then case.classified
  *   (id `case.classified:{caseId}`) with the classification's facts and no summary.
  * - 'classify.retry': case.classified by rules because the LLM
@@ -53,7 +55,22 @@ export function subscribeClassify(bus: EventBus, deps: ClassifyServiceDeps): voi
   bus.subscribe('classify.screenings', ['report.received.v1'], async (event) => {
     const r = event.data as EventData<'report.received.v1'>
     if (r.p0Signals === undefined || r.injectionSuspected === undefined) return
-    await recordScreening(classify, { tenant: tenantOf(event), reportId: r.reportId, p0Signals: r.p0Signals, injectionSuspected: r.injectionSuspected })
+    await recordScreening(classify, {
+      tenant: tenantOf(event),
+      reportId: r.reportId,
+      p0Signals: r.p0Signals,
+      injectionSuspected: r.injectionSuspected,
+      reportedExternalId: r.subjectExternalId,
+      reporterExternalId: r.facts?.reporterExternalId ?? null,
+    })
+  })
+
+  bus.subscribe('classify.erasure', [currentType('subject.erasure_requested')], async (event) => {
+    const tenant = tenantOf(event)
+    const request = event.data as EventData<'subject.erasure_requested.v1'>
+    const had = await classify.run(tenant, (store) => store.eraseAccount(tenant, request.subjectExternalId, erasedId(request.erasureId)))
+    // Published after the erase commits; should it be lost, the redelivery finds nothing left and answers nothing_held.
+    await bus.publish({ ...erasureAnswer(request, 'classify.erasure', had > 0 ? 'erased' : 'nothing_held', classify.clock.now()), tenant })
   })
 
   bus.subscribe('classify', ['case.opened.v1'], async (event) => {

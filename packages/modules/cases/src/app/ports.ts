@@ -125,6 +125,13 @@ export interface CaseRepository {
    * Serializes the reports about one account, so two first reports cannot open two cases.
    */
   lockSubject(tenant: TenantRef, subjectExternalId: string): Promise<void>
+  /**
+   * Erases an account: the cases about it take `erasedId` as their subject and their decisions
+   * lose the free text (public reason, internal note); the report rows it filed, and those of its
+   * cases, lose what they said about the accounts. Returns how many cases and report rows it
+   * changed.
+   */
+  eraseAccount(tenant: TenantRef, externalId: string, erasedId: string): Promise<number>
   insert(record: CaseRecord): Promise<void>
   /** Applies `change` only if the case exists and meets `condition`; true when it did. */
   change(tenant: TenantRef, caseId: string, condition: CaseCondition, change: CaseChange): Promise<boolean>

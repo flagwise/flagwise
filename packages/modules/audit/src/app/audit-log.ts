@@ -38,6 +38,13 @@ export interface AuditStore {
   entriesAfter(tenant: TenantRef, afterSeq: number, limit: number): Promise<readonly AuditEntry[]>
   /** The last purged entry's seq and hash, once retention has purged any. */
   checkpoint(tenant: TenantRef): Promise<{ readonly seq: number; readonly hash: string } | null>
+  /**
+   * Erases an account from the entries found by it: their personal data and its salt are cleared
+   * (the digest stays, so the chain still verifies) and `erasedId` takes its place in the column
+   * they are searched by. The ids in an entry's facts are covered by the chain and stay. Returns
+   * how many entries it changed.
+   */
+  eraseAccount(tenant: TenantRef, externalId: string, erasedId: string): Promise<number>
 }
 
 export interface AuditDeps {

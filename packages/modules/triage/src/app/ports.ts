@@ -34,6 +34,8 @@ export interface TriageClassification {
 export interface TriageCase {
   readonly tenant: TenantRef
   readonly caseId: string
+  /** The reported account, from case.opened; unset on records from before it was kept. */
+  readonly subjectExternalId?: string | null
   readonly openedAt: Date
   /** In the order they joined; the first opened the case. */
   readonly reportIds: readonly string[]
@@ -62,6 +64,12 @@ export interface TriageCaseStore {
   attach(tenant: TenantRef, caseId: string, reportId: string, facts: Omit<ReportAccounts, 'reportId'> | null): Promise<boolean>
   /** Applies `change` to a kept case; false when there is none. */
   change(tenant: TenantRef, caseId: string, change: TriageCaseChange): Promise<boolean>
+  /**
+   * Erases an account from the kept cases: where it is the reported account, its id becomes
+   * `erasedId` and its account age is dropped from every report; where it reported, its id becomes
+   * `erasedId` and its account age is dropped. Returns how many cases it changed.
+   */
+  eraseAccount(tenant: TenantRef, externalId: string, erasedId: string): Promise<number>
 }
 
 export interface TriageStores {

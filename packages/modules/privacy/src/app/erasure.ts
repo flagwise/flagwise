@@ -1,12 +1,26 @@
-// The erasure saga: privacy coordinates; each module erases its own data and reports back. Failures
-// throw ErasureError with a code. Events are published only after the write succeeded.
+// Erasing an account: privacy publishes subject.erasure_requested tracked, so the bus says which
+// consumer groups it reached (bus.event_fanned_out); each answers with subject.erased, and the
+// erasure completes once every one of them has. There is no list of services to keep: a service
+// that subscribes is asked, and one that is down stays pending. Events are published only with the
+// write, in one unit of work.
 
+import { currentType, type EventData } from '@flagwise/contracts'
 import type { Clock, TenantRef } from '@flagwise/kernel'
-
-export const ERASURE_MODULES = ['intake', 'cases', 'scoring', 'appeals', 'delivery', 'audit', 'metrics'] as const
-export type ErasureModule = (typeof ERASURE_MODULES)[number]
+import type { Work } from '@flagwise/platform'
 
 export const ERASURE_DEADLINE_MS = 24 * 3_600_000
+
+export type AnswerStatus = 'erased' | 'nothing_held' | 'retained'
+
+/** One consumer group's part: waiting, its delivery dead-lettered (still waiting), or its answer. */
+export interface GroupAnswer {
+  readonly status: 'pending' | 'failed' | AnswerStatus
+  readonly at: Date | null
+  readonly heldItems: number
+  readonly reason: string | null
+  /** The dead letter's error while failed. */
+  readonly error: string | null
+}
 
 export interface ErasureRecord {
   readonly id: string
@@ -14,213 +28,112 @@ export interface ErasureRecord {
   readonly subjectExternalId: string
   readonly requestedAt: Date
   readonly deadlineAt: Date
-  readonly status: 'in_progress' | 'completed'
-  readonly acks: Readonly<Partial<Record<ErasureModule, { readonly at: Date; readonly heldItems: number }>>>
-  readonly overdueNotified: boolean
+  /** The groups the request reached, once the bus said; null before. */
+  readonly expected: readonly string[] | null
+  readonly groups: Readonly<Record<string, GroupAnswer>>
   readonly completedAt: Date | null
-  readonly version: number
+  readonly heldItems: number
 }
 
-export class VersionConflictError extends Error {
-  constructor(id: string) {
-    super(`Erasure ${id} was changed by someone else`)
-    this.name = 'VersionConflictError'
-  }
-}
-
-export interface ErasureRepository {
-  findById(tenant: TenantRef, erasureId: string): Promise<ErasureRecord | null>
-  /** The erasure still in progress for this subject, if any. */
+export interface ErasureStore {
+  find(tenant: TenantRef, id: string): Promise<ErasureRecord | null>
+  /** The subject's erasure not completed yet, if any. */
   findActive(tenant: TenantRef, subjectExternalId: string): Promise<ErasureRecord | null>
-  insert(record: ErasureRecord): Promise<void>
-  update(record: ErasureRecord, expectedVersion: number): Promise<void>
+  /** Inserts it; false, writing nothing, when the subject already has one in progress. */
+  insert(record: ErasureRecord): Promise<boolean>
+  /** Saves expected, groups, completedAt and heldItems. */
+  save(record: ErasureRecord): Promise<void>
 }
 
-export type ErasureEvent =
-  | {
-      readonly type: 'subject.erasure_requested'
-      readonly tenant: TenantRef
-      readonly erasureId: string
-      readonly subjectExternalId: string
-      readonly modules: readonly ErasureModule[]
-      readonly occurredAt: Date
-    }
-  | {
-      readonly type: 'subject.erased'
-      readonly tenant: TenantRef
-      readonly erasureId: string
-      readonly subjectExternalId: string
-      readonly heldItems: number
-      readonly occurredAt: Date
-    }
-  | {
-      readonly type: 'erasure.overdue'
-      readonly tenant: TenantRef
-      readonly erasureId: string
-      readonly subjectExternalId: string
-      readonly pendingModules: readonly ErasureModule[]
-      readonly occurredAt: Date
-    }
+export interface PrivacyStores {
+  readonly erasures: ErasureStore
+}
 
 export interface ErasureDeps {
-  readonly erasures: ErasureRepository
-  readonly events: { publish(event: ErasureEvent): Promise<void> }
   readonly clock: Clock
   readonly newErasureId: () => string
 }
 
-export type ErasureErrorCode = 'not_found' | 'unknown_module' | 'invalid_held_items'
-
-export class ErasureError extends Error {
-  readonly code: ErasureErrorCode
-  constructor(code: ErasureErrorCode) {
-    super(code)
-    this.name = 'ErasureError'
-    this.code = code
-  }
-}
+const FINAL: ReadonlySet<string> = new Set<AnswerStatus>(['erased', 'nothing_held', 'retained'])
+const pending = (): GroupAnswer => ({ status: 'pending', at: null, heldItems: 0, reason: null, error: null })
 
 /**
- * Starts erasing a subject. When an erasure is already in progress for that subject it is returned
- * with `created: false` and nothing is published. Otherwise a new one is inserted (`deadlineAt` =
- * now + ERASURE_DEADLINE_MS, status 'in_progress', no acks, version 1) and
- * `subject.erasure_requested` is published for every module in ERASURE_MODULES order.
+ * Starts erasing a subject, or returns the erasure already in progress for it (`created: false`,
+ * nothing published). A new one has a 24 hour deadline and publishes subject.erasure_requested
+ * (id `subject.erasure_requested:{erasureId}`, keyed by the erasure, tracked).
  */
 export async function startErasure(
-  _deps: ErasureDeps,
-  _input: { readonly tenant: TenantRef; readonly subjectExternalId: string },
+  deps: ErasureDeps,
+  w: Work<PrivacyStores>,
+  input: { readonly tenant: TenantRef; readonly subjectExternalId: string },
 ): Promise<{ erasure: ErasureRecord; created: boolean }> {
-  const existing = await _deps.erasures.findActive(_input.tenant, _input.subjectExternalId)
+  const existing = await w.stores.erasures.findActive(input.tenant, input.subjectExternalId)
   if (existing) return { erasure: existing, created: false }
-  const now = _deps.clock.now()
+  const now = deps.clock.now()
   const erasure: ErasureRecord = {
-    id: _deps.newErasureId(),
-    tenant: _input.tenant,
-    subjectExternalId: _input.subjectExternalId,
+    id: deps.newErasureId(),
+    tenant: input.tenant,
+    subjectExternalId: input.subjectExternalId,
     requestedAt: now,
     deadlineAt: new Date(now.getTime() + ERASURE_DEADLINE_MS),
-    status: 'in_progress',
-    acks: {},
-    overdueNotified: false,
+    expected: null,
+    groups: {},
     completedAt: null,
-    version: 1,
+    heldItems: 0,
   }
-  await _deps.erasures.insert(erasure)
-  await _deps.events.publish({
-    type: 'subject.erasure_requested',
-    tenant: erasure.tenant,
-    erasureId: erasure.id,
-    subjectExternalId: erasure.subjectExternalId,
-    modules: ERASURE_MODULES,
-    occurredAt: now,
-  })
+  if (!(await w.stores.erasures.insert(erasure))) {
+    // Another request for the subject won the race; answer with its erasure.
+    const winner = await w.stores.erasures.findActive(input.tenant, input.subjectExternalId)
+    if (winner) return { erasure: winner, created: false }
+    throw new Error(`No erasure in progress for the subject after a conflict`)
+  }
+  const data: EventData<'subject.erasure_requested.v1'> = { erasureId: erasure.id, subjectExternalId: erasure.subjectExternalId, occurredAt: now.toISOString() }
+  await w.publish({ id: `subject.erasure_requested:${erasure.id}`, type: currentType('subject.erasure_requested'), key: erasure.id, data, track: true })
   return { erasure, created: true }
 }
 
-/**
- * Records that a module finished erasing; `heldItems` is how many items it kept under a legal hold.
- *
- * - 'not_found'; 'unknown_module' (not in ERASURE_MODULES); 'invalid_held_items' (not an integer
- *   >= 0). Checked in that order.
- * - Already completed, or this module already acked: returned unchanged, nothing written or
- *   published.
- * - Otherwise `acks[module] = { at: now, heldItems }`, version + 1. When every module has acked:
- *   status 'completed', `completedAt` now, and after the write `subject.erased` with `heldItems` =
- *   the sum over all acks.
- * - Modules report concurrently: on VersionConflictError read again and start over, at most 3
- *   attempts in total; the third conflict is thrown.
- */
-export async function recordModuleErased(
-  _deps: ErasureDeps,
-  _input: { readonly tenant: TenantRef; readonly erasureId: string; readonly module: string; readonly heldItems: number },
-): Promise<ErasureRecord> {
-  for (let attempt = 1; ; attempt++) {
-    const current = await _deps.erasures.findById(_input.tenant, _input.erasureId)
-    if (!current) throw new ErasureError('not_found')
-    const module = ERASURE_MODULES.find((m) => m === _input.module)
-    if (!module) throw new ErasureError('unknown_module')
-    if (!Number.isInteger(_input.heldItems) || _input.heldItems < 0) throw new ErasureError('invalid_held_items')
-    if (current.status === 'completed' || current.acks[module]) return current
+/** What privacy hears about an erasure: the groups the request reached, a dead letter, or an answer. */
+export type ErasureNews =
+  | { readonly kind: 'reached'; readonly groups: readonly string[] }
+  | { readonly kind: 'dead_lettered'; readonly group: string; readonly error: string }
+  | { readonly kind: 'answered'; readonly group: string; readonly status: AnswerStatus; readonly heldItems: number; readonly reason: string | null }
 
-    const now = _deps.clock.now()
-    const acks = { ...current.acks, [module]: { at: now, heldItems: _input.heldItems } }
-    const done = ERASURE_MODULES.every((m) => acks[m])
-    const next: ErasureRecord = {
-      ...current,
-      acks,
-      status: done ? 'completed' : 'in_progress',
-      completedAt: done ? now : null,
-      version: current.version + 1,
-    }
-    try {
-      await _deps.erasures.update(next, current.version)
-    } catch (err) {
-      if (err instanceof VersionConflictError && attempt < 3) continue
-      throw err
-    }
-    if (done) {
-      await _deps.events.publish({
-        type: 'subject.erased',
-        tenant: next.tenant,
-        erasureId: next.id,
-        subjectExternalId: next.subjectExternalId,
-        heldItems: ERASURE_MODULES.reduce((sum, m) => sum + acks[m]!.heldItems, 0),
-        occurredAt: now,
-      })
-    }
-    return next
+/**
+ * Applies news to an erasure: `reached` sets the groups to wait for (keeping any answer already
+ * in); a dead letter marks a group failed unless it has answered; an answer is kept once per group
+ * (a later one for the same group changes nothing). Once every expected group has answered, the
+ * erasure completes with the held items summed and publishes erasure.completed (id
+ * `erasure.completed:{erasureId}`). A completed erasure, or an unknown one, is left alone.
+ */
+export async function applyNews(deps: Pick<ErasureDeps, 'clock'>, w: Work<PrivacyStores>, tenant: TenantRef, erasureId: string, news: ErasureNews): Promise<void> {
+  const erasure = await w.stores.erasures.find(tenant, erasureId)
+  if (!erasure || erasure.completedAt) return
+  const now = deps.clock.now()
+  let groups = erasure.groups
+  let expected = erasure.expected
+  if (news.kind === 'reached') {
+    expected = [...news.groups]
+    groups = Object.fromEntries(expected.map((g) => [g, groups[g] ?? pending()]))
+  } else if (news.kind === 'dead_lettered') {
+    const current = groups[news.group] ?? pending()
+    if (FINAL.has(current.status)) return
+    groups = { ...groups, [news.group]: { ...current, status: 'failed', error: news.error } }
+  } else {
+    if (FINAL.has(groups[news.group]?.status ?? '')) return
+    groups = { ...groups, [news.group]: { status: news.status, at: now, heldItems: news.heldItems, reason: news.reason, error: null } }
+  }
+  const done = expected !== null && expected.every((g) => FINAL.has(groups[g]?.status ?? ''))
+  const heldItems = done ? expected!.reduce((sum, g) => sum + groups[g]!.heldItems, 0) : 0
+  const next: ErasureRecord = { ...erasure, expected, groups, completedAt: done ? now : null, heldItems }
+  await w.stores.erasures.save(next)
+  if (done) {
+    const data: EventData<'erasure.completed.v1'> = { erasureId, subjectExternalId: erasure.subjectExternalId, heldItems, occurredAt: now.toISOString() }
+    await w.publish({ id: `erasure.completed:${erasureId}`, type: currentType('erasure.completed'), key: erasureId, data })
   }
 }
 
-/**
- * Asks the modules that have not acked again: publishes `subject.erasure_requested` with only
- * those, in ERASURE_MODULES order, and returns them. Nothing is written; a completed erasure returns
- * [] and publishes nothing. 'not_found' for an unknown erasure.
- */
-export async function retryPending(
-  _deps: ErasureDeps,
-  _input: { readonly tenant: TenantRef; readonly erasureId: string },
-): Promise<ErasureModule[]> {
-  const erasure = await _deps.erasures.findById(_input.tenant, _input.erasureId)
-  if (!erasure) throw new ErasureError('not_found')
-  if (erasure.status === 'completed') return []
-  const pending = pendingModules(erasure)
-  if (pending.length > 0) {
-    await _deps.events.publish({
-      type: 'subject.erasure_requested',
-      tenant: erasure.tenant,
-      erasureId: erasure.id,
-      subjectExternalId: erasure.subjectExternalId,
-      modules: pending,
-      occurredAt: _deps.clock.now(),
-    })
-  }
-  return pending
-}
-
-/**
- * Raises one alert per erasure once its deadline passes with modules missing: when in progress,
- * `now >= deadlineAt` and not yet notified, sets `overdueNotified` (version + 1), publishes
- * `erasure.overdue` with the pending modules, and returns true. Otherwise false. 'not_found' for an
- * unknown erasure; VersionConflictError is not retried.
- */
-export async function checkOverdue(_deps: ErasureDeps, _input: { readonly tenant: TenantRef; readonly erasureId: string }): Promise<boolean> {
-  const erasure = await _deps.erasures.findById(_input.tenant, _input.erasureId)
-  if (!erasure) throw new ErasureError('not_found')
-  const now = _deps.clock.now()
-  if (erasure.status !== 'in_progress' || erasure.overdueNotified || now.getTime() < erasure.deadlineAt.getTime()) return false
-  await _deps.erasures.update({ ...erasure, overdueNotified: true, version: erasure.version + 1 }, erasure.version)
-  await _deps.events.publish({
-    type: 'erasure.overdue',
-    tenant: erasure.tenant,
-    erasureId: erasure.id,
-    subjectExternalId: erasure.subjectExternalId,
-    pendingModules: pendingModules(erasure),
-    occurredAt: now,
-  })
-  return true
-}
-
-function pendingModules(erasure: ErasureRecord): ErasureModule[] {
-  return ERASURE_MODULES.filter((m) => !erasure.acks[m])
+/** An erasure's status as the API shows it: completed, in progress, or overdue (past its deadline, not completed). */
+export function erasureStatus(erasure: ErasureRecord, now: Date): 'completed' | 'in_progress' | 'overdue' {
+  if (erasure.completedAt) return 'completed'
+  return now.getTime() >= erasure.deadlineAt.getTime() ? 'overdue' : 'in_progress'
 }

@@ -123,6 +123,8 @@ describe.skipIf(!testDatabaseUrl)('app categories and LLM settings on the server
     })
     expect(replaced.warnings).toEqual([{ key: 'house_rules', message: 'Not mapped to a global category: left out of the DSA export and counted as Other' }])
     expect((await json(await call(installed.liveKey, '/categories'))).data.map((c: { key: string }) => c.key)).toEqual(['asking_for_money', 'rude_or_harassing'])
+    // The readers' copies of the policy follow over the bus; the next tests classify with them.
+    await eventually(async () => ((await server.bus.pending()) === 0 ? true : undefined))
   })
 
   it("falls back to rules when the LLM fails, and triages with the app's category", async () => {

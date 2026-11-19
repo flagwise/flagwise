@@ -15,3 +15,4 @@ export { pgCategoryStore, pgLlmSettingsStore } from './infra/pg-category-store.t
 export { pgPolicy, pgPolicyHeadStore, pgPolicyStores, policyMigrations, type PgPolicyOptions } from './infra/pg-policy-store.ts'
 export { policyTables } from './infra/schema.ts'
 export { busPolicyEvents } from './infra/bus-events.ts'
+export { subscribePolicy } from './app/handlers.ts'

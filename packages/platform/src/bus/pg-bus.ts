@@ -6,8 +6,8 @@
 
 import type { Clock, TenantRef } from '@flagwise/kernel'
 import { sql } from 'drizzle-orm'
-import { withSystem, withTenant, type Database, type TenantTx } from '../db/tenant.ts'
-import { checkedEvent, type BusEvent, type DeadLetter, type EventBus, type EventContract, type Handler } from './memory-bus.ts'
+import { withSystem, withTenant, type Database, type SystemTx, type TenantTx } from '../db/tenant.ts'
+import { checkedEvent, deadLetteredEvent, fannedOutEvent, type BusEvent, type DeadLetter, type EventBus, type EventContract, type Handler } from './memory-bus.ts'
 import { stampRequest, type EventMeta } from './request-context.ts'
 
 export interface PgBusOptions {
@@ -37,9 +37,19 @@ export interface PgBusOptions {
    * written, and stored with its schema version. Without one, events keep the version they carry.
    */
   readonly contract?: EventContract
+  /**
+   * How long an event stays in the log once every group has handled it (no delivery or dead
+   * letter left for it); default 7 days, null keeps every event. Replay reaches back only this far,
+   * and an event id is only recognised again while its event is kept.
+   */
+  readonly retentionMs?: number | null
+  /** How often start() deletes events past retention; default 1 hour. */
+  readonly purgeEveryMs?: number
 }
 
 export interface PgBus extends EventBus {
+  /** Deletes the events past retention now; returns how many. Nothing without a retention. */
+  purge(): Promise<number>
   log(): Promise<{ seq: number; event: BusEvent }[]>
   pending(group?: string): Promise<number>
   deadLetters(): Promise<DeadLetter[]>
@@ -77,7 +87,12 @@ type Leased = {
   request_id: string | null
   actor_type: string | null
   actor_id: string | null
+  tracked: boolean
 }
+
+/** The identity of a stored event, enough to name it in the bus's facts. */
+type Named = { id: string; type: string; key: string; org_id: string; app_id: string; livemode: boolean }
+const named = (r: Named): BusEvent => ({ id: r.id, type: r.type, key: r.key, data: null, tenant: { orgId: r.org_id, appId: r.app_id, livemode: r.livemode } })
 
 /** The meta of a stored event: its request and actor when it has them, and when it was published. */
 const metaOf = (r: { request_id: string | null; actor_type: string | null; actor_id: string | null }, publishedAt?: Date | string): EventMeta | undefined => {
@@ -119,6 +134,13 @@ const defaultDelay = (attempt: number) => Math.min(300_000, 1000 * 2 ** (attempt
  * too. A lease that runs out (a crashed worker) makes the delivery available again, counting the
  * lost attempt; when that was the last attempt, the delivery moves to the dead letters instead.
  *
+ * Tracking: queuing a tracked event (BusEvent.track) writes its `bus.event_fanned_out`, naming
+ * every group it was queued for, in the same transaction; dead-lettering a delivery of one writes
+ * `bus.delivery_dead_lettered` with the dead letter. Both carry the event's tenant and key.
+ *
+ * Retention: purge() deletes events older than `retentionMs` that every group has handled (none
+ * of their deliveries or dead letters is left); start() runs it every `purgeEveryMs`.
+ *
  * drain() works in rounds until a round finds nothing ready: queue new events, then for every
  * group of this process in subscription order, lease the ready heads and call the handler for each
  * in queue order. Events published by a handler are delivered in the same drain(). Returns how many
@@ -140,6 +162,9 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
   const handlerTimeoutMs = opts.handlerTimeoutMs ?? leaseMs
   if (!(handlerTimeoutMs > 0)) throw new RangeError('handlerTimeoutMs must be > 0')
   const clock = opts.clock
+  const retentionMs = opts.retentionMs === undefined ? 7 * 24 * 3_600_000 : opts.retentionMs
+  const purgeEveryMs = opts.purgeEveryMs ?? 3_600_000
+  let lastPurge = 0
   const now = () => (clock ? sql`${clock.now().toISOString()}::timestamptz` : sql`now()`)
 
   const groups = new Map<string, Group>()
@@ -170,7 +195,7 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
       // One worker at a time, so deliveries are queued in sequence order.
       const res = await withSystem(db, async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(${FAN_OUT_LOCK})`)
-        return tx.execute<{ seq: string }>(sql`
+        const batch = await tx.execute<Named & { seq: string; tracked: boolean; groups: string[] | null }>(sql`
           WITH batch AS (
             SELECT seq, type, key FROM platform.events WHERE NOT fanned_out ORDER BY seq LIMIT 500
           ), queued AS (
@@ -178,8 +203,15 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
             SELECT g.name, b.seq, b.key FROM batch b
               JOIN platform.consumer_groups g ON b.seq > g.since_seq AND (g.types IS NULL OR b.type = ANY (g.types))
              ORDER BY b.seq, g.position
+            RETURNING group_name, seq
+          ), marked AS (
+            UPDATE platform.events e SET fanned_out = true FROM batch b WHERE e.seq = b.seq
+            RETURNING e.seq, e.tracked, ${STORED_NAMED}
           )
-          UPDATE platform.events e SET fanned_out = true FROM batch b WHERE e.seq = b.seq RETURNING e.seq`)
+          SELECT m.*, (SELECT array_agg(q.group_name) FROM queued q WHERE q.seq = m.seq) AS groups FROM marked m`)
+        const tracked = batch.rows.filter((r) => r.tracked)
+        if (tracked.length) await insertSystem(tx, tracked.map((r) => fannedOutEvent(named(r), r.groups ?? [])))
+        return batch
       })
       total += res.rows.length
       if (res.rows.length < 500) return total
@@ -191,14 +223,20 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
     // A lease that ran out on the last attempt means the worker crashed or the handler never
     // finished: dead-letter it instead of running it again, so a poison event cannot loop forever.
     const at = now()
-    await db.system.execute(sql`
-      WITH expired AS (
-        DELETE FROM platform.deliveries
-         WHERE group_name = ${group.name} AND leased_until < ${at} AND attempt >= ${group.maxAttempts}
-        RETURNING group_name, seq, attempt
-      )
-      INSERT INTO platform.dead_letters (group_name, seq, attempts, error)
-      SELECT group_name, seq, attempt, ${'Lease expired before the handler finished'} FROM expired`)
+    await withSystem(db, async (tx) => {
+      const dead = await tx.execute<Named & { dl: string; attempts: number; error: string }>(sql`
+        WITH expired AS (
+          DELETE FROM platform.deliveries
+           WHERE group_name = ${group.name} AND leased_until < ${at} AND attempt >= ${group.maxAttempts}
+          RETURNING group_name, seq, attempt
+        ), letters AS (
+          INSERT INTO platform.dead_letters (group_name, seq, attempts, error)
+          SELECT group_name, seq, attempt, ${'Lease expired before the handler finished'} FROM expired
+          RETURNING id, seq, attempts, error
+        )
+        SELECT l.id AS dl, l.attempts, l.error, ${STORED_NAMED} FROM letters l JOIN platform.events e ON e.seq = l.seq WHERE e.tracked`)
+      for (const r of dead.rows) await insertSystem(tx, [deadLetteredEvent(named(r), group.name, r.attempts, r.error, r.dl)])
+    })
     const res = await db.system.execute<Leased>(sql`
       WITH heads AS (
         SELECT DISTINCT ON (key) queued, key, available_at, leased_until FROM platform.deliveries
@@ -212,7 +250,7 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
         RETURNING d.queued, d.group_name, d.seq, d.attempt
       )
       SELECT l.queued, l.group_name, l.seq, l.attempt, e.id, e.type, e.key, e.data, e.schema_version, e.org_id, e.app_id, e.livemode,
-             e.created_at, e.request_id, e.actor_type, e.actor_id
+             e.created_at, e.request_id, e.actor_type, e.actor_id, e.tracked
         FROM leased l JOIN platform.events e ON e.seq = l.seq ORDER BY l.queued`)
     return res.rows
   }
@@ -223,8 +261,11 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
     } else if (d.attempt >= group.maxAttempts) {
       await withSystem(db, async (tx) => {
         const gone = await tx.execute(sql`DELETE FROM platform.deliveries WHERE queued = ${d.queued} AND attempt = ${d.attempt} RETURNING queued`)
-        if (gone.rows.length)
-          await tx.execute(sql`INSERT INTO platform.dead_letters (group_name, seq, attempts, error) VALUES (${group.name}, ${d.seq}, ${d.attempt}, ${error})`)
+        if (!gone.rows.length) return
+        const letter = await tx.execute<{ id: string }>(
+          sql`INSERT INTO platform.dead_letters (group_name, seq, attempts, error) VALUES (${group.name}, ${d.seq}, ${d.attempt}, ${error}) RETURNING id`,
+        )
+        if (d.tracked) await insertSystem(tx, [deadLetteredEvent(named(d), group.name, d.attempt, error, letter.rows[0]!.id)])
       })
     } else {
       await db.system.execute(sql`
@@ -281,19 +322,44 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
       const t = e.tenant!
       const m = e.meta
       const res = await tx.execute(sql`
-        INSERT INTO platform.events (id, type, key, data, schema_version, org_id, app_id, livemode, request_id, actor_type, actor_id)
+        INSERT INTO platform.events (id, type, key, data, schema_version, org_id, app_id, livemode, request_id, actor_type, actor_id, tracked)
         VALUES (${e.id}, ${e.type}, ${e.key}, ${JSON.stringify(e.data ?? null)}::jsonb, ${e.schemaVersion ?? null}, ${t.orgId}, ${t.appId}, ${t.livemode},
-                ${m?.requestId ?? null}, ${m?.actor?.type ?? null}, ${m?.actor?.id ?? null})
+                ${m?.requestId ?? null}, ${m?.actor?.type ?? null}, ${m?.actor?.id ?? null}, ${e.track === true})
         ON CONFLICT (id) DO NOTHING RETURNING seq`)
       fresh += res.rows.length
     }
     return fresh
   }
 
+  /** The bus's own facts, written by the system role in its transaction; checked like any event. */
+  const insertSystem = async (tx: SystemTx, events: readonly BusEvent[]) => {
+    for (const given of events) {
+      const e = checkedEvent(given, opts.contract)
+      const t = e.tenant!
+      await tx.execute(sql`
+        INSERT INTO platform.events (id, type, key, data, schema_version, org_id, app_id, livemode)
+        VALUES (${e.id}, ${e.type}, ${e.key}, ${JSON.stringify(e.data ?? null)}::jsonb, ${e.schemaVersion ?? null}, ${t.orgId}, ${t.appId}, ${t.livemode})
+        ON CONFLICT (id) DO NOTHING`)
+    }
+  }
+
+  const purge = async (): Promise<number> => {
+    if (retentionMs === null) return 0
+    const res = await db.system.execute(sql`
+      DELETE FROM platform.events e
+       WHERE e.fanned_out AND e.created_at < ${now()} - ${`${retentionMs} milliseconds`}::interval
+         AND NOT EXISTS (SELECT 1 FROM platform.deliveries d WHERE d.seq = e.seq)
+         AND NOT EXISTS (SELECT 1 FROM platform.dead_letters l WHERE l.seq = e.seq)
+      RETURNING e.seq`)
+    return res.rows.length
+  }
+
   const groupRow = async (name: string) =>
     (await db.system.execute<{ types: string[] | null }>(sql`SELECT types FROM platform.consumer_groups WHERE name = ${name}`)).rows[0]
 
   const bus: PgBus = {
+    purge,
+
     async publish(input, tx) {
       const given = (Array.isArray(input) ? input : [input]) as readonly BusEvent[]
       for (const e of given) {
@@ -400,7 +466,9 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
       stopped = false
       const tick = () => {
         if (stopped) return
-        running = round()
+        const purging = Date.now() - lastPurge >= purgeEveryMs
+        if (purging) lastPurge = Date.now()
+        running = (purging ? purge().then(round) : round())
           .catch((err) => opts.onError?.(err))
           .then((r) => {
             if (!stopped) timer = setTimeout(tick, r && r.calls > 0 ? 0 : pollMs)
@@ -421,6 +489,7 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
 type StoredRow = { id: string; type: string; key: string; data: unknown; schema_version: string | null; org_id: string; app_id: string; livemode: boolean }
 const STORED = sql.raw('id, type, key, data, schema_version, org_id, app_id, livemode')
 const STORED_E = sql.raw('e.id, e.type, e.key, e.data, e.schema_version, e.org_id, e.app_id, e.livemode')
+const STORED_NAMED = sql.raw('e.id, e.type, e.key, e.org_id, e.app_id, e.livemode')
 
 const storedEvent = (r: StoredRow): BusEvent => ({
   id: r.id,

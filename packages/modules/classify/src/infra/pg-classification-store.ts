@@ -2,7 +2,7 @@
 
 import type { TenantRef } from '@flagwise/kernel'
 import { loadMigrations, scopeOfRef, withTenant, type Database, type MigrationSet, type TenantTx } from '@flagwise/platform'
-import { and, count, eq, gte, sql } from 'drizzle-orm'
+import { and, count, eq, gte, inArray, or, sql } from 'drizzle-orm'
 import type { ClassificationRecord, ClassificationStore, ClassifyDeps } from '../app/ports.ts'
 import { reportScreeningsTable as rs, classificationsTable as t } from './schema.ts'
 
@@ -68,8 +68,36 @@ export function pgClassificationStore(tx: TenantTx): ClassificationStore {
     async keepScreening(s) {
       await tx
         .insert(rs)
-        .values({ orgId: s.tenant.orgId, appId: s.tenant.appId, livemode: s.tenant.livemode, reportId: s.reportId, p0Signals: [...s.p0Signals], injectionSuspected: s.injectionSuspected })
+        .values({
+          orgId: s.tenant.orgId,
+          appId: s.tenant.appId,
+          livemode: s.tenant.livemode,
+          reportId: s.reportId,
+          p0Signals: [...s.p0Signals],
+          injectionSuspected: s.injectionSuspected,
+          reportedExternalId: s.reportedExternalId ?? null,
+          reporterExternalId: s.reporterExternalId ?? null,
+        })
         .onConflictDoNothing()
+    },
+
+    async eraseAccount(tenant, externalId, erasedId) {
+      const ofTenant = and(eq(rs.orgId, tenant.orgId), eq(rs.appId, tenant.appId), eq(rs.livemode, tenant.livemode))
+      const reports = await tx
+        .update(rs)
+        .set({
+          reportedExternalId: sql`CASE WHEN ${rs.reportedExternalId} = ${externalId} THEN ${erasedId} ELSE ${rs.reportedExternalId} END`,
+          reporterExternalId: sql`CASE WHEN ${rs.reporterExternalId} = ${externalId} THEN ${erasedId} ELSE ${rs.reporterExternalId} END`,
+        })
+        .where(and(ofTenant, or(eq(rs.reportedExternalId, externalId), eq(rs.reporterExternalId, externalId))))
+        .returning({ reportId: rs.reportId })
+      if (reports.length > 0) {
+        await tx
+          .update(t)
+          .set({ summary: null })
+          .where(and(tenantOf(tenant), inArray(t.reportId, reports.map((r) => r.reportId))))
+      }
+      return reports.length
     },
 
     async findScreening(tenant, reportId) {
@@ -77,7 +105,16 @@ export function pgClassificationStore(tx: TenantTx): ClassificationStore {
         .select()
         .from(rs)
         .where(and(eq(rs.orgId, tenant.orgId), eq(rs.appId, tenant.appId), eq(rs.livemode, tenant.livemode), eq(rs.reportId, reportId)))
-      return r ? { tenant: { orgId: r.orgId, appId: r.appId, livemode: r.livemode }, reportId: r.reportId, p0Signals: r.p0Signals, injectionSuspected: r.injectionSuspected } : null
+      return r
+        ? {
+            tenant: { orgId: r.orgId, appId: r.appId, livemode: r.livemode },
+            reportId: r.reportId,
+            p0Signals: r.p0Signals,
+            injectionSuspected: r.injectionSuspected,
+            ...(r.reportedExternalId !== null && { reportedExternalId: r.reportedExternalId }),
+            ...(r.reporterExternalId !== null && { reporterExternalId: r.reporterExternalId }),
+          }
+        : null
     },
   }
 }

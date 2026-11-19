@@ -346,3 +346,35 @@ describe.skipIf(!testDatabaseUrl)('pgCaseRepository report facts and account his
     await expect(inTx(A, (repo) => repo.list(A, { now: at(10), cursor: cursor! }))).rejects.toThrow(RangeError)
   })
 })
+
+describe.skipIf(!testDatabaseUrl)('pgCaseRepository erasure', () => {
+  let t: TestDatabase
+  let db: Database
+  const inTx = <R>(tenant: TenantRef, fn: (repo: CaseRepository) => Promise<R>) => withTenant(db, scope(tenant), (tx) => fn(pgCaseRepository(tx)))
+
+  beforeAll(async () => {
+    t = await createTestDatabase()
+    await migrate(t.ownerUrl, [casesMigrations], t.roles)
+    db = createDatabase({ appUrl: t.appUrl, systemUrl: t.systemUrl })
+  })
+  afterAll(async () => {
+    await db?.close()
+    await t?.drop()
+  })
+
+  it("tombstones the account's cases, drops their decisions' free text, and keeps other accounts' cases", async () => {
+    await inTx(A, async (repo) => {
+      await repo.insert({ ...full(), subjectExternalId: 'u_john_doe' })
+      await repo.insert(base({ id: 'case_other', subjectExternalId: 'u_jim_doe', reportIds: ['rpt_o1'] }))
+    })
+    await inTx(B, (repo) => repo.insert(base({ id: 'case_b', tenant: B, subjectExternalId: 'u_john_doe', reportIds: ['rpt_b1'] })))
+    expect(await inTx(A, (repo) => repo.eraseAccount(A, 'u_john_doe', 'erased_ers_1'))).toBe(1)
+    const erased = await inTx(A, (repo) => repo.findById(A, 'case_full'))
+    expect(erased).toMatchObject({ subjectExternalId: 'erased_ers_1', state: 'decided', decision: { id: 'dec_1', categoryId: 'scams_fraud.romance_scam', severity: 'P1' } })
+    expect(erased?.decision?.publicReason ?? null).toBeNull()
+    expect(await inTx(A, (repo) => repo.findBySubject(A, 'u_john_doe'))).toEqual([])
+    expect((await inTx(A, (repo) => repo.findById(A, 'case_other')))?.subjectExternalId).toBe('u_jim_doe')
+    expect((await inTx(B, (repo) => repo.findById(B, 'case_b')))?.subjectExternalId).toBe('u_john_doe')
+    expect(await inTx(A, (repo) => repo.eraseAccount(A, 'u_john_doe', 'erased_ers_1'))).toBe(0)
+  })
+})

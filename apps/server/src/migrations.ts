@@ -7,6 +7,7 @@ import { deliveryMigrations } from '@flagwise/delivery'
 import { intakeMigrations } from '@flagwise/intake'
 import type { MigrationSet } from '@flagwise/platform'
 import { policyMigrations } from '@flagwise/policy'
+import { privacyMigrations } from '@flagwise/privacy'
 import { tenancyMigrations } from '@flagwise/tenancy'
 import { triageMigrations } from '@flagwise/triage'
 
@@ -21,4 +22,5 @@ export const ALL_MIGRATIONS: readonly MigrationSet[] = [
   classifyMigrations,
   triageMigrations,
   auditMigrations,
+  privacyMigrations,
 ]

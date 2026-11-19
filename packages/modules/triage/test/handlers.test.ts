@@ -3,7 +3,7 @@ import { DEFAULT_POLICY, eventContract, type Policy } from '@flagwise/contracts'
 import type { TenantRef } from '@flagwise/kernel'
 import { createMemoryBus, memoryDocumentCopy, memoryUnitOfWork, type MemoryBus } from '@flagwise/platform'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { subscribeTriage, type TriageCase, type TriageCaseStore } from '../src/index.ts'
+import { erasedFromCase, subscribeTriage, type TriageCase, type TriageCaseStore } from '../src/index.ts'
 
 const tenant: TenantRef = { orgId: 'org_jane', appId: 'app_a', livemode: true }
 const T0 = '2026-11-19T09:00:00.000Z'
@@ -27,6 +27,13 @@ class Cases implements TriageCaseStore {
     const r = this.rows.get(id)
     if (r) this.rows.set(id, { ...r, ...change })
     return !!r
+  }  async eraseAccount(_t: TenantRef, externalId: string, erasedId: string) {
+    let n = 0
+    for (const [id, r] of this.rows) {
+      const erased = erasedFromCase(r, externalId, erasedId)
+      if (erased) (this.rows.set(id, erased), n++)
+    }
+    return n
   }
 }
 

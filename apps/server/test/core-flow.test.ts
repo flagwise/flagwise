@@ -28,6 +28,11 @@ class Cases implements CaseRepository {
     return r ? structuredClone(r) : null
   }
   async lockSubject() {}
+  async eraseAccount(t: TenantRef, externalId: string, erasedId: string) {
+    let n = 0
+    for (const [id, r] of this.rows) if (same(r.tenant, t) && r.subjectExternalId === externalId) (this.rows.set(id, { ...r, subjectExternalId: erasedId }), n++)
+    return n
+  }
   async insert(r: CaseRecord) {
     this.rows.set(r.id, structuredClone(r))
   }
@@ -85,6 +90,9 @@ class Webhooks implements WebhookStore {
   readonly deliveries: { eventId: string; endpointId: string }[] = []
   endpointsOf: WebhookEndpoint[] = [{ id: 'whe_1', tenant, url: 'https://hooks.example.com', eventTypes: null, createdAt: T0 }]
   async lockApp() {}
+  async eraseAccount() {
+    return 0
+  }
   async secrets(): Promise<StoredSecret[]> {
     return []
   }

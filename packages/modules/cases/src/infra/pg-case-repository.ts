@@ -205,6 +205,33 @@ export function pgCaseRepository(tx: TenantTx): CaseRepository & CaseReader {
       return true
     },
 
+    async eraseAccount(tenant, externalId, erasedId) {
+      const cases = await tx
+        .update(casesTable)
+        .set({ subjectExternalId: erasedId })
+        .where(and(tenantOf(tenant), eq(casesTable.subjectExternalId, externalId)))
+        .returning({ id: casesTable.id })
+      const ids = cases.map((c) => c.id)
+      if (ids.length > 0) {
+        await tx
+          .update(decisionsTable)
+          .set({ publicReason: null, internalNote: null })
+          .where(and(eq(decisionsTable.orgId, tenant.orgId), eq(decisionsTable.appId, tenant.appId), eq(decisionsTable.livemode, tenant.livemode), inArray(decisionsTable.caseId, ids)))
+      }
+      const reports = await tx
+        .update(caseReportsTable)
+        .set({ reporterExternalId: null, reporterAccountCreatedAt: null, reportedAccountCreatedAt: null })
+        .where(
+          and(
+            reportsOf(tenant),
+            isNotNull(caseReportsTable.reporterExternalId),
+            ids.length > 0 ? or(eq(caseReportsTable.reporterExternalId, externalId), inArray(caseReportsTable.caseId, ids)) : eq(caseReportsTable.reporterExternalId, externalId),
+          ),
+        )
+        .returning({ id: caseReportsTable.reportId })
+      return ids.length + reports.length
+    },
+
     async addActionFailure(tenant, caseId, actionRequestId, at) {
       const rows = await tx
         .insert(actionFailuresTable)

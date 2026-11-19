@@ -130,6 +130,18 @@ describe.skipIf(!testDatabaseUrl)('the audit log on Postgres', () => {
     expect(await verify(tenant)).toEqual({ ok: true, checked: 2 })
   })
 
+  it("erases an account from the entries found by it, and the chain still verifies", async () => {
+    const tenant: TenantRef = { orgId: 'org_x', appId: 'app_x', livemode: true }
+    const opened = (caseId: string, subject: string) => ({ id: `evt_${++n}`, type: 'case.opened', data: { caseId, reportId: `rpt_${caseId}`, subjectExternalId: subject, band: 'standard', occurredAt: clock.now().toISOString() } })
+    await record(tenant, opened('case_x1', 'u_john_doe'))
+    await record(tenant, opened('case_x2', 'u_jim_doe'))
+    expect(await withTenant(db, scope(tenant), (tx) => pgAuditStore(tx).eraseAccount(tenant, 'u_john_doe', 'erased_ers_1'))).toBe(1)
+    expect((await search(tenant, { subjectExternalId: 'u_john_doe' })).data).toEqual([])
+    expect((await search(tenant, { subjectExternalId: 'erased_ers_1' })).data.map((e) => e.target.id)).toEqual(['case_x1'])
+    expect((await search(tenant, { subjectExternalId: 'u_jim_doe' })).data).toHaveLength(1)
+    expect(await verify(tenant)).toMatchObject({ ok: true, checked: 2 })
+  })
+
   it('keeps tenants apart', async () => {
     const other = { orgId: 'org_b', appIds: ['app_b', 'app_a'], livemode: true }
     expect(await withTenant(db, other, (tx) => pgAuditStore(tx).search(A, { limit: 50 }))).toEqual({ data: [], nextAfterSeq: null })

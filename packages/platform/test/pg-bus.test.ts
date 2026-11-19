@@ -400,6 +400,56 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
     ])
   })
 
+  it('follows a tracked event with the groups it was queued for, in its tenant and key', async () => {
+    const { handler } = recorder()
+    bus.subscribe('g2', ['x'], handler())
+    bus.subscribe('g1', ['x'], handler())
+    bus.subscribe('other', ['y'], handler())
+    await bus.drain()
+    await bus.publish([{ ...ev('x', 'ers_1', null, B, 'evt_tracked'), track: true }, ev('x', 'k')])
+    await bus.drain()
+    const facts = (await bus.log()).filter((l) => l.event.type === 'bus.event_fanned_out.v1').map((l) => l.event)
+    expect(facts).toEqual([
+      expect.objectContaining({ id: 'bus.event_fanned_out:evt_tracked', key: 'ers_1', tenant: B, data: { eventId: 'evt_tracked', type: 'x', groups: ['g1', 'g2'] } }),
+    ])
+    // A tracked event no group takes still says so.
+    await bus.publish({ ...ev('z', 'ers_2', null, A, 'evt_lonely'), track: true })
+    await bus.drain()
+    expect((await bus.log()).find((l) => l.event.id === 'bus.event_fanned_out:evt_lonely')?.event.data).toEqual({ eventId: 'evt_lonely', type: 'z', groups: [] })
+  })
+
+  it("reports a tracked event's dead letter, and only a tracked one's", async () => {
+    bus.subscribe('down', ['x'], async () => {
+      throw new Error('The service is down')
+    }, { maxAttempts: 2 })
+    await bus.drain()
+    await bus.publish([{ ...ev('x', 'ers_1', null, A, 'evt_tracked'), track: true }, ev('x', 'k', null, A, 'evt_plain')])
+    await bus.drain()
+    const dead = (await bus.log()).filter((l) => l.event.type === 'bus.delivery_dead_lettered.v1').map((l) => l.event)
+    expect(dead).toEqual([
+      expect.objectContaining({ key: 'ers_1', data: { eventId: 'evt_tracked', type: 'x', group: 'down', attempts: 2, error: 'The service is down' } }),
+    ])
+  })
+
+  it('purges events every group has handled once past retention, keeping dead letters and pending work', async () => {
+    expect(await bus.purge()).toBe(0)
+    bus.subscribe('ok', ['done'], async () => {})
+    bus.subscribe('broken', ['dead'], async () => {
+      throw new Error('boom')
+    }, { maxAttempts: 1 })
+    await bus.drain()
+    await bus.publish([ev('done', 'k1'), ev('dead', 'k2'), ev('nobody', 'k3')])
+    await bus.drain()
+    await bus.publish(ev('done', 'k4'))
+    // Published, not handled yet: kept.
+    const now = newBus({ retentionMs: 0 })
+    expect(await bus.purge()).toBe(0)
+    expect(await now.purge()).toBe(2)
+    expect((await bus.log()).map((l) => l.event.type).sort()).toEqual(['dead', 'done'])
+    expect(await bus.deadLetters()).toHaveLength(1)
+    expect(await newBus({ retentionMs: null }).purge()).toBe(0)
+  })
+
   describe('with a contract', () => {
     /** Knows order.placed.v1 at 1.2.0, whose data needs a string `orderId`; reads data as given. */
     const contract: EventContract & { seen: unknown[] } = {

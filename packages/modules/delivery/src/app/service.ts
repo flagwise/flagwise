@@ -1,7 +1,7 @@
 // Delivery as a service: settling action requests, each in one transaction of its own with its
 // events, and its reactions on the bus, reading and writing only its own tables.
 
-import { currentType, type EventData } from '@flagwise/contracts'
+import { currentType, erasedId, erasureAnswer, type EventData } from '@flagwise/contracts'
 import type { Clock, TenantRef } from '@flagwise/kernel'
 import { tenantOf, type BusEvent, type EventBus, type UnitOfWork, type Work } from '@flagwise/platform'
 import type { InternalEvent } from '../domain/webhooks.ts'
@@ -57,6 +57,9 @@ export function actionSettlement(deps: DeliveryServiceDeps): ActionSettlement {
  *   case.triaged after the LLM answered sends none: its case.retriaged does, once moderation has
  *   taken it, so a case a moderator claimed meanwhile sends nothing. One caused by a moderator's
  *   correction sends none either: the tenant hears of the case again at its decision.
+ *   erasure.completed -> subject.erased.
+ * - 'delivery.erasure': subject.erasure_requested -> the account's id replaced in the webhook
+ *   bodies that name it (action requests keep no account id); answers erased, or nothing_held.
  * The decider of an action becomes its `requested_by`: an API key (`key_` ids), Flagwise itself
  * (`system`), else a member.
  */
@@ -96,7 +99,16 @@ export function subscribeDelivery(bus: EventBus, deps: DeliveryServiceDeps): voi
     )
   })
 
-  bus.subscribe('delivery.webhooks', ['case.triaged.v1', 'case.retriaged.v1', 'case.untriaged.v1', 'action.requested.v1'], async (event) => {
+  bus.subscribe('delivery.erasure', [currentType('subject.erasure_requested')], async (event) => {
+    const tenant = tenantOf(event)
+    const request = event.data as EventData<'subject.erasure_requested.v1'>
+    await deps.uow.run(tenant, async (w) => {
+      const had = await w.stores.webhooks.eraseAccount(tenant, request.subjectExternalId, erasedId(request.erasureId))
+      await w.publish(erasureAnswer(request, 'delivery.erasure', had > 0 ? 'erased' : 'nothing_held', deps.clock.now()))
+    })
+  })
+
+  bus.subscribe('delivery.webhooks', ['case.triaged.v1', 'case.retriaged.v1', 'case.untriaged.v1', 'action.requested.v1', 'erasure.completed.v1'], async (event) => {
     const cause = event.type === 'case.triaged.v1' ? (event.data as EventData<'case.triaged.v1'>).cause : undefined
     if (cause === 'correction' || cause === 'llm_retry') return
     const tenant = tenantOf(event)
@@ -112,6 +124,10 @@ function requesterOf(decidedBy: string): RequestedBy {
 
 /** The webhook-side view of a case.triaged, case.retriaged, case.untriaged or action.requested bus event. */
 function webhookEventOf(event: BusEvent): InternalEvent {
+  if (event.type === 'erasure.completed.v1') {
+    const d = event.data as EventData<'erasure.completed.v1'>
+    return { type: 'subject.erased', erasureId: d.erasureId, subjectExternalId: d.subjectExternalId, heldItems: d.heldItems }
+  }
   if (event.type === 'case.untriaged.v1') {
     const d = event.data as EventData<'case.untriaged.v1'>
     return { type: 'case.untriaged', caseId: d.caseId, reason: d.reason }

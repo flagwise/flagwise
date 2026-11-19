@@ -37,7 +37,9 @@ import {
   type PgBus,
 } from '@flagwise/platform'
 import type { FlagwisePlugin } from '@flagwise/plugin-api'
-import { busPolicyEvents, pgPolicy } from '@flagwise/policy'
+import { busPolicyEvents, pgPolicy, subscribePolicy } from '@flagwise/policy'
+import { pgPrivacyDeps, privacyService, subscribePrivacy } from '@flagwise/privacy'
+import { subscribeTenancy } from '@flagwise/tenancy'
 import { pgTriageDeps, subscribeTriage } from '@flagwise/triage'
 import { sql } from 'drizzle-orm'
 import { createApp, type App } from './app.ts'
@@ -140,6 +142,7 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
   })
   const delivery = pgDeliveryDeps(db, bus, { clock, newActionRequestId: () => newId('acr', { clock }), newEventId: eventId })
   const auditLog = pgAuditDeps(db, clock)
+  const privacy = pgPrivacyDeps(db, bus, { clock, newErasureId: () => newId('ers', { clock }) })
 
   // Each service's handlers; they only run once the bus is started, in MODE worker or all.
   subscribeIntake(bus, intake)
@@ -148,6 +151,9 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
   subscribeCases(bus, moderation)
   subscribeDelivery(bus, delivery)
   subscribeAudit(bus, auditLog)
+  subscribePrivacy(bus, privacy)
+  subscribePolicy(bus, { clock })
+  subscribeTenancy(bus, { clock })
 
   const caseWork = casesService(moderation)
   const cases: CasesRoutesDeps = { read: pgCaseReads(db), ...caseWork, clock }
@@ -155,6 +161,7 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
   const actionRequests: ActionRequestRoutesDeps = { read: pgActionRequestReads(db), confirm: settlement.confirm, fail: settlement.fail }
   const appConfig = pgPolicy(db, { clock, events: (tx) => busPolicyEvents(bus, tx, eventId) })
   const audit = auditReads(auditLog)
+  const erasures = { ...privacyService(privacy), clock }
   const sender: WebhookSender | undefined =
     worker && config.secrets
       ? createWebhookSender(pgSenderDeps(db, { sealer: keyringSealer(config.secrets), clock, post: fetchPost(options.fetch) }), { onError })
@@ -192,7 +199,7 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
 
   const app = createApp({
     ...(options.plugins ? { plugins: options.plugins } : {}),
-    ...(api ? { api: { keys: pgKeyResolver(db), limiter: memoryRateLimiter(), rateLimit: config.rateLimit, clock, intake, cases, classify, actionRequests, config: appConfig, audit, idempotency: pgIdempotencyStore(db) } } : {}),
+    ...(api ? { api: { keys: pgKeyResolver(db), limiter: memoryRateLimiter(), rateLimit: config.rateLimit, clock, intake, cases, classify, actionRequests, config: appConfig, audit, privacy: erasures, idempotency: pgIdempotencyStore(db) } } : {}),
     ready: async () => {
       if (!prepared) throw new Error('The database is not ready yet')
       await Promise.all([db.app.execute(sql`SELECT 1`), db.system.execute(sql`SELECT 1`)])

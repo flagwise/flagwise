@@ -92,6 +92,22 @@ describe.skipIf(!testDatabaseUrl)('pgClassificationStore', () => {
     expect(await inTenant(test, (s) => s.monthCounts(test, since))).toEqual({ cases: 1, escalations: 0 })
   })
 
+  it("erases an account: its reports' screenings take the tombstone and their classifications lose the LLM summary", async () => {
+    const screening = (reportId: string, reported: string, reporter: string) => ({ tenant: A, reportId, p0Signals: [], injectionSuspected: false, reportedExternalId: reported, reporterExternalId: reporter })
+    await inTenant(A, async (s) => {
+      await s.keepScreening(screening('rpt_e1', 'u_john_doe', 'u_jane_doe'))
+      await s.keepScreening(screening('rpt_e2', 'u_jim_doe', 'u_john_doe'))
+      await s.keepScreening(screening('rpt_e3', 'u_jim_doe', 'u_jane_doe'))
+      for (const n of ['e1', 'e2', 'e3']) await s.insert(llm(`case_${n}`, { reportId: `rpt_${n}` }))
+    })
+    expect(await inTenant(A, (s) => s.eraseAccount(A, 'u_john_doe', 'erased_ers_1'))).toBe(2)
+    expect(await inTenant(A, (s) => s.findScreening(A, 'rpt_e1'))).toMatchObject({ reportedExternalId: 'erased_ers_1', reporterExternalId: 'u_jane_doe' })
+    expect(await inTenant(A, (s) => s.findScreening(A, 'rpt_e2'))).toMatchObject({ reportedExternalId: 'u_jim_doe', reporterExternalId: 'erased_ers_1' })
+    const summaries = await inTenant(A, async (s) => [(await s.find(A, 'case_e1'))?.summary, (await s.find(A, 'case_e2'))?.summary, (await s.find(A, 'case_e3'))?.summary])
+    expect(summaries).toEqual([null, null, 'The reported account asked for $200.'])
+    expect(await inTenant(A, (s) => s.eraseAccount(A, 'u_john_doe', 'erased_ers_1'))).toBe(0)
+  })
+
   it('keeps tenants apart', async () => {
     const B = { ...A, appId: 'app_b' }
     expect(await inTenant(B, (s) => s.find(A, 'case_1'))).toBeNull()

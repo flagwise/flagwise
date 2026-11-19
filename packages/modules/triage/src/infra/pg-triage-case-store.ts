@@ -3,7 +3,7 @@
 
 import type { TenantRef } from '@flagwise/kernel'
 import { pgUnitOfWork, type Database, type EventBus, type TenantTx } from '@flagwise/platform'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, or, sql } from 'drizzle-orm'
 import type { ReportAccounts, TriageCase, TriageCaseStore, TriageClassification, TriageDeps } from '../app/ports.ts'
 import { pgTriagePolicyCopy } from './pg-policy-copy.ts'
 import { triageCasesTable as t } from './schema.ts'
@@ -32,6 +32,7 @@ export function pgTriageCaseStore(tx: TenantTx): TriageCaseStore {
       return {
         tenant,
         caseId,
+        ...(row.subjectExternalId !== null && { subjectExternalId: row.subjectExternalId }),
         openedAt: row.openedAt,
         reportIds: row.reportIds,
         reports: (row.reports as StoredAccounts[]).map((r) => ({ ...r, reporterAccountCreatedAt: time(r.reporterAccountCreatedAt), reportedAccountCreatedAt: time(r.reportedAccountCreatedAt) })),
@@ -52,6 +53,7 @@ export function pgTriageCaseStore(tx: TenantTx): TriageCaseStore {
           appId: r.tenant.appId,
           livemode: r.tenant.livemode,
           caseId: r.caseId,
+          subjectExternalId: r.subjectExternalId ?? null,
           openedAt: r.openedAt,
           reportIds: [...r.reportIds],
           reports: r.reports.map(stored),
@@ -63,6 +65,34 @@ export function pgTriageCaseStore(tx: TenantTx): TriageCaseStore {
           decided: r.decided,
         })
         .onConflictDoNothing()
+    },
+
+    async eraseAccount(tenant, externalId, erasedId) {
+      const rows = await tx
+        .select({ caseId: t.caseId, subject: t.subjectExternalId, reports: t.reports })
+        .from(t)
+        .where(
+          and(
+            eq(t.orgId, tenant.orgId),
+            eq(t.appId, tenant.appId),
+            eq(t.livemode, tenant.livemode),
+            or(eq(t.subjectExternalId, externalId), sql`${t.reports} @> ${JSON.stringify([{ reporterExternalId: externalId }])}::jsonb`),
+          ),
+        )
+        .for('update')
+      for (const row of rows) {
+        const reported = row.subject === externalId
+        const reports = (row.reports as StoredAccounts[]).map((r) => ({
+          ...r,
+          ...(r.reporterExternalId === externalId && { reporterExternalId: erasedId, reporterAccountCreatedAt: null }),
+          ...(reported && { reportedAccountCreatedAt: null }),
+        }))
+        await tx
+          .update(t)
+          .set({ reports, ...(reported && { subjectExternalId: erasedId }) })
+          .where(one(tenant, row.caseId))
+      }
+      return rows.length
     },
 
     async attach(tenant, caseId, reportId, facts) {

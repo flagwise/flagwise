@@ -2,7 +2,7 @@
 // and its reactions to other services' facts on the bus. It reads only its own tables and its copy
 // of the app's policy.
 
-import { allowedActionKeys, currentType, policyIn, type EventData, type Policy } from '@flagwise/contracts'
+import { allowedActionKeys, currentType, erasedId, erasureAnswer, policyIn, type EventData, type Policy } from '@flagwise/contracts'
 import type { Clock } from '@flagwise/kernel'
 import { subscribeCopy, tenantOf, type DocumentCopy, type EventBus, type UnitOfWork, type Work } from '@flagwise/platform'
 import { nextState } from '../domain/case-state.ts'
@@ -78,6 +78,8 @@ export function casesService(deps: CasesServiceDeps): CasesService {
  *   One caused by a correction: an undecided case (claimed or open) still in the corrected
  *   category takes its triage; an older correction's, for a category corrected again since, is
  *   left for the newer one's.
+ * - 'cases.erasure': subject.erasure_requested -> under the subject's lock, eraseAccount; answers
+ *   erased, or nothing_held.
  * - 'cases.actions': action.failed -> notes the failure; a new one moves a decided case to
  *   action_failed. decision.actions_confirmed -> a decided or action_failed case with that
  *   decision is actioned.
@@ -146,6 +148,16 @@ export function subscribeCases(bus: EventBus, deps: CasesServiceDeps): void {
         const { cause: _cause, ...retriaged } = d
         await w.publish({ id: `case.retriaged:${event.id}`, type: currentType('case.retriaged'), key: d.caseId, data: retriaged })
       }
+    })
+  })
+
+  bus.subscribe('cases.erasure', [currentType('subject.erasure_requested')], async (event) => {
+    const tenant = tenantOf(event)
+    const request = event.data as EventData<'subject.erasure_requested.v1'>
+    await uow.run(tenant, async (w) => {
+      await w.stores.cases.lockSubject(tenant, request.subjectExternalId)
+      const had = await w.stores.cases.eraseAccount(tenant, request.subjectExternalId, erasedId(request.erasureId))
+      await w.publish(erasureAnswer(request, 'cases.erasure', had > 0 ? 'erased' : 'nothing_held', deps.clock.now()))
     })
   })
 

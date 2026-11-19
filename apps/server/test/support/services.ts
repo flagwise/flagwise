@@ -9,7 +9,7 @@ import { currentType, DEFAULT_POLICY, type EventData, type Policy, type PolicyAc
 import { actionSettlement, subscribeDelivery, type DeliveryServiceDeps } from '@flagwise/delivery'
 import type { Clock, TenantRef } from '@flagwise/kernel'
 import { tenantOf, type EventBus } from '@flagwise/platform'
-import { subscribeTriage, type TriageCase, type TriageCaseStore, type TriageDeps } from '@flagwise/triage'
+import { erasedFromCase, subscribeTriage, type TriageCase, type TriageCaseStore, type TriageDeps } from '@flagwise/triage'
 
 /** What a fixed classifier says about a case. */
 export interface Classification {
@@ -116,5 +116,12 @@ export class MemoryTriageCases implements TriageCaseStore {
     if (!r) return false
     this.rows.set(caseId, { ...r, ...change })
     return true
+  }  async eraseAccount(_t: TenantRef, externalId: string, erasedId: string) {
+    let n = 0
+    for (const [id, r] of this.rows) {
+      const erased = erasedFromCase(r, externalId, erasedId)
+      if (erased) (this.rows.set(id, erased), n++)
+    }
+    return n
   }
 }

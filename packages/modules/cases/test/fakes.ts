@@ -57,6 +57,16 @@ export class InMemoryCaseRepository implements CaseRepository {
     return r ? Object.freeze(copy(r)) : null
   }
 
+  async eraseAccount(tenant: TenantRef, externalId: string, erasedId: string): Promise<number> {
+    let n = 0
+    for (const [id, r] of this.rows) {
+      if (!sameTenant(r.tenant, tenant) || r.subjectExternalId !== externalId) continue
+      this.rows.set(id, { ...r, subjectExternalId: erasedId })
+      n++
+    }
+    return n
+  }
+
   async lockSubject(): Promise<void> {
     this.calls.push({ method: 'lockSubject' })
   }

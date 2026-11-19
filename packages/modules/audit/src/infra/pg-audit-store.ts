@@ -63,6 +63,15 @@ export function pgAuditStore(tx: TenantTx): AuditStore {
       })
     },
 
+    async eraseAccount(tenant, externalId, erasedId) {
+      const changed = await tx
+        .update(entries)
+        .set({ pii: null, piiSalt: null, subjectExternalId: erasedId })
+        .where(and(ofChain(tenant), eq(entries.subjectExternalId, externalId)))
+        .returning({ seq: entries.seq })
+      return changed.length
+    },
+
     async search(tenant, q) {
       const where: SQL[] = [ofChain(tenant)!]
       if (q.actorId !== undefined) where.push(eq(entries.actorId, q.actorId))

@@ -165,6 +165,18 @@ UPDATE platform.consumer_groups g
  WHERE types IS NOT NULL;
 `,
     },
+    {
+      id: '0006_tracked_events_and_retention',
+      sql: `
+-- A tracked event (BusEvent.track): fanning it out, the system role publishes the bus's own facts
+-- about it (bus.event_fanned_out, bus.delivery_dead_lettered), and it deletes events past
+-- retention, so it may now insert and delete events too.
+ALTER TABLE platform.events ADD COLUMN tracked boolean NOT NULL DEFAULT false;
+GRANT INSERT, DELETE ON platform.events TO {{system}};
+GRANT USAGE ON SEQUENCE platform.events_seq_seq TO {{system}};
+CREATE INDEX events_by_age ON platform.events (created_at) WHERE fanned_out;
+`,
+    },
   ],
 }
 

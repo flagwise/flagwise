@@ -236,9 +236,21 @@ importers:
 
   packages/modules/privacy:
     dependencies:
+      '@flagwise/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
       '@flagwise/kernel':
         specifier: workspace:*
         version: link:../../kernel
+      '@flagwise/platform':
+        specifier: workspace:*
+        version: link:../../platform
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)
+      hono:
+        specifier: ^4.13.16
+        version: 4.13.16
 
   packages/modules/scoring:
     dependencies:

@@ -4,7 +4,7 @@
 // worked on it, and again on a moderator's correction. It publishes case.triaged or
 // case.untriaged; moderation saves them on the case.
 
-import { currentType, policyIn, type EventData } from '@flagwise/contracts'
+import { currentType, erasedId, erasureAnswer, policyIn, type EventData } from '@flagwise/contracts'
 import type { TenantRef } from '@flagwise/kernel'
 import { subscribeCopy, tenantOf, type BusEvent, type EventBus, type Work } from '@flagwise/platform'
 import { triageCase } from './case-triage.ts'
@@ -47,11 +47,21 @@ type Cause = NonNullable<EventData<'case.triaged.v1'>['cause']>
  *     from a release that triaged it itself, only marks the case corrected with its category.
  *   A classification for a case triage has no record of, or a correction of a case it has no
  *   classification of, throws, so it is retried and then dead-lettered.
+ * - 'triage.erasure': subject.erasure_requested -> the account erased from the kept cases (its id
+ *   replaced, its account ages dropped); answers erased, or nothing_held.
  */
 export function subscribeTriage(bus: EventBus, deps: TriageDeps): void {
   subscribeCopy(bus, 'triage.policy', 'policy.updated.v1', deps.policy, (d) => {
     const u = d as EventData<'policy.updated.v1'>
     return { version: u.version, document: u.policy }
+  })
+  bus.subscribe('triage.erasure', [currentType('subject.erasure_requested')], async (event) => {
+    const tenant = tenantOf(event)
+    const request = event.data as EventData<'subject.erasure_requested.v1'>
+    await deps.uow.run(tenant, async (w) => {
+      const had = await w.stores.cases.eraseAccount(tenant, request.subjectExternalId, erasedId(request.erasureId))
+      await w.publish(erasureAnswer(request, 'triage.erasure', had > 0 ? 'erased' : 'nothing_held', new Date()))
+    })
   })
   bus.subscribe('triage', TRIAGE_EVENT_TYPES, async (event) => {
     const tenant = tenantOf(event)
@@ -67,6 +77,7 @@ async function handle(deps: TriageDeps, w: Work<TriageStores>, tenant: TenantRef
       await cases.open({
         tenant,
         caseId: d.caseId,
+        subjectExternalId: d.subjectExternalId,
         openedAt: new Date(d.occurredAt),
         reportIds: [d.reportId],
         reports: d.facts ? [accountsOf(d.reportId, d.facts)] : [],

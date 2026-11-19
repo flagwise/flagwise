@@ -24,6 +24,8 @@ export interface Report {
   /** Set once the cases module has put the report in a case. */
   readonly caseId: string | null
   readonly joinedExistingCase: boolean | null
+  /** When its reporter or reported account was erased (its evidence is gone); unset or null before. */
+  readonly erasedAt?: Date | null
 }
 
 /** Report access inside one tenant transaction. */
@@ -39,6 +41,10 @@ export interface ReportStore {
   insert(report: Report, since: Date): Promise<boolean>
   /** Records the report's case, only while it has none; true when it changed. */
   setCase(tenant: TenantRef, reportId: string, caseId: string, joinedExistingCase: boolean): Promise<boolean>
+  /** The reports the account filed or was reported in. */
+  reportsOf(tenant: TenantRef, externalId: string): Promise<readonly Report[]>
+  /** Replaces the account's id with `erasedId` in its reports and marks them erased at `at`; how many it changed. */
+  eraseAccount(tenant: TenantRef, externalId: string, erasedId: string, at: Date): Promise<number>
 }
 
 export interface ReportReceivedEvent {
@@ -66,7 +72,7 @@ export interface ReportReceivedEvent {
 export interface IntakeTx {
   readonly reports: ReportStore
   /** Publishes in the transaction, so the event exists exactly when the report does. */
-  publish(event: ReportReceivedEvent): Promise<void>
+  publish(event: ReportReceivedEvent | { readonly id: string; readonly type: string; readonly key: string; readonly data: unknown }): Promise<void>
 }
 
 export interface IntakeDeps {
@@ -204,11 +210,12 @@ export async function getReport(deps: Pick<IntakeDeps, 'run'>, tenant: TenantRef
 
 /**
  * What the report says, from its evidence snapshot: 'not_found' when the tenant has no report with
- * this id; an Error when its snapshot is missing or unreadable, which is a broken install, not a
+ * this id; 'gone' once its reporter or reported account was erased; an Error when its snapshot is missing or unreadable, which is a broken install, not a
  * client mistake.
  */
 export async function getEvidence(deps: Pick<IntakeDeps, 'run' | 'storage'>, tenant: TenantRef, reportId: string): Promise<ReportSnapshot> {
   const report = await getReport(deps, tenant, reportId)
+  if (report.erasedAt) throw new FlagwiseError('gone', `The evidence of report ${reportId} was erased with its account`)
   const bytes = await deps.storage.get(report.snapshotKey)
   if (!bytes) throw new Error(`The evidence snapshot of report ${reportId} is missing`)
   return parseReportSnapshot(bytes)
@@ -224,4 +231,22 @@ export async function recordReportCase(
   input: { readonly tenant: TenantRef; readonly reportId: string; readonly caseId: string; readonly joinedExistingCase: boolean },
 ): Promise<boolean> {
   return deps.run(input.tenant, (tx) => tx.reports.setCase(input.tenant, input.reportId, input.caseId, input.joinedExistingCase))
+}
+
+/**
+ * Erases an account's part of intake: deletes the evidence snapshot of every report it filed or was
+ * reported in (deleting a missing one is fine, so a redelivery can finish the job), then replaces
+ * its id with `erasedId` in those reports and marks them erased. Returns how many reports it had.
+ */
+export async function eraseAccount(
+  deps: Pick<IntakeDeps, 'storage' | 'clock'>,
+  tx: IntakeTx,
+  tenant: TenantRef,
+  externalId: string,
+  erasedId: string,
+): Promise<number> {
+  const reports = await tx.reports.reportsOf(tenant, externalId)
+  for (const r of reports) await deps.storage.delete(r.snapshotKey)
+  await tx.reports.eraseAccount(tenant, externalId, erasedId, deps.clock.now())
+  return reports.length
 }

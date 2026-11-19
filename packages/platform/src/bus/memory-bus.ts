@@ -21,6 +21,38 @@ export interface BusEvent<T = unknown> {
    * publish; without one it keeps what the event carries.
    */
   readonly schemaVersion?: string
+  /**
+   * Tracked: when it is queued, the bus publishes `bus.event_fanned_out` naming every group it was
+   * queued for, and `bus.delivery_dead_lettered` when one of those deliveries is dead-lettered, so
+   * the publisher can wait for an answer from each group, wherever it runs.
+   */
+  readonly track?: boolean
+}
+
+/** The bus's own facts about a tracked event, published with the event's tenant and key. */
+export const BUS_FANNED_OUT = 'bus.event_fanned_out.v1'
+export const BUS_DEAD_LETTERED = 'bus.delivery_dead_lettered.v1'
+
+/** `bus.event_fanned_out` for a tracked event queued for `groups`. */
+export function fannedOutEvent(event: BusEvent, groups: readonly string[]): BusEvent {
+  return {
+    id: `bus.event_fanned_out:${event.id}`,
+    type: BUS_FANNED_OUT,
+    key: event.key,
+    data: { eventId: event.id, type: event.type, groups: [...groups].sort() },
+    ...(event.tenant && { tenant: event.tenant }),
+  }
+}
+
+/** `bus.delivery_dead_lettered` for a tracked event's delivery to `group`; `n` tells dead letters apart. */
+export function deadLetteredEvent(event: BusEvent, group: string, attempts: number, error: string, n: number | string): BusEvent {
+  return {
+    id: `bus.delivery_dead_lettered:${event.id}:${group}:${n}`,
+    type: BUS_DEAD_LETTERED,
+    key: event.key,
+    data: { eventId: event.id, type: event.type, group, attempts, error: error.slice(0, 500) },
+    ...(event.tenant && { tenant: event.tenant }),
+  }
 }
 
 /**
@@ -91,7 +123,9 @@ export interface MemoryBus extends EventBus {
  * fails throws and nothing from that call is published.
  *
  * Publishing: `publish` appends each new event to the log with the next sequence number and queues
- * one delivery per subscribed group whose types match (`'*'` matches all). It runs no handler. An
+ * one delivery per subscribed group whose types match (`'*'` matches all). It runs no handler. A
+ * tracked event is followed by its `bus.event_fanned_out`, and a dead letter of one by
+ * `bus.delivery_dead_lettered` (see BusEvent.track). An
  * event id already in the log is ignored. Every event needs non-empty string id, type and key, else
  * TypeError and nothing from that call is published. Returns how many events were new.
  *
@@ -132,6 +166,22 @@ export function createMemoryBus(opts?: { maxAttempts?: number; contract?: EventC
     return false
   }
 
+  /** Logs and queues new events; a tracked one is followed by its bus.event_fanned_out. */
+  const append = async (checked: readonly BusEvent[]): Promise<number> => {
+    let added = 0
+    for (const published of checked) {
+      const event = stampRequest(published)
+      if (ids.has(event.id)) continue
+      ids.add(event.id)
+      const seq = entries.length + 1
+      entries.push({ seq, event })
+      const queued = [...groups.values()].filter((group) => enqueue(group, seq, event)).map((g) => g.name)
+      added++
+      if (event.track) await append([checkedEvent(fannedOutEvent(event, queued), opts?.contract)])
+    }
+    return added
+  }
+
   const deliverRound = async (group: Group): Promise<number> => {
     const heads = new Map<string, Delivery>()
     for (const d of group.queue) if (!heads.has(d.event.key)) heads.set(d.event.key, d)
@@ -146,13 +196,9 @@ export function createMemoryBus(opts?: { maxAttempts?: number; contract?: EventC
       } catch (err) {
         if (d.attempt >= group.maxAttempts) {
           removeFrom(group.queue, d)
-          dead.push({
-            group: group.name,
-            seq: d.seq,
-            event: d.event,
-            attempts: d.attempt,
-            error: err instanceof Error ? err.message : String(err),
-          })
+          const error = err instanceof Error ? err.message : String(err)
+          dead.push({ group: group.name, seq: d.seq, event: d.event, attempts: d.attempt, error })
+          if (d.event.track) await append([checkedEvent(deadLetteredEvent(d.event, group.name, d.attempt, error, dead.length), opts?.contract)])
         } else {
           d.attempt++
         }
@@ -169,18 +215,7 @@ export function createMemoryBus(opts?: { maxAttempts?: number; contract?: EventC
           throw new TypeError('an event needs a non-empty string id, type and key')
         }
       }
-      const checked = events.map((e) => checkedEvent(e, opts?.contract))
-      let added = 0
-      for (const published of checked) {
-        const event = stampRequest(published)
-        if (ids.has(event.id)) continue
-        ids.add(event.id)
-        const seq = entries.length + 1
-        entries.push({ seq, event })
-        for (const group of groups.values()) enqueue(group, seq, event)
-        added++
-      }
-      return added
+      return append(events.map((e) => checkedEvent(e, opts?.contract)))
     },
 
     subscribe(name, types, handler, subOpts) {
