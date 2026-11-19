@@ -1,0 +1,18 @@
+{
+  "name": "@flagwise/scoring",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Violation score and ledger, reporter credibility, account-age weighting",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@flagwise/kernel": "workspace:*"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "@flagwise/classify",
+  "version": "0.0.0",
+  "private": true,
+  "description": "LLM adapters, pre/post rules, P0 safety layer, prompt-injection defense",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.3.0",
+    "@flagwise/contracts": "workspace:*",
+    "@flagwise/kernel": "workspace:*",
+    "@flagwise/platform": "workspace:*",
+    "@google/genai": "2.30.0",
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4.13.16",
+    "openai": "7.41.0"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  }
+}

@@ -1,0 +1,288 @@
+// The role matrix, the rules for granting roles, cross-app evidence, API keys and embedded staff.
+import { describe, expect, it } from 'vitest'
+import {
+  can,
+  type ApiKeyScope,
+  type AppAction,
+  type AppRole,
+  type OrgAction,
+  type OrgRole,
+  type TenantContext,
+} from '../src/index.ts'
+
+const A = 'app_a'
+const B = 'app_b'
+
+function member(orgRole: OrgRole | null, appRoles: Record<string, AppRole> = {}, livemode = true): TenantContext {
+  return {
+    orgId: 'org_1',
+    appId: undefined,
+    appIds: orgRole ? [A, B] : Object.keys(appRoles),
+    actor: { type: 'member', id: 'mem_1' },
+    orgRole,
+    appRoles,
+    livemode,
+  }
+}
+
+function apiKey(scopes: ApiKeyScope[], appId = A): TenantContext {
+  return {
+    orgId: 'org_1',
+    appId,
+    appIds: [appId],
+    actor: { type: 'api_key', id: 'key_1', scopes },
+    orgRole: null,
+    appRoles: {},
+    livemode: true,
+  }
+}
+
+function embed(role: AppRole, appId = A): TenantContext {
+  return {
+    orgId: 'org_1',
+    appId,
+    appIds: [appId],
+    actor: { type: 'embed', sub: 'staff_9', name: 'Staff' },
+    orgRole: null,
+    appRoles: { [appId]: role },
+    livemode: true,
+  }
+}
+
+const system: TenantContext = {
+  orgId: 'org_1',
+  appId: A,
+  appIds: [A],
+  actor: { type: 'system' },
+  orgRole: null,
+  appRoles: {},
+  livemode: true,
+}
+
+const owner = member('owner')
+const orgAdmin = member('org_admin')
+const appAdminA = member(null, { [A]: 'app_admin' })
+const moderatorA = member(null, { [A]: 'moderator' })
+const noRole = member(null)
+const developerLive = member(null, { [A]: 'developer' })
+const developerTest = member(null, { [A]: 'developer' }, false)
+
+describe('app actions', () => {
+  // [action, App Admin, Moderator, Developer in live mode, Developer in test mode]
+  // Owner and Org Admin hold every app action members may use.
+  const matrix: [AppAction, boolean, boolean, boolean, boolean][] = [
+    ['config.read', true, true, true, true],
+    ['integration.configure', true, false, true, true],
+    ['policy.configure', true, false, false, false],
+    ['api_key.manage', true, false, true, true],
+    ['case.work', true, true, false, true],
+    ['account.read', true, true, false, true],
+    ['score.adjust', true, true, false, true],
+    ['appeal.review', true, true, false, true],
+    ['legal_hold.manage', true, false, false, true],
+    ['evidence.export', true, false, false, true],
+    ['subject.erase', true, false, false, true],
+    ['support_bundle.send', true, true, false, true],
+    ['audit.read', true, true, false, true],
+    ['metrics.read', true, true, true, true],
+    ['categories.read', true, true, true, true],
+  ]
+
+  describe.each(matrix)('%s', (action, appAdminOk, moderatorOk, devLiveOk, devTestOk) => {
+    it('follows the role matrix on an app the member belongs to', () => {
+      expect(can(owner, { action, appId: A })).toBe(true)
+      expect(can(orgAdmin, { action, appId: A })).toBe(true)
+      expect(can(appAdminA, { action, appId: A })).toBe(appAdminOk)
+      expect(can(moderatorA, { action, appId: A })).toBe(moderatorOk)
+    })
+
+    it('gives a Developer live access only to integration, and test-mode access like an App Admin', () => {
+      expect(can(developerLive, { action, appId: A })).toBe(devLiveOk)
+      expect(can(developerTest, { action, appId: A })).toBe(devTestOk)
+    })
+
+    it('is denied on an app the member has no role in', () => {
+      expect(can(appAdminA, { action, appId: B })).toBe(false)
+      expect(can(moderatorA, { action, appId: B })).toBe(false)
+      expect(can(developerTest, { action, appId: B })).toBe(false)
+      expect(can(noRole, { action, appId: A })).toBe(false)
+    })
+
+    it('is allowed on every app for org-level roles', () => {
+      expect(can(owner, { action, appId: B })).toBe(true)
+      expect(can(orgAdmin, { action, appId: B })).toBe(true)
+    })
+  })
+
+  it('does not let test mode widen App Admin or Moderator access', () => {
+    expect(can(member(null, { [A]: 'moderator' }, false), { action: 'policy.configure', appId: A })).toBe(false)
+    expect(can(member(null, { [A]: 'moderator' }, false), { action: 'evidence.export', appId: A })).toBe(false)
+  })
+
+  it('uses the role of each app separately for a member with different roles per app', () => {
+    const mixed = member(null, { [A]: 'app_admin', [B]: 'moderator' })
+    expect(can(mixed, { action: 'policy.configure', appId: A })).toBe(true)
+    expect(can(mixed, { action: 'policy.configure', appId: B })).toBe(false)
+    expect(can(mixed, { action: 'case.work', appId: B })).toBe(true)
+  })
+})
+
+describe('org actions', () => {
+  // [action, Owner, Org Admin]; App Admins and Moderators never
+  const matrix: [OrgAction, boolean, boolean][] = [
+    ['billing.manage', true, false],
+    ['app.create', true, true],
+    ['app.delete', true, true],
+    ['member.remove', true, true],
+    ['ownership.transfer', true, false],
+  ]
+
+  it.each(matrix)('%s', (action, ownerOk, orgAdminOk) => {
+    expect(can(owner, { action })).toBe(ownerOk)
+    expect(can(orgAdmin, { action })).toBe(orgAdminOk)
+    expect(can(appAdminA, { action })).toBe(false)
+    expect(can(moderatorA, { action })).toBe(false)
+    expect(can(developerTest, { action })).toBe(false)
+  })
+})
+
+describe.each(['member.invite', 'role.assign'] as const)('%s', (action) => {
+  it('never grants Owner; ownership only moves by transfer', () => {
+    expect(can(owner, { action, role: 'owner' })).toBe(false)
+    expect(can(orgAdmin, { action, role: 'owner' })).toBe(false)
+  })
+
+  it('lets Owner and Org Admin grant Org Admin', () => {
+    expect(can(owner, { action, role: 'org_admin' })).toBe(true)
+    expect(can(orgAdmin, { action, role: 'org_admin' })).toBe(true)
+    expect(can(appAdminA, { action, role: 'org_admin' })).toBe(false)
+  })
+
+  it('lets Owner and Org Admin grant app roles in any app', () => {
+    for (const role of ['app_admin', 'moderator', 'developer'] as const) {
+      expect(can(owner, { action, role, appId: B })).toBe(true)
+      expect(can(orgAdmin, { action, role, appId: B })).toBe(true)
+    }
+  })
+
+  it('lets an App Admin grant Moderator or Developer in their own app only', () => {
+    expect(can(appAdminA, { action, role: 'moderator', appId: A })).toBe(true)
+    expect(can(appAdminA, { action, role: 'developer', appId: A })).toBe(true)
+    expect(can(appAdminA, { action, role: 'moderator', appId: B })).toBe(false)
+    expect(can(appAdminA, { action, role: 'app_admin', appId: A })).toBe(false)
+  })
+
+  it('never lets a Moderator or Developer grant anything', () => {
+    expect(can(moderatorA, { action, role: 'moderator', appId: A })).toBe(false)
+    expect(can(developerTest, { action, role: 'developer', appId: A })).toBe(false)
+  })
+
+  it('rejects an app role without an app, and an org role with one', () => {
+    expect(can(owner, { action, role: 'moderator' })).toBe(false)
+    expect(can(owner, { action, role: 'org_admin', appId: A })).toBe(false)
+  })
+})
+
+describe('evidence.cross_app_full', () => {
+  const crossAB = { action: 'evidence.cross_app_full', appId: A, otherAppId: B } as const
+
+  it('is allowed for Owner and Org Admin', () => {
+    expect(can(owner, crossAB)).toBe(true)
+    expect(can(orgAdmin, crossAB)).toBe(true)
+  })
+
+  it('needs access to both apps, with any app role', () => {
+    expect(can(moderatorA, crossAB)).toBe(false)
+    expect(can(member(null, { [A]: 'moderator', [B]: 'moderator' }), crossAB)).toBe(true)
+    expect(can(member(null, { [A]: 'app_admin', [B]: 'moderator' }), crossAB)).toBe(true)
+  })
+
+  it('does not count a Developer role as access, since developers never see live evidence', () => {
+    expect(can(member(null, { [A]: 'moderator', [B]: 'developer' }), crossAB)).toBe(false)
+  })
+})
+
+describe('API keys', () => {
+  const byScope: [ApiKeyScope, AppAction[]][] = [
+    ['ingest', ['report.create', 'categories.read', 'identifiers.check']],
+    ['actions', ['action_request.respond', 'appeal.file']],
+    [
+      'admin',
+      [
+        'config.read',
+        'integration.configure',
+        'policy.configure',
+        'case.work',
+        'account.read',
+        'score.adjust',
+        'appeal.review',
+        'legal_hold.manage',
+        'evidence.export',
+        'subject.erase',
+        'audit.read',
+        'metrics.read',
+      ],
+    ],
+  ]
+
+  describe.each(byScope)('scope %s', (scope, actions) => {
+    it.each(actions)('allows %s on its own app', (action) => {
+      expect(can(apiKey([scope]), { action, appId: A })).toBe(true)
+    })
+
+    it.each(actions)('denies %s without the scope', (action) => {
+      const others = (['ingest', 'actions', 'admin'] as const).filter((s) => s !== scope)
+      expect(can(apiKey([...others]), { action, appId: A })).toBe(false)
+    })
+
+    it.each(actions)('denies %s on another app', (action) => {
+      expect(can(apiKey(['ingest', 'actions', 'admin']), { action, appId: B })).toBe(false)
+    })
+  })
+
+  it('never manages API keys, sends support bundles, or touches org settings or roles', () => {
+    const all = apiKey(['ingest', 'actions', 'admin'])
+    expect(can(all, { action: 'api_key.manage', appId: A })).toBe(false)
+    expect(can(all, { action: 'support_bundle.send', appId: A })).toBe(false)
+    expect(can(all, { action: 'billing.manage' })).toBe(false)
+    expect(can(all, { action: 'app.create' })).toBe(false)
+    expect(can(all, { action: 'member.invite', role: 'moderator', appId: A })).toBe(false)
+    expect(can(all, { action: 'evidence.cross_app_full', appId: A, otherAppId: B })).toBe(false)
+  })
+})
+
+describe('tenant backend calls are API-key only', () => {
+  it.each(['report.create', 'identifiers.check', 'action_request.respond', 'appeal.file'] as const)(
+    'denies %s to dashboard members',
+    (action) => {
+      expect(can(owner, { action, appId: A })).toBe(false)
+    },
+  )
+})
+
+describe('embedded staff', () => {
+  it('get the app actions of their embed role, on the embedded app only', () => {
+    expect(can(embed('moderator'), { action: 'case.work', appId: A })).toBe(true)
+    expect(can(embed('moderator'), { action: 'policy.configure', appId: A })).toBe(false)
+    expect(can(embed('app_admin'), { action: 'policy.configure', appId: A })).toBe(true)
+    expect(can(embed('app_admin'), { action: 'case.work', appId: B })).toBe(false)
+  })
+
+  it('cannot carry the Developer role', () => {
+    expect(can(embed('developer'), { action: 'config.read', appId: A })).toBe(false)
+  })
+
+  it('never manage API keys, webhook destinations, org settings or members', () => {
+    expect(can(embed('app_admin'), { action: 'api_key.manage', appId: A })).toBe(false)
+    expect(can(embed('app_admin'), { action: 'integration.configure', appId: A })).toBe(false)
+    expect(can(embed('app_admin'), { action: 'app.create' })).toBe(false)
+    expect(can(embed('app_admin'), { action: 'member.invite', role: 'moderator', appId: A })).toBe(false)
+  })
+})
+
+describe('system actor', () => {
+  it('is denied: background jobs do not authorize through can()', () => {
+    expect(can(system, { action: 'case.work', appId: A })).toBe(false)
+    expect(can(system, { action: 'billing.manage' })).toBe(false)
+  })
+})

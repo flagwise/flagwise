@@ -1,0 +1,7 @@
+packages:
+  - apps/*
+  - packages/*
+  - packages/modules/*
+ignoredBuiltDependencies:
+  # Ships a prebuilt native binary as an optional dependency; its postinstall is not needed.
+  - "@swc/core"

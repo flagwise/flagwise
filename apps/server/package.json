@@ -1,0 +1,42 @@
+{
+  "name": "@flagwise/server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Flagwise server: createApp(), MODE=api|worker|all",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@flagwise/alerts": "workspace:*",
+    "@flagwise/appeals": "workspace:*",
+    "@flagwise/audit": "workspace:*",
+    "@flagwise/cases": "workspace:*",
+    "@flagwise/classify": "workspace:*",
+    "@flagwise/contracts": "workspace:*",
+    "@flagwise/delivery": "workspace:*",
+    "@flagwise/intake": "workspace:*",
+    "@flagwise/kernel": "workspace:*",
+    "@flagwise/metrics": "workspace:*",
+    "@flagwise/platform": "workspace:*",
+    "@flagwise/plugin-api": "workspace:*",
+    "@flagwise/policy": "workspace:*",
+    "@flagwise/privacy": "workspace:*",
+    "@flagwise/scoring": "workspace:*",
+    "@flagwise/tenancy": "workspace:*",
+    "@flagwise/triage": "workspace:*",
+    "@hono/node-server": "^2.1.6",
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4.13.16"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=../../.env src/main.ts",
+    "dev": "node --env-file-if-exists=../../.env --watch-path=src --watch-path=../../packages src/main.ts",
+    "cli": "node --env-file-if-exists=../../.env src/cli.ts",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  }
+}

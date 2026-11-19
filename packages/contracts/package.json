@@ -1,0 +1,20 @@
+{
+  "name": "@flagwise/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Internal Zod schemas for events, API and evidence blobs",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  }
+}

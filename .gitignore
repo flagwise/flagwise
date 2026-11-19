@@ -1,0 +1,12 @@
+node_modules
+dist/
+coverage/
+.data/
+.env
+.env.*
+!.env.example
+/prompts/
+*.log
+.DS_Store
+.vscode/
+.idea/

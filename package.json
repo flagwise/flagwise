@@ -1,0 +1,27 @@
+{
+  "name": "flagwise",
+  "private": true,
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@10.34.9",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @flagwise/server dev",
+    "start": "pnpm --filter @flagwise/server start",
+    "flagwise": "pnpm --filter @flagwise/server cli",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint:deps": "depcruise apps packages --config .dependency-cruiser.cjs",
+    "verify": "pnpm typecheck && pnpm lint:deps && pnpm test",
+    "wiring": "pnpm --filter @flagwise/wiring-spec wiring"
+  },
+  "devDependencies": {
+    "@swc/core": "^1.16.21",
+    "@types/node": "^26.6.6",
+    "dependency-cruiser": "^18.7.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
