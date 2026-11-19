@@ -40,6 +40,7 @@ export const reportScreeningsTable = schema.table('report_screenings', {
   injectionSuspected: boolean('injection_suspected').notNull(),
   reportedExternalId: text('reported_external_id'),
   reporterExternalId: text('reporter_external_id'),
+  evidenceRef: text('evidence_ref').notNull(),
 })
 
 /** The copy of each app's policy, kept from policy.updated. */

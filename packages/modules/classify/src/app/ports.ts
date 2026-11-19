@@ -112,6 +112,8 @@ export interface ReportScreening {
   /** The P0 signals found, in P0_SIGNALS order, each once. */
   readonly p0Signals: readonly string[]
   readonly injectionSuspected: boolean
+  /** Where the report's evidence snapshot is, as flagging gave it (opaque). */
+  readonly evidenceRef: string
   /** The reported account and the reporter, for finding an account's reports when it is erased. */
   readonly reportedExternalId?: string | null
   readonly reporterExternalId?: string | null

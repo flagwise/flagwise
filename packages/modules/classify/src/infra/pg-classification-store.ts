@@ -77,6 +77,7 @@ export function pgClassificationStore(tx: TenantTx): ClassificationStore {
           injectionSuspected: s.injectionSuspected,
           reportedExternalId: s.reportedExternalId ?? null,
           reporterExternalId: s.reporterExternalId ?? null,
+          evidenceRef: s.evidenceRef,
         })
         .onConflictDoNothing()
     },
@@ -111,6 +112,7 @@ export function pgClassificationStore(tx: TenantTx): ClassificationStore {
             reportId: r.reportId,
             p0Signals: r.p0Signals,
             injectionSuspected: r.injectionSuspected,
+            evidenceRef: r.evidenceRef,
             ...(r.reportedExternalId !== null && { reportedExternalId: r.reportedExternalId }),
             ...(r.reporterExternalId !== null && { reporterExternalId: r.reporterExternalId }),
           }

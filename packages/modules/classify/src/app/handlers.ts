@@ -34,7 +34,8 @@ export function classifyDepsWithPolicy(deps: Omit<ClassifyDeps, 'llmEnabled' | '
  * Subscribes classify's groups (event -> effect):
  * - 'classify.policy': policy.updated -> its copy of the app's policy (first).
  * - 'classify.screenings': report.received -> recordScreening with its P0 signals, injection flag
- *   and accounts; a report.received from before 1.1.0 carries neither and is skipped.
+ *   accounts and evidence ref; a report.received from before 1.1.0 carries none of them and is
+ *   skipped, and one from 1.1.0 without the ref gets the place flagging wrote snapshots to then.
  * - 'classify.erasure': subject.erasure_requested -> the account's id replaced in its reports'
  *   screenings and their classifications' LLM summaries dropped; answers erased, or nothing_held.
  * - 'classify': case.opened -> classifyCase with the case and its report, then case.classified
@@ -62,6 +63,7 @@ export function subscribeClassify(bus: EventBus, deps: ClassifyServiceDeps): voi
       injectionSuspected: r.injectionSuspected,
       reportedExternalId: r.subjectExternalId,
       reporterExternalId: r.facts?.reporterExternalId ?? null,
+      evidenceRef: r.evidenceRef ?? `apps/${tenantOf(event).appId}/${r.reportId}`,
     })
   })
 

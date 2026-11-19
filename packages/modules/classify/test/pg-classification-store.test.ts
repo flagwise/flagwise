@@ -93,7 +93,7 @@ describe.skipIf(!testDatabaseUrl)('pgClassificationStore', () => {
   })
 
   it("erases an account: its reports' screenings take the tombstone and their classifications lose the LLM summary", async () => {
-    const screening = (reportId: string, reported: string, reporter: string) => ({ tenant: A, reportId, p0Signals: [], injectionSuspected: false, reportedExternalId: reported, reporterExternalId: reporter })
+    const screening = (reportId: string, reported: string, reporter: string) => ({ tenant: A, reportId, p0Signals: [], injectionSuspected: false, evidenceRef: `apps/app_a/${reportId}`, reportedExternalId: reported, reporterExternalId: reporter })
     await inTenant(A, async (s) => {
       await s.keepScreening(screening('rpt_e1', 'u_john_doe', 'u_jane_doe'))
       await s.keepScreening(screening('rpt_e2', 'u_jim_doe', 'u_john_doe'))

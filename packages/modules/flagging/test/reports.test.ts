@@ -127,6 +127,7 @@ describe('intake reports', () => {
           p0Signal: false,
           p0Signals: [],
           injectionSuspected: false,
+          evidenceRef: 'apps/app_a/rpt_1',
           facts: { reporterExternalId: 'u_jane_doe', reporterAccountCreatedAt: null, reportedAccountCreatedAt: null },
         },
       },

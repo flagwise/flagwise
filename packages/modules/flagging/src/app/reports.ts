@@ -174,6 +174,7 @@ export async function submitReport(deps: FlaggingDeps, input: SubmitInput): Prom
         p0Signal: screened.p0Signals.length > 0,
         p0Signals: screened.p0Signals,
         injectionSuspected: screened.injectionSuspected,
+        evidenceRef: report.snapshotKey,
         facts: {
           reporterExternalId: report.reporterExternalId,
           reporterAccountCreatedAt: value.reporter.accountCreatedAt?.toISOString() ?? null,

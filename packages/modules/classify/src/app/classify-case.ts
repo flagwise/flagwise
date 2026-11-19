@@ -25,7 +25,7 @@ const NO_USAGE: LlmUsage = { input: 0, output: 0, cached: 0 }
  * Classifies the case and stores the result; a case that already has one gets it back and the LLM
  * is not called. LLM calls run outside any transaction.
  *
- * 1. Evidence: the snapshot at `apps/{app_id}/{report_id}`. A missing or unreadable snapshot throws
+ * 1. Evidence: the snapshot at the report's evidence ref, as flagging gave it in report.received. A missing or unreadable snapshot throws
  *    (the event is redelivered, then dead-lettered).
  * 2. Pre-rules: the report's screening (recordScreening, from report.received), with its P0
  *    signals and injection_suspected. Without one yet, ScreeningMissingError (the event is
@@ -99,11 +99,11 @@ export async function recordScreening(deps: Pick<ClassifyDeps, 'run'>, screening
 /** One classification run, steps 1 to 7 of classifyCase, without storing it. */
 async function classifyOnce(deps: ClassifyDeps, input: ClassifyCaseInput): Promise<ClassificationRecord> {
   const { tenant } = input
-  const bytes = await deps.snapshots.get(`apps/${tenant.appId}/${input.reportId}`)
-  if (!bytes) throw new Error(`No evidence snapshot for report ${input.reportId}`)
-  const snapshot = parseReportSnapshot(bytes)
   const pre = await deps.run(tenant, (store) => store.findScreening(tenant, input.reportId))
   if (!pre) throw new ScreeningMissingError(input.reportId)
+  const bytes = await deps.snapshots.get(pre.evidenceRef)
+  if (!bytes) throw new Error(`No evidence snapshot for report ${input.reportId}`)
+  const snapshot = parseReportSnapshot(bytes)
   const picked = (await deps.categories?.find(tenant, snapshot.report.category)) ?? null
   const summaryLanguage = snapshot.report.reporter.locale ?? 'en'
 

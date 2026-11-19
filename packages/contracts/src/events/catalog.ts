@@ -66,7 +66,7 @@ const SPECS = [
   spec({
     name: 'report.received',
     major: 1,
-    version: '1.1.0',
+    version: '1.2.0',
     owner: 'flagging',
     meaning: 'A report was accepted, its evidence stored and the pre-rules run over it; it has no case yet.',
     schema: z.strictObject({
@@ -80,6 +80,8 @@ const SPECS = [
       injectionSuspected: z.boolean().optional(),
       /** What the report says about the accounts; account times null when not given. */
       facts: reportFacts.optional(),
+      /** Since 1.2.0: where the evidence snapshot is, opaque to readers, who read it as given with read-only access. */
+      evidenceRef: z.string().min(1).optional(),
     }),
   }),
   spec({
