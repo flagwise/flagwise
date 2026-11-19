@@ -1,5 +1,5 @@
 -- The audit log: one hash chain per app and mode. The app role appends entries and reads its own
--- tenant's; it can change only an entry's personal data (pii, pii_salt), which erasure clears, and
+-- app's; it can change only an entry's personal data (pii, pii_salt), which erasure clears, and
 -- never delete one. The chain covers seq, at, actor, action, target, facts and pii_digest.
 
 CREATE SCHEMA audit;
@@ -50,10 +50,10 @@ REVOKE INSERT, UPDATE, DELETE ON audit.checkpoints FROM {{app}};
 
 ALTER TABLE audit.entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit.entries FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON audit.entries TO {{app}}
+CREATE POLICY app ON audit.entries TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 ALTER TABLE audit.checkpoints ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit.checkpoints FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON audit.checkpoints TO {{app}}
+CREATE POLICY app ON audit.checkpoints TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());

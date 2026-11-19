@@ -1,7 +1,7 @@
 // Upgrading to the flagging scope: a key issued with the ingest scope before keeps working, with
 // flagging in its place. Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
 import { manualClock } from '@flagwise/kernel'
-import { createDatabase, migrate, withSystem, withTenant, type Database } from '@flagwise/platform'
+import { createDatabase, migrate, withSystem, withApps, type Database } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -25,7 +25,7 @@ describe.skipIf(!testDatabaseUrl)('upgrading to the flagging scope', () => {
     // A release before: keys could hold the ingest scope.
     await migrate(t.ownerUrl, [{ ...tenancyMigrations, migrations: tenancyMigrations.migrations.slice(0, 3) }], t.roles)
     const old = generateApiKey(true)
-    await withTenant(db, { appIds: ['app_jane'], livemode: true }, async (tx) => {
+    await withApps(db, { appIds: ['app_jane'], livemode: true }, async (tx) => {
       const deps = { store: pgTenancyStore(tx), clock, newId: (p: string) => `${p}_1` }
       await createApp(deps, { id: 'app_jane', name: 'Jane Doe Dating iOS' })
       await tx.execute(sql`INSERT INTO tenancy.api_keys (app_id, id, livemode, lookup, hash, scopes, created_at)
@@ -36,7 +36,7 @@ describe.skipIf(!testDatabaseUrl)('upgrading to the flagging scope', () => {
     const resolved = await withSystem(db, (tx) => resolveApiKey(pgKeyDirectory(tx), old.key, clock.now()))
     expect(resolved).toMatchObject({ ok: true, context: { actor: { type: 'api_key', id: 'key_old', scopes: ['flagging', 'actions'] } } })
     await expect(
-      withTenant(db, { appIds: ['app_jane'], livemode: true }, (tx) =>
+      withApps(db, { appIds: ['app_jane'], livemode: true }, (tx) =>
         tx.execute(sql`UPDATE tenancy.api_keys SET scopes = ARRAY['ingest'] WHERE id = 'key_old'`),
       ),
     ).rejects.toThrow()

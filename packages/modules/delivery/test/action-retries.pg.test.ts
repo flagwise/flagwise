@@ -1,6 +1,6 @@
 // Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
-import type { TenantRef } from '@flagwise/kernel'
-import { createDatabase, migrate, scopeOfRef, withTenant, type Database } from '@flagwise/platform'
+import type { AppRef } from '@flagwise/kernel'
+import { createDatabase, migrate, scopeOfApp, withApps, type Database } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
@@ -13,27 +13,27 @@ import {
   type DeliveryEvent,
 } from '../src/index.ts'
 
-const A: TenantRef = { appId: 'app_a', livemode: true }
+const A: AppRef = { appId: 'app_a', livemode: true }
 const FACTS = { subjectExternalId: 'u_jane_doe', categoryId: 'scams_fraud.romance_scam', severity: 'P1', requestedBy: { type: 'member', id: 'mem_jane' } } as const
 
 describe.skipIf(!testDatabaseUrl)('retryFailedActions', () => {
   let t: TestDatabase
   let db: Database
   let n = 0
-  const inTx = <R>(fn: (store: ActionRequestStore) => Promise<R>) => withTenant(db, scopeOfRef(A), (tx) => fn(pgActionRequestStore(tx)))
+  const inTx = <R>(fn: (store: ActionRequestStore) => Promise<R>) => withApps(db, scopeOfApp(A), (tx) => fn(pgActionRequestStore(tx)))
   const deps = (requests: ActionRequestStore, events: DeliveryEvent[]) => ({
     requests,
     events: { publish: async (e: DeliveryEvent) => void events.push(e) },
     newActionRequestId: () => `acr_r${++n}`,
   })
   const decide = (decisionId: string, actionKeys: string[], events: DeliveryEvent[]) =>
-    inTx((s) => requestActions(deps(s, events), { tenant: A, caseId: `case_${decisionId}`, decisionId, actionKeys, ...FACTS }))
+    inTx((s) => requestActions(deps(s, events), { appRef: A, caseId: `case_${decisionId}`, decisionId, actionKeys, ...FACTS }))
   const settle = (id: string, status: 'confirmed' | 'failed', events: DeliveryEvent[]) =>
-    inTx((s) => settleAction(deps(s, events), { tenant: A, actionRequestId: id, status, failReason: 'user not found' }))
+    inTx((s) => settleAction(deps(s, events), { appRef: A, actionRequestId: id, status, failReason: 'user not found' }))
   const retry = (decisionId: string, actionKeys: string[], events: DeliveryEvent[], retryId = 'retry_1', replaces?: string[]) =>
     inTx((s) =>
       retryFailedActions(deps(s, events), {
-        tenant: A,
+        appRef: A,
         caseId: `case_${decisionId}`,
         decisionId,
         actionKeys,
@@ -91,7 +91,7 @@ describe.skipIf(!testDatabaseUrl)('retryFailedActions', () => {
     await settle(ban!.id, 'failed', events)
     events.length = 0
     await retry('dec_3', [], events)
-    expect(events).toEqual([{ type: 'decision.actions_confirmed', tenant: A, caseId: 'case_dec_3', decisionId: 'dec_3' }])
+    expect(events).toEqual([{ type: 'decision.actions_confirmed', appRef: A, caseId: 'case_dec_3', decisionId: 'dec_3' }])
   })
 
   it('replaces only failures not answered by an earlier retry', async () => {

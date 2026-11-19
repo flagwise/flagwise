@@ -6,7 +6,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { TenantRef } from '@flagwise/kernel'
+import type { AppRef } from '@flagwise/kernel'
 import pg from 'pg'
 import { newKeyringEntry } from '@flagwise/platform'
 import { createTestDatabase, type TestDatabase } from '@flagwise/platform/testing'
@@ -31,7 +31,7 @@ export interface Fact {
 export interface Install {
   readonly clock: SkippingClock
   readonly net: FakeNet
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   /** The app's live flagging key, as the tenant's backend holds it. */
   readonly flaggingKey: string
   /** Two moderators with admin keys. */
@@ -64,10 +64,10 @@ export async function startInstall(name: string): Promise<Install> {
     await migrateFromEnv({ DATABASE_OWNER_URL: db.ownerUrl, DATABASE_APP_URL: `postgres://${db.roles.app}@x/x`, DATABASE_SYSTEM_URL: `postgres://${db.roles.system}@x/x` })
     const config = await serverConfigFromEnv(env, { fetch: net.fetch })
     const installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' }, clock)
-    const tenant: TenantRef = { appId: installed.app.id, livemode: true }
-    const jane = await createKey(config, { ...tenant, scopes: ['admin'] })
-    const john = await createKey(config, { ...tenant, scopes: ['admin'] })
-    await addWebhookEndpoint(config, tenant, { url: WEBHOOK_URL }, clock)
+    const appRef: AppRef = { appId: installed.app.id, livemode: true }
+    const jane = await createKey(config, { ...appRef, scopes: ['admin'] })
+    const john = await createKey(config, { ...appRef, scopes: ['admin'] })
+    await addWebhookEndpoint(config, appRef, { url: WEBHOOK_URL }, clock)
     server = createServer(config, { clock, fetch: net.fetch, onError: () => {} })
     await server.start()
     const running = server
@@ -75,7 +75,7 @@ export async function startInstall(name: string): Promise<Install> {
     return {
       clock,
       net,
-      tenant,
+      appRef,
       flaggingKey: installed.liveKey,
       jane: { id: jane.id, key: jane.key },
       john: { id: john.id, key: john.key },

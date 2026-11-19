@@ -1,5 +1,5 @@
 import { DEFAULT_POLICY } from '@flagwise/contracts'
-import { manualClock, type TenantRef } from '@flagwise/kernel'
+import { manualClock, type AppRef } from '@flagwise/kernel'
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_LLM_SETTINGS,
@@ -17,7 +17,7 @@ import {
   type PolicyStores,
 } from '../src/index.ts'
 
-const A: TenantRef = { appId: 'app_a', livemode: true }
+const A: AppRef = { appId: 'app_a', livemode: true }
 const NOW = new Date('2026-11-18T09:00:00Z')
 
 function memoryStores(): PolicyStores & { head: PolicyHead | null; categoryList: AppCategory[] } {
@@ -28,7 +28,7 @@ function memoryStores(): PolicyStores & { head: PolicyHead | null; categoryList:
     categoryList: [] as AppCategory[],
     categories: {
       list: async () => s.categoryList,
-      replace: async (_t: TenantRef, next: readonly AppCategory[]) => {
+      replace: async (_t: AppRef, next: readonly AppCategory[]) => {
         const before = s.categoryList
         s.categoryList = [...next]
         return before
@@ -36,7 +36,7 @@ function memoryStores(): PolicyStores & { head: PolicyHead | null; categoryList:
     },
     actionKeys: {
       list: async () => keys,
-      replace: async (_t: TenantRef, next: readonly ActionKey[]) => {
+      replace: async (_t: AppRef, next: readonly ActionKey[]) => {
         const before = keys
         keys = next
         return before
@@ -44,7 +44,7 @@ function memoryStores(): PolicyStores & { head: PolicyHead | null; categoryList:
     },
     llm: {
       get: async () => llm,
-      set: async (_t: TenantRef, next: LlmSettings) => {
+      set: async (_t: AppRef, next: LlmSettings) => {
         const before = llm
         llm = next
         return before
@@ -53,7 +53,7 @@ function memoryStores(): PolicyStores & { head: PolicyHead | null; categoryList:
     heads: {
       // Storage hands the policy back with its keys in another order, as jsonb does.
       lock: async () => (s.head ? { version: s.head.version, policy: reorder(s.head) } : null),
-      set: async (_t: TenantRef, head: PolicyHead) => void (s.head = head),
+      set: async (_t: AppRef, head: PolicyHead) => void (s.head = head),
     },
   }
   return s
@@ -80,7 +80,7 @@ describe('policy versions', () => {
   it('publishes the whole policy as version 1 on the first change, then counts up per change', async () => {
     const { deps, updates } = setup()
     await replaceCategories(deps, A, PRESETS.dating)
-    expect(updates()).toEqual([{ type: 'policy.updated', tenant: A, appId: 'app_a', version: 1, policy: { ...DEFAULT_POLICY, categories: PRESETS.dating }, occurredAt: NOW }])
+    expect(updates()).toEqual([{ type: 'policy.updated', appRef: A, appId: 'app_a', version: 1, policy: { ...DEFAULT_POLICY, categories: PRESETS.dating }, occurredAt: NOW }])
     const keys = keysOf([{ key: 'warn', label: { en: 'Warn' }, categories: ['*'] }])
     await replaceActionKeys(deps, A, keys)
     await setLlmSettings(deps, A, { rulesOnly: true, fallbackToRules: false })
@@ -116,7 +116,7 @@ describe('replaceCategories and the report screen', () => {
     const { deps, events } = setup()
     expect(await replaceCategories(deps, A, PRESETS.dating)).toEqual(PRESETS.dating)
     await replaceCategories(deps, A, PRESETS.dating)
-    expect(events.filter((e) => e.type === 'config.categories_replaced')).toEqual([{ type: 'config.categories_replaced', tenant: A, appId: 'app_a', before: [], after: PRESETS.dating, occurredAt: NOW }])
+    expect(events.filter((e) => e.type === 'config.categories_replaced')).toEqual([{ type: 'config.categories_replaced', appRef: A, appId: 'app_a', before: [], after: PRESETS.dating, occurredAt: NOW }])
   })
 
   it('lists the enabled ones, labelled in the locale with English as fallback', async () => {
@@ -140,7 +140,7 @@ describe('setLlmSettings', () => {
     expect(events).toEqual([])
     await setLlmSettings(deps, A, { rulesOnly: true, fallbackToRules: true })
     expect(events.filter((e) => e.type === 'config.llm_settings_changed')).toEqual([
-      { type: 'config.llm_settings_changed', tenant: A, appId: 'app_a', before: DEFAULT_LLM_SETTINGS, after: { rulesOnly: true, fallbackToRules: true }, occurredAt: NOW },
+      { type: 'config.llm_settings_changed', appRef: A, appId: 'app_a', before: DEFAULT_LLM_SETTINGS, after: { rulesOnly: true, fallbackToRules: true }, occurredAt: NOW },
     ])
   })
 })

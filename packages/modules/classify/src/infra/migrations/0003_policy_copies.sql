@@ -11,7 +11,7 @@ CREATE TABLE classify.policy_copies (
 );
 
 ALTER TABLE classify.policy_copies ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON classify.policy_copies TO {{app}}
+CREATE POLICY app ON classify.policy_copies TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 

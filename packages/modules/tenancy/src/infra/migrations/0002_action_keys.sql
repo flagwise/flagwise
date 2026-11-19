@@ -24,6 +24,6 @@ CREATE TABLE tenancy.action_keys (
 
 ALTER TABLE tenancy.action_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenancy.action_keys FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON tenancy.action_keys TO {{app}}
+CREATE POLICY app ON tenancy.action_keys TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());

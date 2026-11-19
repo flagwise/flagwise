@@ -7,8 +7,8 @@ import { moderationService, subscribeModeration, type CaseRecord, type CaseRef, 
 import { subscribeClassify, type ClassifyServiceDeps } from '@flagwise/classify'
 import { currentType, DEFAULT_POLICY, type EventData, type Policy, type PolicyActionKey } from '@flagwise/contracts'
 import { actionSettlement, subscribeDelivery, type DeliveryServiceDeps } from '@flagwise/delivery'
-import type { Clock, TenantRef } from '@flagwise/kernel'
-import { tenantOf, type EventBus } from '@flagwise/platform'
+import type { Clock, AppRef } from '@flagwise/kernel'
+import { appOf, type EventBus } from '@flagwise/platform'
 import { erasedFromCase, subscribeTriage, type TriageCase, type TriageCaseStore, type TriageDeps } from '@flagwise/triage'
 
 /** What a fixed classifier says about a case. */
@@ -23,7 +23,7 @@ export interface Classification {
 }
 
 export interface ReportToSubmit {
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly reportId: string
   readonly subjectExternalId: string
   readonly p0Signal: boolean
@@ -37,8 +37,8 @@ export interface Services {
   decide(input: DecideInput): Promise<Decision>
   correct(input: CorrectInput): Promise<CaseRecord>
   retryActions(input: RetryActionsInput): Promise<CaseRecord>
-  confirmAction(tenant: TenantRef, actionRequestId: string): Promise<void>
-  failAction(tenant: TenantRef, actionRequestId: string, reason: string): Promise<void>
+  confirmAction(appRef: AppRef, actionRequestId: string): Promise<void>
+  failAction(appRef: AppRef, actionRequestId: string, reason: string): Promise<void>
   drain(): Promise<number>
 }
 
@@ -53,7 +53,7 @@ export interface ServicesOptions {
   readonly delivery: Pick<DeliveryServiceDeps, 'uow'>
   readonly triage: TriageDeps
   /** The classify service, or a fixed classifier in its place: case.opened -> case.classified with what it says. */
-  readonly classify: ClassifyServiceDeps | ((tenant: TenantRef, caseId: string, reportId: string) => Promise<Classification>)
+  readonly classify: ClassifyServiceDeps | ((appRef: AppRef, caseId: string, reportId: string) => Promise<Classification>)
 }
 
 export function composeServices(o: ServicesOptions): Services {
@@ -61,11 +61,11 @@ export function composeServices(o: ServicesOptions): Services {
   if (typeof o.classify === 'function') {
     const classify = o.classify
     bus.subscribe('classify', ['case.opened.v1'], async (event) => {
-      const tenant = tenantOf(event)
+      const appRef = appOf(event)
       const { caseId, reportId } = event.data as EventData<'case.opened.v1'>
-      const c = await classify(tenant, caseId, reportId)
+      const c = await classify(appRef, caseId, reportId)
       const data = { caseId, reportId, ...c, signals: [...c.signals] }
-      await bus.publish({ id: `case.classified:${caseId}`, type: currentType('case.classified'), key: caseId, data, tenant })
+      await bus.publish({ id: `case.classified:${caseId}`, type: currentType('case.classified'), key: caseId, data, appRef })
     })
   } else {
     subscribeClassify(bus, o.classify)
@@ -79,8 +79,8 @@ export function composeServices(o: ServicesOptions): Services {
   const settlement = actionSettlement(delivery)
   return {
     async submitReport(report) {
-      const { tenant, facts, ...data } = report
-      await bus.publish({ id: `report.received:${report.reportId}`, type: currentType('report.received'), key: report.reportId, data: { ...data, ...(facts && { facts }) }, tenant })
+      const { appRef, facts, ...data } = report
+      await bus.publish({ id: `report.received:${report.reportId}`, type: currentType('report.received'), key: report.reportId, data: { ...data, ...(facts && { facts }) }, appRef })
     },
     ...work,
     confirmAction: settlement.confirm,
@@ -97,26 +97,26 @@ export const policyWithKeys = (...keys: string[]): Policy => ({ ...DEFAULT_POLIC
 /** Triage's record of each case in memory. */
 export class MemoryTriageCases implements TriageCaseStore {
   readonly rows = new Map<string, TriageCase>()
-  async find(_t: TenantRef, caseId: string) {
+  async find(_t: AppRef, caseId: string) {
     const r = this.rows.get(caseId)
     return r ? structuredClone(r) : null
   }
   async open(r: TriageCase) {
     if (!this.rows.has(r.caseId)) this.rows.set(r.caseId, structuredClone(r))
   }
-  async attach(_t: TenantRef, caseId: string, reportId: string, facts: Parameters<TriageCaseStore['attach']>[3]) {
+  async attach(_t: AppRef, caseId: string, reportId: string, facts: Parameters<TriageCaseStore['attach']>[3]) {
     const r = this.rows.get(caseId)
     if (!r) return false
     if (r.reportIds.includes(reportId)) return true
     this.rows.set(caseId, { ...r, reportIds: [...r.reportIds, reportId], reports: facts ? [...r.reports, { reportId, ...facts }] : r.reports })
     return true
   }
-  async change(_t: TenantRef, caseId: string, change: Parameters<TriageCaseStore['change']>[2]) {
+  async change(_t: AppRef, caseId: string, change: Parameters<TriageCaseStore['change']>[2]) {
     const r = this.rows.get(caseId)
     if (!r) return false
     this.rows.set(caseId, { ...r, ...change })
     return true
-  }  async eraseAccount(_t: TenantRef, externalId: string, erasedId: string) {
+  }  async eraseAccount(_t: AppRef, externalId: string, erasedId: string) {
     let n = 0
     for (const [id, r] of this.rows) {
       const erased = erasedFromCase(r, externalId, erasedId)

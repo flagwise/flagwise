@@ -24,7 +24,7 @@ const input = (o: Partial<SupportInput> = {}): SupportInput => ({
     summary: 'Asked Jane Doe for $200',
   },
   triageRules: [{ rule: 'category_severity', inputs: { category: 'scams_fraud', severity: 'P1' } }],
-  webhookAttempts: [{ at: at(110), status: 500, latencyMs: 812, url: 'https://tenant.example.com/hooks' }],
+  webhookAttempts: [{ at: at(110), status: 500, latencyMs: 812, url: 'https://appRef.example.com/hooks' }],
   tenantNote: '  Ban did not apply  ',
   evidence: { kind: 'message', content: ['can you send me $200 first?'] },
   ...o,
@@ -55,7 +55,7 @@ describe('buildSupportBundle', () => {
       truncated_events: 0,
     })
     const json = JSON.stringify(bundle)
-    for (const leak of ['Jane', 'jane@example.com', 'transfer', '$200', 'tenant.example.com']) expect(json).not.toContain(leak)
+    for (const leak of ['Jane', 'jane@example.com', 'transfer', '$200', 'appRef.example.com']) expect(json).not.toContain(leak)
     expect('evidence' in bundle).toBe(false)
   })
 
@@ -120,7 +120,7 @@ describe('buildSupportBundle', () => {
     expect(() => buildSupportBundle(input({ evidence: 'x'.repeat(5000) }), { includeEvidence: true, joinEvalSet: false }, 2000)).toThrow(RangeError)
   })
 
-  it('limits the tenant note to 2000 characters after trimming', () => {
+  it('limits the appRef note to 2000 characters after trimming', () => {
     expect(buildSupportBundle(input({ tenantNote: ` ${'n'.repeat(2000)} ` }), opts).bundle.tenant_note).toHaveLength(2000)
     expect(() => buildSupportBundle(input({ tenantNote: 'n'.repeat(2001) }), opts)).toThrow(RangeError)
   })

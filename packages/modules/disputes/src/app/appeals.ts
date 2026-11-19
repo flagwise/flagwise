@@ -1,7 +1,7 @@
 // Filing and resolving appeals. Failures throw AppealError with a code. Events are published only
 // after the write succeeded.
 
-import type { TenantRef } from '@flagwise/kernel'
+import type { AppRef } from '@flagwise/kernel'
 import { VersionConflictError, type AppealRecord, type AppealsDeps, type Appellant } from './ports.ts'
 
 export const APPEAL_WINDOW_MONTHS = 6
@@ -29,7 +29,7 @@ export class AppealError extends Error {
 }
 
 export interface FileAppealInput {
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly decisionId: string
   readonly appellant: Appellant
   readonly appellantExternalId: string
@@ -37,7 +37,7 @@ export interface FileAppealInput {
 }
 
 export interface ResolveAppealInput {
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly appealId: string
   readonly reviewerId: string
   readonly outcome: 'upheld' | 'overturned'
@@ -61,7 +61,7 @@ export function appealDeadline(decidedAt: Date): Date {
 /**
  * Files an appeal and returns the new record. Checks, in order:
  *
- * 1. 'decision_not_found': no such decision in the tenant
+ * 1. 'decision_not_found': no such decision in the app
  * 2. 'invalid_text': the trimmed text is empty or longer than MAX_APPEAL_TEXT characters
  * 3. 'not_a_party': appellant 'reported' but not the decision's subject, or 'reporter' but not one
  *    of its reporters
@@ -74,7 +74,7 @@ export function appealDeadline(decidedAt: Date): Date {
  * version 1. Publishes `appeal.filed`.
  */
 export async function fileAppeal(deps: AppealsDeps, input: FileAppealInput): Promise<AppealRecord> {
-  const decision = await deps.decisions.findById(input.tenant, input.decisionId)
+  const decision = await deps.decisions.findById(input.appRef, input.decisionId)
   if (!decision) throw new AppealError('decision_not_found')
 
   const text = input.text.trim()
@@ -92,14 +92,14 @@ export async function fileAppeal(deps: AppealsDeps, input: FileAppealInput): Pro
   const now = deps.clock.now()
   if (now.getTime() > appealDeadline(decision.decidedAt).getTime()) throw new AppealError('window_closed')
 
-  const existing = await deps.appeals.findByDecision(input.tenant, input.decisionId)
+  const existing = await deps.appeals.findByDecision(input.appRef, input.decisionId)
   if (existing.some((a) => a.appellant === input.appellant && a.appellantExternalId === input.appellantExternalId)) {
     throw new AppealError('already_appealed')
   }
 
   const record: AppealRecord = {
     id: deps.newAppealId(),
-    tenant: input.tenant,
+    appRef: input.appRef,
     decisionId: decision.decisionId,
     caseId: decision.caseId,
     appellant: input.appellant,
@@ -115,7 +115,7 @@ export async function fileAppeal(deps: AppealsDeps, input: FileAppealInput): Pro
   await deps.appeals.insert(record)
   await deps.events.publish({
     type: 'appeal.filed',
-    tenant: input.tenant,
+    appRef: input.appRef,
     appealId: record.id,
     decisionId: record.decisionId,
     caseId: record.caseId,
@@ -146,10 +146,10 @@ export async function fileAppeal(deps: AppealsDeps, input: FileAppealInput): Pro
  */
 export async function resolveAppeal(deps: AppealsDeps, input: ResolveAppealInput): Promise<AppealRecord> {
   for (let attempt = 1; ; attempt++) {
-    const appeal = await deps.appeals.findById(input.tenant, input.appealId)
+    const appeal = await deps.appeals.findById(input.appRef, input.appealId)
     if (!appeal) throw new AppealError('appeal_not_found')
     if (appeal.status !== 'open') throw new AppealError('already_resolved')
-    const decision = await deps.decisions.findById(input.tenant, appeal.decisionId)
+    const decision = await deps.decisions.findById(input.appRef, appeal.decisionId)
     if (!decision) throw new AppealError('decision_not_found')
     if (decision.decidedBy === input.reviewerId) throw new AppealError('reviewer_is_decider')
 
@@ -173,14 +173,14 @@ export async function resolveAppeal(deps: AppealsDeps, input: ResolveAppealInput
     const overturnedSanction = input.outcome === 'overturned' && appeal.appellant === 'reported'
     if (overturnedSanction) {
       for (const key of decision.actionKeys) {
-        const reverse = await deps.reverseKeys.reverseOf(input.tenant, key)
+        const reverse = await deps.reverseKeys.reverseOf(input.appRef, key)
         if (reverse === null) irreversibleActionKeys.push(key)
         else reverseActionKeys.push(reverse)
       }
     }
     await deps.events.publish({
       type: 'appeal.resolved',
-      tenant: input.tenant,
+      appRef: input.appRef,
       appealId: saved.id,
       decisionId: saved.decisionId,
       caseId: saved.caseId,

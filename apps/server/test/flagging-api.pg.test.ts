@@ -3,7 +3,7 @@
 // Runs against a real Postgres (TEST_DATABASE_URL) and S3-compatible store (TEST_S3_URL); skipped without them.
 import { manualClock, type ManualClock } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
-import { createDatabase, createPgBus, memoryRateLimiter, migrate, pgUnitOfWork, withTenant, type Database, type ObjectStorage, type PgBus } from '@flagwise/platform'
+import { createDatabase, createPgBus, memoryRateLimiter, migrate, pgUnitOfWork, withApps, type Database, type ObjectStorage, type PgBus } from '@flagwise/platform'
 import { createTestBucket, createTestDatabase, testDatabaseUrl, testS3Url, type TestBucket, type TestDatabase } from '@flagwise/platform/testing'
 import { moderationMigrations, pgCaseRepository, pgModerationPolicyCopy } from '@flagwise/moderation'
 import { deliveryMigrations, pgDeliveryDeps } from '@flagwise/delivery'
@@ -55,7 +55,7 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
     clock = manualClock(T0)
 
     const registry = <R>(appIds: string[], fn: (d: Parameters<typeof createOrgApp>[0]) => Promise<R>) =>
-      withTenant(db, { appIds, livemode: true }, (tx) => fn({ store: pgTenancyStore(tx), clock, newId: (p) => `${p}_${++n}` }))
+      withApps(db, { appIds, livemode: true }, (tx) => fn({ store: pgTenancyStore(tx), clock, newId: (p) => `${p}_${++n}` }))
     await registry(['app_a', 'app_b', 'app_gone'], async (d) => {
       for (const id of ['app_a', 'app_b', 'app_gone']) await createOrgApp(d, { id, name: id })
       const issue = async (appId: string, livemode: boolean, scopes: string[]) => (await issueApiKey(d, { appId, livemode, scopes })).key
@@ -68,7 +68,7 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
       await revokeApiKey(d, { appId: 'app_a', keyId: revoked.record.id })
       keys.revoked = revoked.key
     })
-    await withTenant(db, { appIds: ['app_gone'], livemode: true }, (tx) => tx.execute(sql`UPDATE tenancy.apps SET deleted_at = now() WHERE id = 'app_gone'`))
+    await withApps(db, { appIds: ['app_gone'], livemode: true }, (tx) => tx.execute(sql`UPDATE tenancy.apps SET deleted_at = now() WHERE id = 'app_gone'`))
 
     const flagging: FlaggingDeps = { run: pgFlaggingRunner(db, bus), storage: bucket.storage, clock, newReportId: () => `rpt_${++n}` }
     composeServices({

@@ -84,7 +84,7 @@ export interface WebhookBody {
 }
 
 /**
- * The webhook body for an internal event, or null for events tenants never see (case.opened,
+ * The webhook body for an internal event, or null for events appRefs never see (case.opened,
  * case.claimed, case.released and any other type not listed).
  *
  * Envelope: `{ id: ctx.eventId, type, api_version: ctx.apiVersion, created_at: ISO of

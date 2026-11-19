@@ -6,7 +6,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { sql } from 'drizzle-orm'
 import pg from 'pg'
 import { DEFAULT_ROLES, type DbRoleNames } from './init.ts'
-import type { Database } from './tenant.ts'
+import type { Database } from './database.ts'
 
 export interface Migration {
   /** `NNNN_name`, e.g. `0001_cases`; applied in the order given, which must be ascending. */
@@ -28,7 +28,7 @@ export class MigrationError extends Error {
 }
 
 /**
- * Functions the row-level security policies read: the tenant context of the current transaction,
+ * Functions the row-level security policies read: the apps and mode of the current transaction,
  * or NULL when none is set, so a policy comparing against them matches no row.
  */
 export const platformMigrations: MigrationSet = {
@@ -67,9 +67,9 @@ CREATE INDEX events_to_fan_out ON platform.events (seq) WHERE NOT fanned_out;
 ALTER TABLE platform.events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.events FORCE ROW LEVEL SECURITY;
 REVOKE UPDATE, DELETE ON platform.events FROM {{app}};
-CREATE POLICY tenant_read ON platform.events FOR SELECT TO {{app}}
+CREATE POLICY app_read ON platform.events FOR SELECT TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
-CREATE POLICY tenant_write ON platform.events FOR INSERT TO {{app}}
+CREATE POLICY app_write ON platform.events FOR INSERT TO {{app}}
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 GRANT SELECT, UPDATE ON platform.events TO {{system}};
 CREATE POLICY relay ON platform.events FOR ALL TO {{system}} USING (true) WITH CHECK (true);
@@ -139,7 +139,7 @@ CREATE TABLE platform.idempotency_keys (
 );
 ALTER TABLE platform.idempotency_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.idempotency_keys FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON platform.idempotency_keys TO {{app}}
+CREATE POLICY app ON platform.idempotency_keys TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 `,

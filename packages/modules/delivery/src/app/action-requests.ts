@@ -1,11 +1,11 @@
 // Action requests: one per action key of a decision, settled by the tenant (confirmed or failed).
 // Delivery owns them, so it also tells the other modules when every action of a decision is done.
 
-import { FlagwiseError, type TenantRef } from '@flagwise/kernel'
+import { FlagwiseError, type AppRef } from '@flagwise/kernel'
 
 export interface ActionRequest {
   readonly id: string
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly caseId: string
   readonly decisionId: string
   readonly actionKey: string
@@ -17,13 +17,13 @@ export interface ActionRequest {
   readonly replacedBy: string | null
 }
 
-/** Every method only sees requests of the given tenant (app and livemode). */
+/** Every method only sees requests of the given app and mode. */
 export interface ActionRequestStore {
-  findById(tenant: TenantRef, id: string): Promise<ActionRequest | null>
+  findById(appRef: AppRef, id: string): Promise<ActionRequest | null>
   /** The decision's requests, in the order they were inserted. */
-  findByDecision(tenant: TenantRef, decisionId: string): Promise<readonly ActionRequest[]>
+  findByDecision(appRef: AppRef, decisionId: string): Promise<readonly ActionRequest[]>
   /** Until the current transaction ends, another caller locking the same decision waits. */
-  lockDecision(tenant: TenantRef, decisionId: string): Promise<void>
+  lockDecision(appRef: AppRef, decisionId: string): Promise<void>
   insert(request: ActionRequest): Promise<void>
   /** Saves the status, failReason and replacedBy of an existing request. */
   update(request: ActionRequest): Promise<void>
@@ -32,7 +32,7 @@ export interface ActionRequestStore {
 export type DeliveryEvent =
   | {
       readonly type: 'action.requested'
-      readonly tenant: TenantRef
+      readonly appRef: AppRef
       readonly actionRequestId: string
       readonly caseId: string
       readonly actionKey: string
@@ -48,14 +48,14 @@ export type DeliveryEvent =
     }
   | {
       readonly type: 'action.confirmed' | 'action.failed'
-      readonly tenant: TenantRef
+      readonly appRef: AppRef
       readonly actionRequestId: string
       readonly caseId: string
     }
   | {
       /** Every action request of the decision is confirmed. */
       readonly type: 'decision.actions_confirmed'
-      readonly tenant: TenantRef
+      readonly appRef: AppRef
       readonly caseId: string
       readonly decisionId: string
     }
@@ -73,7 +73,7 @@ export interface RequestedBy {
 }
 
 export interface DecisionToDeliver {
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly caseId: string
   readonly decisionId: string
   readonly actionKeys: readonly string[]
@@ -90,13 +90,13 @@ export interface DecisionToDeliver {
  * requests (a redelivery), returns them and writes and publishes nothing.
  */
 export async function requestActions(deps: DeliveryDeps, decision: DecisionToDeliver): Promise<readonly ActionRequest[]> {
-  const { tenant, caseId, decisionId, subjectExternalId, categoryId, severity, requestedBy } = decision
-  await deps.requests.lockDecision(tenant, decisionId)
-  const existing = await deps.requests.findByDecision(tenant, decisionId)
+  const { appRef, caseId, decisionId, subjectExternalId, categoryId, severity, requestedBy } = decision
+  await deps.requests.lockDecision(appRef, decisionId)
+  const existing = await deps.requests.findByDecision(appRef, decisionId)
   if (existing.length > 0) return existing
   const created: ActionRequest[] = decision.actionKeys.map((actionKey) => ({
     id: deps.newActionRequestId(),
-    tenant,
+    appRef,
     caseId,
     decisionId,
     actionKey,
@@ -109,7 +109,7 @@ export async function requestActions(deps: DeliveryDeps, decision: DecisionToDel
   for (const r of created) {
     await deps.events.publish({
       type: 'action.requested',
-      tenant,
+      appRef,
       actionRequestId: r.id,
       caseId,
       actionKey: r.actionKey,
@@ -125,7 +125,7 @@ export async function requestActions(deps: DeliveryDeps, decision: DecisionToDel
 }
 
 export interface SettleAction {
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly actionRequestId: string
   readonly status: 'confirmed' | 'failed'
   /** Required in practice for 'failed'; ignored for 'confirmed'. */
@@ -140,21 +140,21 @@ export interface SettleAction {
  * alone. An unknown id throws FlagwiseError 'not_found'.
  */
 export async function settleAction(deps: DeliveryDeps, input: SettleAction): Promise<void> {
-  const { tenant, actionRequestId, status } = input
-  const found = await deps.requests.findById(tenant, actionRequestId)
+  const { appRef, actionRequestId, status } = input
+  const found = await deps.requests.findById(appRef, actionRequestId)
   if (!found) throw new FlagwiseError('not_found', `No action request ${actionRequestId}`)
-  await deps.requests.lockDecision(tenant, found.decisionId)
-  const request = (await deps.requests.findById(tenant, actionRequestId))!
+  await deps.requests.lockDecision(appRef, found.decisionId)
+  const request = (await deps.requests.findById(appRef, actionRequestId))!
   if (request.status !== 'pending') return
   await deps.requests.update({ ...request, status, failReason: status === 'failed' ? (input.failReason ?? '') : null })
-  await deps.events.publish({ type: `action.${status}`, tenant, actionRequestId, caseId: request.caseId })
-  if (status === 'confirmed') await publishIfAllConfirmed(deps, tenant, request.caseId, request.decisionId)
+  await deps.events.publish({ type: `action.${status}`, appRef, actionRequestId, caseId: request.caseId })
+  if (status === 'confirmed') await publishIfAllConfirmed(deps, appRef, request.caseId, request.decisionId)
 }
 
-async function publishIfAllConfirmed(deps: DeliveryDeps, tenant: TenantRef, caseId: string, decisionId: string): Promise<void> {
-  const all = await deps.requests.findByDecision(tenant, decisionId)
+async function publishIfAllConfirmed(deps: DeliveryDeps, appRef: AppRef, caseId: string, decisionId: string): Promise<void> {
+  const all = await deps.requests.findByDecision(appRef, decisionId)
   if (all.every((r) => r.replacedBy !== null || r.status === 'confirmed')) {
-    await deps.events.publish({ type: 'decision.actions_confirmed', tenant, caseId, decisionId })
+    await deps.events.publish({ type: 'decision.actions_confirmed', appRef, caseId, decisionId })
   }
 }
 
@@ -175,15 +175,15 @@ export interface ActionRetry extends DecisionToDeliver {
  * carried out (a redelivery) writes and publishes nothing and returns [].
  */
 export async function retryFailedActions(deps: DeliveryDeps, retry: ActionRetry): Promise<readonly ActionRequest[]> {
-  const { tenant, caseId, decisionId, retryId } = retry
-  await deps.requests.lockDecision(tenant, decisionId)
-  const existing = await deps.requests.findByDecision(tenant, decisionId)
+  const { appRef, caseId, decisionId, retryId } = retry
+  await deps.requests.lockDecision(appRef, decisionId)
+  const existing = await deps.requests.findByDecision(appRef, decisionId)
   if (existing.some((r) => r.retryId === retryId || r.replacedBy === retryId)) return []
   const replaced = existing.filter((r) => r.status === 'failed' && r.replacedBy === null && (retry.replaces === undefined || retry.replaces.includes(r.id)))
   for (const r of replaced) await deps.requests.update({ ...r, replacedBy: retryId })
   const created: ActionRequest[] = retry.actionKeys.map((actionKey) => ({
     id: deps.newActionRequestId(),
-    tenant,
+    appRef,
     caseId,
     decisionId,
     actionKey,
@@ -196,7 +196,7 @@ export async function retryFailedActions(deps: DeliveryDeps, retry: ActionRetry)
   for (const r of created) {
     await deps.events.publish({
       type: 'action.requested',
-      tenant,
+      appRef,
       actionRequestId: r.id,
       caseId,
       actionKey: r.actionKey,
@@ -209,6 +209,6 @@ export async function retryFailedActions(deps: DeliveryDeps, retry: ActionRetry)
       replaces: replaced.map((x) => x.id),
     })
   }
-  if (created.length === 0) await publishIfAllConfirmed(deps, tenant, caseId, decisionId)
+  if (created.length === 0) await publishIfAllConfirmed(deps, appRef, caseId, decisionId)
   return created
 }

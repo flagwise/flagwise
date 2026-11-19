@@ -10,7 +10,7 @@ CREATE TABLE cases.policy_copies (
 );
 
 ALTER TABLE cases.policy_copies ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON cases.policy_copies TO {{app}}
+CREATE POLICY app ON cases.policy_copies TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 

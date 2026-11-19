@@ -1,21 +1,21 @@
-// Connection pools and tenant-scoped transactions. Repositories take a TenantTx, so a query without
-// a tenant context does not type-check; the context lives only for the transaction.
+// Connection pools and app-scoped transactions. Repositories take an AppTx, so a query without
+// apps set does not type-check; the scope lives only for the transaction.
 
-import type { TenantContext, TenantRef } from '@flagwise/kernel'
+import type { Caller, AppRef } from '@flagwise/kernel'
 import { sql } from 'drizzle-orm'
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres'
 import pg from 'pg'
 
 type Tx = Parameters<Parameters<NodePgDatabase['transaction']>[0]>[0]
-declare const tenantBrand: unique symbol
+declare const appTxBrand: unique symbol
 declare const systemBrand: unique symbol
 
-/** A transaction with a tenant context set; row-level security limits it to that tenant. */
-export type TenantTx = Tx & { readonly [tenantBrand]: true }
+/** A transaction with its apps and mode set; row-level security limits it to them. */
+export type AppTx = Tx & { readonly [appTxBrand]: true }
 /** A transaction as the system role, which only sees the tenant registry and the outbox. */
 export type SystemTx = Tx & { readonly [systemBrand]: true }
 
-export interface TenantScope {
+export interface AppScope {
   /** The apps the transaction may see; empty for work on no app. */
   readonly appIds: readonly string[]
   readonly livemode: boolean
@@ -71,7 +71,7 @@ export function createDatabase(opts: DatabaseOptions, onError: (err: Error) => v
 const ID = /^[A-Za-z0-9_-]{1,64}$/
 
 /**
- * Runs `fn` in a transaction of the app role with the tenant context set through `set_config(...,
+ * Runs `fn` in a transaction of the app role with its apps and mode set through `set_config(...,
  * true)`: `app.app_ids` (comma-separated) and `app.livemode` (`true` / `false`). The
  * context ends with the transaction, so a pooled connection never carries it into the next one.
  * Commits when `fn` resolves and rolls back when it throws, rethrowing the error.
@@ -79,27 +79,27 @@ const ID = /^[A-Za-z0-9_-]{1,64}$/
  * A RangeError, before any query, when an app id is not 1 to 64 of
  * `A-Z a-z 0-9 _ -`.
  */
-export async function withTenant<T>(db: Database, scope: TenantScope, fn: (tx: TenantTx) => Promise<T>): Promise<T> {
+export async function withApps<T>(db: Database, scope: AppScope, fn: (tx: AppTx) => Promise<T>): Promise<T> {
   for (const id of scope.appIds) if (!ID.test(id)) throw new RangeError(`Not a valid app id: ${JSON.stringify(id)}`)
   return db.app.transaction(async (tx) => {
     await tx.execute(
       sql`SELECT set_config('app.app_ids', ${scope.appIds.join(',')}, true), set_config('app.livemode', ${String(scope.livemode)}, true)`,
     )
-    return fn(tx as TenantTx)
+    return fn(tx as AppTx)
   })
 }
 
-/** Runs `fn` in a transaction of the system role, with no tenant context. */
+/** Runs `fn` in a transaction of the system role, with no apps set. */
 export async function withSystem<T>(db: Database, fn: (tx: SystemTx) => Promise<T>): Promise<T> {
   return db.system.transaction(async (tx) => fn(tx as SystemTx))
 }
 
 /** The scope of a job or outbox row: its one app. */
-export function scopeOfRef(ref: TenantRef): TenantScope {
+export function scopeOfApp(ref: AppRef): AppScope {
   return { appIds: [ref.appId], livemode: ref.livemode }
 }
 
 /** The scope of a request: the apps its actor may read. */
-export function scopeOfContext(ctx: TenantContext): TenantScope {
+export function scopeOfCaller(ctx: Caller): AppScope {
   return { appIds: ctx.appIds, livemode: ctx.livemode }
 }

@@ -2,8 +2,8 @@
 // delivery, ordering per key, consumer groups, maxAttempts, dead-letter and replay. It runs no
 // timers: work happens only inside drain(), which keeps tests deterministic.
 
-import type { TenantRef } from '@flagwise/kernel'
-import type { TenantTx } from '../db/tenant.ts'
+import type { AppRef } from '@flagwise/kernel'
+import type { AppTx } from '../db/database.ts'
 import { stampRequest, type EventMeta } from './request-context.ts'
 
 export interface BusEvent<T = unknown> {
@@ -13,7 +13,7 @@ export interface BusEvent<T = unknown> {
   readonly key: string
   readonly data: T
   /** The tenant the event belongs to. The Postgres bus requires it; the memory bus ignores it. */
-  readonly tenant?: TenantRef
+  readonly appRef?: AppRef
   /** Where it came from: set at publish from the running request (see runInRequest), if any. */
   readonly meta?: EventMeta
   /**
@@ -40,7 +40,7 @@ export function fannedOutEvent(event: BusEvent, groups: readonly string[]): BusE
     type: BUS_FANNED_OUT,
     key: event.key,
     data: { eventId: event.id, type: event.type, groups: [...groups].sort() },
-    ...(event.tenant && { tenant: event.tenant }),
+    ...(event.appRef && { appRef: event.appRef }),
   }
 }
 
@@ -51,7 +51,7 @@ export function deadLetteredEvent(event: BusEvent, group: string, attempts: numb
     type: BUS_DEAD_LETTERED,
     key: event.key,
     data: { eventId: event.id, type: event.type, group, attempts, error: error.slice(0, 500) },
-    ...(event.tenant && { tenant: event.tenant }),
+    ...(event.appRef && { appRef: event.appRef }),
   }
 }
 
@@ -103,7 +103,7 @@ export interface EventBus {
    * Publishes events; returns how many were new. With `tx`, the Postgres bus writes them in that
    * transaction, so they exist only if it commits; the memory bus ignores `tx`.
    */
-  publish(events: BusEvent | readonly BusEvent[], tx?: TenantTx): Promise<number>
+  publish(events: BusEvent | readonly BusEvent[], tx?: AppTx): Promise<number>
   subscribe(group: string, types: readonly string[] | '*', handler: Handler, opts?: SubscribeOptions): () => void
   /** Delivers until nothing is ready; returns how many handler calls it made. */
   drain(): Promise<number>

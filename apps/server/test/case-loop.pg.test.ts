@@ -5,7 +5,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pgActionRequestStore } from '@flagwise/delivery'
-import { scopeOfRef, withTenant } from '@flagwise/platform'
+import { scopeOfApp, withApps } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { bootstrap, createKey, createServer, migrateFromEnv, serverConfigFromEnv, type Bootstrapped, type Server, type ServerConfig } from '../src/index.ts'
@@ -26,7 +26,7 @@ describe.skipIf(!testDatabaseUrl)('the case loop on the server', () => {
   let server: Server
   let installed: Bootstrapped
   const json = async (res: Response) => (await res.json()) as Record<string, any>
-  const tenant = () => ({ appId: installed.app.id, livemode: true })
+  const appRef = () => ({ appId: installed.app.id, livemode: true })
   const call = (key: string, path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}) =>
     server.app.http.request(`/v1${path}`, {
       method: init.method ?? 'GET',
@@ -55,12 +55,19 @@ describe.skipIf(!testDatabaseUrl)('the case loop on the server', () => {
       const c = await got(key, `/moderation/cases/${caseId}`)
       return c && check(c) ? c : undefined
     })
-  const requestsOf = (decisionId: string) => withTenant(server.db, scopeOfRef(tenant()), (tx) => pgActionRequestStore(tx).findByDecision(tenant(), decisionId))
+  const requestsOf = (decisionId: string) => withApps(server.db, scopeOfApp(appRef()), (tx) => pgActionRequestStore(tx).findByDecision(appRef(), decisionId))
 
   beforeAll(async () => {
     t = await createTestDatabase()
     await migrateFromEnv({ DATABASE_OWNER_URL: t.ownerUrl, DATABASE_APP_URL: `postgres://${t.roles.app}@x/x`, DATABASE_SYSTEM_URL: `postgres://${t.roles.system}@x/x` })
-    config = await serverConfigFromEnv({ DATABASE_APP_URL: t.appUrl, DATABASE_SYSTEM_URL: t.systemUrl, STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')) })
+    config = await serverConfigFromEnv({
+      DATABASE_APP_URL: t.appUrl,
+      DATABASE_SYSTEM_URL: t.systemUrl,
+      STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')),
+      // These tests poll the API; the rate limit is tested in flagging-api.
+      API_RATE_PER_SECOND: '1000',
+      API_RATE_BURST: '1000',
+    })
     installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' })
     server = createServer(config, { onError: () => {} })
     await server.start()
@@ -71,8 +78,8 @@ describe.skipIf(!testDatabaseUrl)('the case loop on the server', () => {
   })
 
   it('corrects a case, decides it on the reports shown, and answers a failed action with another', async () => {
-    const admin = await createKey(config, { ...tenant(), scopes: ['admin'] })
-    const other = await createKey(config, { ...tenant(), scopes: ['admin'] })
+    const admin = await createKey(config, { ...appRef(), scopes: ['admin'] })
+    const other = await createKey(config, { ...appRef(), scopes: ['admin'] })
     const actions = [
       { key: 'warn', label: { en: 'Warn' }, categories: ['*'] },
       { key: 'suspend_7d', label: { en: 'Suspend 7 days' }, categories: ['scams_fraud'] },
@@ -163,7 +170,7 @@ describe.skipIf(!testDatabaseUrl)('the case loop on the server', () => {
   })
 
   it('answers a failure with nothing, and the case is actioned once the rest is confirmed', async () => {
-    const admin = await createKey(config, { ...tenant(), scopes: ['admin'] })
+    const admin = await createKey(config, { ...appRef(), scopes: ['admin'] })
     const caseId = await caseOf(await report('u_john_doe'))
     await caseIn(admin.key, caseId, (c) => c.state === 'open')
     await call(admin.key, `/moderation/cases/${caseId}/claim`, { method: 'POST' })

@@ -5,7 +5,7 @@
 // write, in one unit of work.
 
 import { currentType, type EventData } from '@flagwise/contracts'
-import type { Clock, TenantRef } from '@flagwise/kernel'
+import type { Clock, AppRef } from '@flagwise/kernel'
 import type { Work } from '@flagwise/platform'
 
 export const ERASURE_DEADLINE_MS = 24 * 3_600_000
@@ -24,7 +24,7 @@ export interface GroupAnswer {
 
 export interface ErasureRecord {
   readonly id: string
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly subjectExternalId: string
   readonly requestedAt: Date
   readonly deadlineAt: Date
@@ -36,9 +36,9 @@ export interface ErasureRecord {
 }
 
 export interface ErasureStore {
-  find(tenant: TenantRef, id: string): Promise<ErasureRecord | null>
+  find(appRef: AppRef, id: string): Promise<ErasureRecord | null>
   /** The subject's erasure not completed yet, if any. */
-  findActive(tenant: TenantRef, subjectExternalId: string): Promise<ErasureRecord | null>
+  findActive(appRef: AppRef, subjectExternalId: string): Promise<ErasureRecord | null>
   /** Inserts it; false, writing nothing, when the subject already has one in progress. */
   insert(record: ErasureRecord): Promise<boolean>
   /** Saves expected, groups, completedAt and heldItems. */
@@ -65,14 +65,14 @@ const pending = (): GroupAnswer => ({ status: 'pending', at: null, heldItems: 0,
 export async function startErasure(
   deps: ErasureDeps,
   w: Work<PrivacyStores>,
-  input: { readonly tenant: TenantRef; readonly subjectExternalId: string },
+  input: { readonly appRef: AppRef; readonly subjectExternalId: string },
 ): Promise<{ erasure: ErasureRecord; created: boolean }> {
-  const existing = await w.stores.erasures.findActive(input.tenant, input.subjectExternalId)
+  const existing = await w.stores.erasures.findActive(input.appRef, input.subjectExternalId)
   if (existing) return { erasure: existing, created: false }
   const now = deps.clock.now()
   const erasure: ErasureRecord = {
     id: deps.newErasureId(),
-    tenant: input.tenant,
+    appRef: input.appRef,
     subjectExternalId: input.subjectExternalId,
     requestedAt: now,
     deadlineAt: new Date(now.getTime() + ERASURE_DEADLINE_MS),
@@ -83,7 +83,7 @@ export async function startErasure(
   }
   if (!(await w.stores.erasures.insert(erasure))) {
     // Another request for the subject won the race; answer with its erasure.
-    const winner = await w.stores.erasures.findActive(input.tenant, input.subjectExternalId)
+    const winner = await w.stores.erasures.findActive(input.appRef, input.subjectExternalId)
     if (winner) return { erasure: winner, created: false }
     throw new Error(`No erasure in progress for the subject after a conflict`)
   }
@@ -105,8 +105,8 @@ export type ErasureNews =
  * erasure completes with the held items summed and publishes erasure.completed (id
  * `erasure.completed:{erasureId}`). A completed erasure, or an unknown one, is left alone.
  */
-export async function applyNews(deps: Pick<ErasureDeps, 'clock'>, w: Work<PrivacyStores>, tenant: TenantRef, erasureId: string, news: ErasureNews): Promise<void> {
-  const erasure = await w.stores.erasures.find(tenant, erasureId)
+export async function applyNews(deps: Pick<ErasureDeps, 'clock'>, w: Work<PrivacyStores>, appRef: AppRef, erasureId: string, news: ErasureNews): Promise<void> {
+  const erasure = await w.stores.erasures.find(appRef, erasureId)
   if (!erasure || erasure.completedAt) return
   const now = deps.clock.now()
   let groups = erasure.groups

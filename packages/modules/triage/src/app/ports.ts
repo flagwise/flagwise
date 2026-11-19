@@ -2,7 +2,7 @@
 // its copy of each app's policy, and a unit of work that publishes its facts with its writes.
 
 import type { Policy } from '@flagwise/contracts'
-import type { TenantRef } from '@flagwise/kernel'
+import type { AppRef } from '@flagwise/kernel'
 import type { DocumentCopy, UnitOfWork } from '@flagwise/platform'
 import type { TriageConfig } from '../domain/triage.ts'
 
@@ -32,7 +32,7 @@ export interface TriageClassification {
  *   published case.untriaged and waits for the LLM again or a moderator.
  */
 export interface TriageCase {
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly caseId: string
   /** The reported account, from case.opened; unset on records from before it was kept. */
   readonly subjectExternalId?: string | null
@@ -55,21 +55,21 @@ export interface TriageCase {
 
 export type TriageCaseChange = Partial<Pick<TriageCase, 'state' | 'classification' | 'claimed' | 'everClaimed' | 'corrected' | 'decided'>>
 
-/** Every method only sees cases of the given tenant (app and livemode). */
+/** Every method only sees cases of the given app and mode. */
 export interface TriageCaseStore {
-  find(tenant: TenantRef, caseId: string): Promise<TriageCase | null>
+  find(appRef: AppRef, caseId: string): Promise<TriageCase | null>
   /** Keeps a newly opened case; one already kept stays as it is. */
   open(record: TriageCase): Promise<void>
   /** Appends a report (with its facts, when given) to a kept case; a report already in it changes nothing. False when no such case is kept. */
-  attach(tenant: TenantRef, caseId: string, reportId: string, facts: Omit<ReportAccounts, 'reportId'> | null): Promise<boolean>
+  attach(appRef: AppRef, caseId: string, reportId: string, facts: Omit<ReportAccounts, 'reportId'> | null): Promise<boolean>
   /** Applies `change` to a kept case; false when there is none. */
-  change(tenant: TenantRef, caseId: string, change: TriageCaseChange): Promise<boolean>
+  change(appRef: AppRef, caseId: string, change: TriageCaseChange): Promise<boolean>
   /**
    * Erases an account from the kept cases: where it is the reported account, its id becomes
    * `erasedId` and its account age is dropped from every report; where it reported, its id becomes
    * `erasedId` and its account age is dropped. Returns how many cases it changed.
    */
-  eraseAccount(tenant: TenantRef, externalId: string, erasedId: string): Promise<number>
+  eraseAccount(appRef: AppRef, externalId: string, erasedId: string): Promise<number>
 }
 
 export interface TriageStores {

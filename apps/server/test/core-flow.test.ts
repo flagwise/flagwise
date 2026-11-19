@@ -1,6 +1,6 @@
 // The core loop's services on one in-memory bus: moderation, triage and delivery react to each
 // other's facts, each on its own unit of work; a fixed classifier stands in for classify.
-import { manualClock, type ManualClock, type TenantRef } from '@flagwise/kernel'
+import { manualClock, type ManualClock, type AppRef } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
 import { createMemoryBus, memoryDocumentCopy, memoryUnitOfWork, type MemoryBus } from '@flagwise/platform'
 import type { CaseRecord, CaseRepository } from '@flagwise/moderation'
@@ -9,36 +9,36 @@ import type { Policy } from '@flagwise/contracts'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { composeServices, MemoryTriageCases, policyWithKeys, type Classification, type Services } from './support/services.ts'
 
-const tenant: TenantRef = { appId: 'app_a', livemode: true }
+const appRef: AppRef = { appId: 'app_a', livemode: true }
 const T0 = new Date('2026-11-03T09:00:00.000Z')
 const H = 3_600_000
-const same = (a: TenantRef, b: TenantRef) => a.appId === b.appId && a.livemode === b.livemode
+const same = (a: AppRef, b: AppRef) => a.appId === b.appId && a.livemode === b.livemode
 
 class Cases implements CaseRepository {
   readonly rows = new Map<string, CaseRecord>()
-  async findById(t: TenantRef, id: string) {
+  async findById(t: AppRef, id: string) {
     const r = this.rows.get(id)
-    return r && same(r.tenant, t) ? structuredClone(r) : null
+    return r && same(r.appRef, t) ? structuredClone(r) : null
   }
-  async findBySubject(t: TenantRef, s: string) {
-    return [...this.rows.values()].filter((r) => same(r.tenant, t) && r.subjectExternalId === s).map((r) => structuredClone(r))
+  async findBySubject(t: AppRef, s: string) {
+    return [...this.rows.values()].filter((r) => same(r.appRef, t) && r.subjectExternalId === s).map((r) => structuredClone(r))
   }
-  async findByReportId(t: TenantRef, rid: string) {
-    const r = [...this.rows.values()].find((c) => same(c.tenant, t) && c.reportIds.includes(rid))
+  async findByReportId(t: AppRef, rid: string) {
+    const r = [...this.rows.values()].find((c) => same(c.appRef, t) && c.reportIds.includes(rid))
     return r ? structuredClone(r) : null
   }
   async lockSubject() {}
-  async eraseAccount(t: TenantRef, externalId: string, erasedId: string) {
+  async eraseAccount(t: AppRef, externalId: string, erasedId: string) {
     let n = 0
-    for (const [id, r] of this.rows) if (same(r.tenant, t) && r.subjectExternalId === externalId) (this.rows.set(id, { ...r, subjectExternalId: erasedId }), n++)
+    for (const [id, r] of this.rows) if (same(r.appRef, t) && r.subjectExternalId === externalId) (this.rows.set(id, { ...r, subjectExternalId: erasedId }), n++)
     return n
   }
   async insert(r: CaseRecord) {
     this.rows.set(r.id, structuredClone(r))
   }
-  async change(t: TenantRef, id: string, c: Parameters<CaseRepository['change']>[2], ch: Parameters<CaseRepository['change']>[3]) {
+  async change(t: AppRef, id: string, c: Parameters<CaseRepository['change']>[2], ch: Parameters<CaseRepository['change']>[3]) {
     const r = this.rows.get(id)
-    if (!r || !same(r.tenant, t) || !c.states.includes(r.state)) return false
+    if (!r || !same(r.appRef, t) || !c.states.includes(r.state)) return false
     if (c.claimedBy === null && r.claim) return false
     if (typeof c.claimedBy === 'string' && r.claim?.memberId !== c.claimedBy) return false
     if (c.claimIdleSince && !(r.claim && r.claim.lastActivityAt <= c.claimIdleSince)) return false
@@ -46,34 +46,34 @@ class Cases implements CaseRepository {
     this.rows.set(id, { ...r, ...structuredClone(ch) })
     return true
   }
-  async attachReport(t: TenantRef, id: string, reportId: string, states: Parameters<CaseRepository['attachReport']>[3]) {
+  async attachReport(t: AppRef, id: string, reportId: string, states: Parameters<CaseRepository['attachReport']>[3]) {
     const r = this.rows.get(id)
-    if (!r || !same(r.tenant, t) || !states.includes(r.state)) return false
+    if (!r || !same(r.appRef, t) || !states.includes(r.state)) return false
     this.rows.set(id, { ...r, reportIds: [...r.reportIds, reportId] })
     return true
   }
   readonly failures = new Map<string, { caseId: string; answered: boolean }>()
-  async addActionFailure(_t: TenantRef, caseId: string, id: string) {
+  async addActionFailure(_t: AppRef, caseId: string, id: string) {
     if (this.failures.has(id)) return false
     this.failures.set(id, { caseId, answered: false })
     return true
   }
-  async openActionFailures(_t: TenantRef, caseId: string) {
+  async openActionFailures(_t: AppRef, caseId: string) {
     return [...this.failures].filter(([, f]) => f.caseId === caseId && !f.answered).map(([id]) => id)
   }
-  async answerActionFailures(_t: TenantRef, _caseId: string, ids: readonly string[]) {
+  async answerActionFailures(_t: AppRef, _caseId: string, ids: readonly string[]) {
     for (const id of ids) this.failures.get(id)!.answered = true
   }
 }
 
 class Requests implements ActionRequestStore {
   readonly rows = new Map<string, ActionRequest>()
-  async findById(t: TenantRef, id: string) {
+  async findById(t: AppRef, id: string) {
     const r = this.rows.get(id)
-    return r && same(r.tenant, t) ? structuredClone(r) : null
+    return r && same(r.appRef, t) ? structuredClone(r) : null
   }
-  async findByDecision(t: TenantRef, d: string) {
-    return [...this.rows.values()].filter((r) => same(r.tenant, t) && r.decisionId === d).map((r) => structuredClone(r))
+  async findByDecision(t: AppRef, d: string) {
+    return [...this.rows.values()].filter((r) => same(r.appRef, t) && r.decisionId === d).map((r) => structuredClone(r))
   }
   async lockDecision() {}
   async insert(r: ActionRequest) {
@@ -88,7 +88,7 @@ class Requests implements ActionRequestStore {
 class Webhooks implements WebhookStore {
   readonly events = new Map<string, StoredEvent>()
   readonly deliveries: { eventId: string; endpointId: string }[] = []
-  endpointsOf: WebhookEndpoint[] = [{ id: 'whe_1', tenant, url: 'https://hooks.example.com', eventTypes: null, createdAt: T0 }]
+  endpointsOf: WebhookEndpoint[] = [{ id: 'whe_1', appRef, url: 'https://hooks.example.com', eventTypes: null, createdAt: T0 }]
   async lockApp() {}
   async eraseAccount() {
     return 0
@@ -98,18 +98,18 @@ class Webhooks implements WebhookStore {
   }
   async insertSecret() {}
   async expireSecretsBy() {}
-  async endpoints(t: TenantRef) {
-    return this.endpointsOf.filter((e) => same(e.tenant, t))
+  async endpoints(t: AppRef) {
+    return this.endpointsOf.filter((e) => same(e.appRef, t))
   }
   async insertEndpoint() {}
   async deleteEndpoint() {
     return false
   }
-  async insertEvent(_t: TenantRef, e: StoredEvent) {
+  async insertEvent(_t: AppRef, e: StoredEvent) {
     if (!this.events.has(e.sourceId)) this.events.set(e.sourceId, e)
     return this.events.get(e.sourceId)!
   }
-  async insertDelivery(_t: TenantRef, d: { eventId: string; endpointId: string }) {
+  async insertDelivery(_t: AppRef, d: { eventId: string; endpointId: string }) {
     if (!this.deliveries.some((x) => x.eventId === d.eventId && x.endpointId === d.endpointId)) this.deliveries.push({ eventId: d.eventId, endpointId: d.endpointId })
   }
   bodies() {
@@ -142,7 +142,7 @@ beforeEach(async () => {
   seq = { case: 0, dec: 0, acr: 0, evt: 0 }
   const next = (p: string) => () => `${p}_${++seq[p]!}`
   const casesPolicy = memoryDocumentCopy<Policy>()
-  for (const t of [tenant, { ...tenant, appId: 'app_b' }]) await casesPolicy.keep(t, 1, POLICY)
+  for (const t of [appRef, { ...appRef, appId: 'app_b' }]) await casesPolicy.keep(t, 1, POLICY)
   flow = composeServices({
     bus,
     clock,
@@ -157,9 +157,9 @@ beforeEach(async () => {
   })
 })
 
-const report = (reportId: string, subjectExternalId = 'u_5531', p0Signal = false) => ({ tenant, reportId, subjectExternalId, p0Signal })
+const report = (reportId: string, subjectExternalId = 'u_5531', p0Signal = false) => ({ appRef, reportId, subjectExternalId, p0Signal })
 const decideInput = (actionKeys: string[], memberId = 'mem_jane') => ({
-  tenant,
+  appRef,
   caseId: 'case_1',
   memberId,
   outcome: 'violation' as const,
@@ -248,25 +248,25 @@ describe('the core loop across services', () => {
   it('goes from decision to confirmed actions', async () => {
     await flow.submitReport(report('rpt_1'))
     await flow.drain()
-    await flow.claim({ tenant, caseId: 'case_1', memberId: 'mem_jane' })
+    await flow.claim({ appRef, caseId: 'case_1', memberId: 'mem_jane' })
     clock.advance(H)
     const decision = await flow.decide(decideInput(['suspend_7d', 'hide_content']))
     expect(decision.id).toBe('dec_1')
     await flow.drain()
     expect(cases.rows.get('case_1')?.state).toBe('decided')
     expect([...requests.rows.values()]).toEqual([
-      { id: 'acr_1', tenant, caseId: 'case_1', decisionId: 'dec_1', actionKey: 'suspend_7d', status: 'pending', failReason: null, retryId: null, replacedBy: null },
-      { id: 'acr_2', tenant, caseId: 'case_1', decisionId: 'dec_1', actionKey: 'hide_content', status: 'pending', failReason: null, retryId: null, replacedBy: null },
+      { id: 'acr_1', appRef, caseId: 'case_1', decisionId: 'dec_1', actionKey: 'suspend_7d', status: 'pending', failReason: null, retryId: null, replacedBy: null },
+      { id: 'acr_2', appRef, caseId: 'case_1', decisionId: 'dec_1', actionKey: 'hide_content', status: 'pending', failReason: null, retryId: null, replacedBy: null },
     ])
     expect(bus.log().filter((l) => l.event.type === 'action.requested.v1').map((l) => l.event.data)).toEqual([
       { actionRequestId: 'acr_1', caseId: 'case_1', actionKey: 'suspend_7d', ...ACTION_FACTS },
       { actionRequestId: 'acr_2', caseId: 'case_1', actionKey: 'hide_content', ...ACTION_FACTS },
     ])
 
-    await flow.confirmAction(tenant, 'acr_1')
+    await flow.confirmAction(appRef, 'acr_1')
     await flow.drain()
     expect(cases.rows.get('case_1')?.state).toBe('decided')
-    await flow.confirmAction(tenant, 'acr_2')
+    await flow.confirmAction(appRef, 'acr_2')
     await flow.drain()
     expect(cases.rows.get('case_1')?.state).toBe('actioned')
     expect(bus.deadLetters()).toEqual([])
@@ -275,15 +275,15 @@ describe('the core loop across services', () => {
   it('records a failed action, and a settled request does not change again', async () => {
     await flow.submitReport(report('rpt_1'))
     await flow.drain()
-    await flow.claim({ tenant, caseId: 'case_1', memberId: 'mem_jane' })
+    await flow.claim({ appRef, caseId: 'case_1', memberId: 'mem_jane' })
     await flow.decide(decideInput(['suspend_7d']))
     await flow.drain()
-    await flow.failAction(tenant, 'acr_1', 'user not found')
+    await flow.failAction(appRef, 'acr_1', 'user not found')
     await flow.drain()
     expect(cases.rows.get('case_1')?.state).toBe('action_failed')
     expect(requests.rows.get('acr_1')).toMatchObject({ status: 'failed', failReason: 'user not found' })
-    await flow.confirmAction(tenant, 'acr_1')
-    await flow.failAction(tenant, 'acr_1', 'again')
+    await flow.confirmAction(appRef, 'acr_1')
+    await flow.failAction(appRef, 'acr_1', 'again')
     await flow.drain()
     expect(requests.rows.get('acr_1')?.status).toBe('failed')
     expect(types().filter((t) => t === 'action.failed.v1')).toHaveLength(1)
@@ -292,16 +292,16 @@ describe('the core loop across services', () => {
   it('answers failed actions through delivery, and a failure the retry did not name waits for another answer', async () => {
     await flow.submitReport(report('rpt_1'))
     await flow.drain()
-    await flow.claim({ tenant, caseId: 'case_1', memberId: 'mem_jane' })
+    await flow.claim({ appRef, caseId: 'case_1', memberId: 'mem_jane' })
     await flow.decide(decideInput(['suspend_7d', 'hide_content']))
     await flow.drain()
-    await flow.failAction(tenant, 'acr_1', 'user not found')
+    await flow.failAction(appRef, 'acr_1', 'user not found')
     await flow.drain()
     expect(cases.rows.get('case_1')?.state).toBe('action_failed')
 
     // The retry answers the failure moderation knows of; hide_content fails before delivery carries it out.
-    await flow.retryActions({ tenant, caseId: 'case_1', memberId: 'mem_jane', actionKeys: ['ban'] })
-    await flow.failAction(tenant, 'acr_2', 'timeout')
+    await flow.retryActions({ appRef, caseId: 'case_1', memberId: 'mem_jane', actionKeys: ['ban'] })
+    await flow.failAction(appRef, 'acr_2', 'timeout')
     await flow.drain()
     expect(requests.rows.get('acr_1')?.replacedBy).not.toBeNull()
     expect(requests.rows.get('acr_2')).toMatchObject({ status: 'failed', replacedBy: null })
@@ -309,13 +309,13 @@ describe('the core loop across services', () => {
     expect(cases.rows.get('case_1')?.state).toBe('action_failed')
 
     // The second answer covers it; the replaced and answered failures do not count again.
-    await flow.retryActions({ tenant, caseId: 'case_1', memberId: 'mem_jane', actionKeys: [] })
+    await flow.retryActions({ appRef, caseId: 'case_1', memberId: 'mem_jane', actionKeys: [] })
     await flow.drain()
     expect(cases.rows.get('case_1')?.state).toBe('decided')
     bus.replay('cases.actions')
     await flow.drain()
     expect(cases.rows.get('case_1')?.state).toBe('decided')
-    await flow.confirmAction(tenant, 'acr_3')
+    await flow.confirmAction(appRef, 'acr_3')
     await flow.drain()
     expect(cases.rows.get('case_1')?.state).toBe('actioned')
     expect(bus.deadLetters()).toEqual([])
@@ -324,7 +324,7 @@ describe('the core loop across services', () => {
   it('closes a decision without actions immediately', async () => {
     await flow.submitReport(report('rpt_1'))
     await flow.drain()
-    await flow.claim({ tenant, caseId: 'case_1', memberId: 'mem_jane' })
+    await flow.claim({ appRef, caseId: 'case_1', memberId: 'mem_jane' })
     await flow.decide(decideInput([]))
     await flow.drain()
     expect(cases.rows.get('case_1')?.state).toBe('actioned')
@@ -334,7 +334,7 @@ describe('the core loop across services', () => {
   it('is safe to replay: no duplicate requests, no second classification', async () => {
     await flow.submitReport(report('rpt_1'))
     await flow.drain()
-    await flow.claim({ tenant, caseId: 'case_1', memberId: 'mem_jane' })
+    await flow.claim({ appRef, caseId: 'case_1', memberId: 'mem_jane' })
     await flow.decide(decideInput(['warn']))
     await flow.drain()
     const before = { cases: structuredClone([...cases.rows.values()]), triage: structuredClone([...triageCases.rows.values()]), requests: requests.rows.size, log: bus.log().length }
@@ -349,17 +349,17 @@ describe('the core loop across services', () => {
   })
 
   it('refuses an unknown action request', async () => {
-    await expect(flow.confirmAction(tenant, 'acr_nope')).rejects.toThrow(Error)
-    await expect(flow.failAction(tenant, 'acr_nope', 'x')).rejects.toThrow(Error)
+    await expect(flow.confirmAction(appRef, 'acr_nope')).rejects.toThrow(Error)
+    await expect(flow.failAction(appRef, 'acr_nope', 'x')).rejects.toThrow(Error)
   })
 
-  it('keeps tenants apart', async () => {
-    const other = { ...tenant, appId: 'app_b' }
+  it('keeps appRefs apart', async () => {
+    const other = { ...appRef, appId: 'app_b' }
     await flow.submitReport(report('rpt_1'))
-    await flow.submitReport({ ...report('rpt_2'), tenant: other })
+    await flow.submitReport({ ...report('rpt_2'), appRef: other })
     await flow.drain()
     expect(cases.rows.size).toBe(2)
-    expect(cases.rows.get('case_2')?.tenant).toEqual(other)
+    expect(cases.rows.get('case_2')?.appRef).toEqual(other)
   })
 })
 
@@ -367,8 +367,8 @@ describe('a correction across services', () => {
   it('saves the severity at once, then the priority and SLA triage gives from case.corrected, with no webhook', async () => {
     await flow.submitReport(report('rpt_1'))
     await flow.drain()
-    await flow.claim({ tenant, caseId: 'case_1', memberId: 'mem_jane' })
-    const saved = await flow.correct({ tenant, caseId: 'case_1', memberId: 'mem_jane', categoryId: 'spam.spam' })
+    await flow.claim({ appRef, caseId: 'case_1', memberId: 'mem_jane' })
+    const saved = await flow.correct({ appRef, caseId: 'case_1', memberId: 'mem_jane', categoryId: 'spam.spam' })
     expect(saved).toMatchObject({ classification: { categoryId: 'spam.spam' }, triage: { severity: 'P2', priority: 2000 } })
     await flow.drain()
     expect(cases.rows.get('case_1')).toMatchObject({
@@ -383,9 +383,9 @@ describe('a correction across services', () => {
   it("leaves an older correction's triage for the newer one's", async () => {
     await flow.submitReport(report('rpt_1'))
     await flow.drain()
-    await flow.claim({ tenant, caseId: 'case_1', memberId: 'mem_jane' })
-    await flow.correct({ tenant, caseId: 'case_1', memberId: 'mem_jane', categoryId: 'spam.spam' })
-    await flow.correct({ tenant, caseId: 'case_1', memberId: 'mem_jane', categoryId: 'child_safety.grooming' })
+    await flow.claim({ appRef, caseId: 'case_1', memberId: 'mem_jane' })
+    await flow.correct({ appRef, caseId: 'case_1', memberId: 'mem_jane', categoryId: 'spam.spam' })
+    await flow.correct({ appRef, caseId: 'case_1', memberId: 'mem_jane', categoryId: 'child_safety.grooming' })
     await flow.drain()
     expect(cases.rows.get('case_1')).toMatchObject({ classification: { categoryId: 'child_safety.grooming' }, triage: { severity: 'P0', slaDueAt: new Date(T0.getTime() + H) } })
   })
@@ -430,7 +430,7 @@ describe('webhooks from the core loop', () => {
     expect(webhooks.bodies().at(-1)).toMatchObject({ type: 'report.triaged', data: { category_id: 'scams_fraud.investment_scam' } })
 
     // A moderator claims the case before moderation saves the next one: the case keeps its triage, and the tenant hears nothing.
-    await flow.claim({ tenant, caseId: 'case_1', memberId: 'mem_jane' })
+    await flow.claim({ appRef, caseId: 'case_1', memberId: 'mem_jane' })
     await retry('case.triaged:case_1:llm_retry:again')
     await flow.drain()
     expect(types().filter((t) => t === 'case.retriaged.v1')).toHaveLength(1)
@@ -440,7 +440,7 @@ describe('webhooks from the core loop', () => {
   it('queues one action.requested per action, naming who decided', async () => {
     await flow.submitReport(report('rpt_1'))
     await flow.drain()
-    await flow.claim({ tenant, caseId: 'case_1', memberId: 'key_jane' })
+    await flow.claim({ appRef, caseId: 'case_1', memberId: 'key_jane' })
     await flow.decide(decideInput(['suspend_7d'], 'key_jane'))
     await flow.drain()
     const requested = webhooks.bodies().filter((b) => b.type === 'action.requested')

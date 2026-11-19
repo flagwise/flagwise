@@ -1,11 +1,11 @@
-import { manualClock, type ManualClock, type TenantRef } from '@flagwise/kernel'
+import { manualClock, type ManualClock, type AppRef } from '@flagwise/kernel'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { CaseChangedError, type CaseRecord, type CaseWorkDeps, type Decision } from '../src/app/ports.ts'
 import { CLAIM_IDLE_MS, CaseWorkError, claimCase, decideCase, releaseCase, type DecideInput } from '../src/app/work-case.ts'
 import type { CaseState } from '../src/domain/case-state.ts'
 import { InMemoryCaseRepository, RecordingPublisher } from './fakes.ts'
 
-const tenant: TenantRef = { appId: 'app_a', livemode: true }
+const appRef: AppRef = { appId: 'app_a', livemode: true }
 const T0 = new Date('2026-11-03T09:00:00.000Z')
 const MIN = 60_000
 
@@ -37,7 +37,7 @@ beforeEach(() => {
 
 const record = (o: Partial<CaseRecord> = {}): CaseRecord => ({
   id: 'case_1',
-  tenant,
+  appRef,
   subjectExternalId: 'u_5531',
   band: 'standard',
   state: 'open',
@@ -49,7 +49,7 @@ const record = (o: Partial<CaseRecord> = {}): CaseRecord => ({
 const claimedBy = (memberId: string, lastActivityAt = T0, o: Partial<CaseRecord> = {}) =>
   record({ state: 'claimed', claim: { memberId, claimedAt: new Date(lastActivityAt.getTime() - MIN), lastActivityAt }, ...o })
 
-const ref = (memberId = 'mem_jane') => ({ tenant, caseId: 'case_1', memberId })
+const ref = (memberId = 'mem_jane') => ({ appRef, caseId: 'case_1', memberId })
 
 async function rejectsWith(p: Promise<unknown>, code: string, extra: Partial<CaseWorkError> = {}) {
   const err = await p.then(
@@ -75,7 +75,7 @@ describe('claimCase', () => {
     const saved = await claimCase(deps, ref())
     expect(saved).toEqual(record({ state: 'claimed', claim: { memberId: 'mem_jane', claimedAt: T0, lastActivityAt: T0 } }))
     expect(repo.get('case_1')).toEqual(saved)
-    expect(publisher.events).toEqual([{ type: 'case.claimed', tenant, caseId: 'case_1', memberId: 'mem_jane', occurredAt: T0 }])
+    expect(publisher.events).toEqual([{ type: 'case.claimed', appRef, caseId: 'case_1', memberId: 'mem_jane', occurredAt: T0 }])
   })
 
   it('refreshes the activity of the member who holds it, without an event', async () => {
@@ -97,8 +97,8 @@ describe('claimCase', () => {
     const saved = await claimCase(deps, ref())
     expect(saved).toMatchObject({ state: 'claimed', claim: { memberId: 'mem_jane', claimedAt: T0, lastActivityAt: T0 } })
     expect(publisher.events).toEqual([
-      { type: 'case.released', tenant, caseId: 'case_1', memberId: 'mem_john', reason: 'idle', occurredAt: T0 },
-      { type: 'case.claimed', tenant, caseId: 'case_1', memberId: 'mem_jane', occurredAt: T0 },
+      { type: 'case.released', appRef, caseId: 'case_1', memberId: 'mem_john', reason: 'idle', occurredAt: T0 },
+      { type: 'case.claimed', appRef, caseId: 'case_1', memberId: 'mem_jane', occurredAt: T0 },
     ])
   })
 
@@ -107,9 +107,9 @@ describe('claimCase', () => {
     await rejectsWith(claimCase(deps, ref()), 'invalid_state')
   })
 
-  it('reports a missing case, also in another tenant', async () => {
+  it('reports a missing case, also in another appRef', async () => {
     await rejectsWith(claimCase(deps, ref()), 'not_found')
-    repo.seed(record({ tenant: { ...tenant, appId: 'app_b' } }))
+    repo.seed(record({ appRef: { ...appRef, appId: 'app_b' } }))
     await rejectsWith(claimCase(deps, ref()), 'not_found')
   })
 
@@ -154,7 +154,7 @@ describe('releaseCase', () => {
     const saved = await releaseCase(deps, ref())
     expect(saved).toEqual(record({ state: 'open', claim: null }))
     expect(publisher.events).toEqual([
-      { type: 'case.released', tenant, caseId: 'case_1', memberId: 'mem_jane', reason: 'released', occurredAt: new Date(T0.getTime() + MIN) },
+      { type: 'case.released', appRef, caseId: 'case_1', memberId: 'mem_jane', reason: 'released', occurredAt: new Date(T0.getTime() + MIN) },
     ])
   })
 
@@ -202,7 +202,7 @@ describe('decideCase', () => {
     expect(publisher.events).toEqual([
       {
         type: 'case.decided',
-        tenant,
+        appRef,
         caseId: 'case_1',
         subjectExternalId: 'u_5531',
         decisionId: 'dec_1',

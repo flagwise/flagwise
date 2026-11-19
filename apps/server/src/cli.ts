@@ -110,8 +110,8 @@ This key is shown only once. Store it now.`)
         console.error(`${positionals[0]} needs --app <app_id>`)
         return 2
       }
-      const tenant = { appId: values.app, livemode: !values.test }
-      const mode = tenant.livemode ? 'live' : 'test'
+      const appRef = { appId: values.app, livemode: !values.test }
+      const mode = appRef.livemode ? 'live' : 'test'
       const config = await serverConfigFromEnv(process.env)
       if (positionals[0] === 'webhooks:add') {
         if (!values.url) {
@@ -119,13 +119,13 @@ This key is shown only once. Store it now.`)
           return 2
         }
         const events = values.events?.split(',').map((e) => e.trim()).filter(Boolean)
-        const { endpoint, secret } = await addWebhookEndpoint(config, tenant, { url: values.url, ...(events && { eventTypes: events }) })
+        const { endpoint, secret } = await addWebhookEndpoint(config, appRef, { url: values.url, ...(events && { eventTypes: events }) })
         console.log(`Added ${mode} endpoint ${endpoint.id}: ${endpoint.url} (${endpoint.eventTypes?.join(', ') ?? 'every event type'})`)
         if (secret) console.log(`\nSigning secret: ${secret}\n\nThis secret is shown only once. Store it now; webhooks:roll-secret makes a new one.`)
         return 0
       }
       if (positionals[0] === 'webhooks:list') {
-        const endpoints = await listWebhookEndpoints(config, tenant)
+        const endpoints = await listWebhookEndpoints(config, appRef)
         if (endpoints.length === 0) console.log(`No ${mode} webhook endpoints.`)
         for (const e of endpoints) console.log(`${e.id}  ${e.url}  ${e.eventTypes?.join(',') ?? 'all'}  added ${e.createdAt.toISOString()}`)
         return 0
@@ -135,7 +135,7 @@ This key is shown only once. Store it now.`)
           console.error('webhooks:remove needs --id <whe_id>')
           return 2
         }
-        await removeWebhookEndpoint(config, tenant, values.id)
+        await removeWebhookEndpoint(config, appRef, values.id)
         console.log(`Removed endpoint ${values.id}.`)
         return 0
       }
@@ -144,7 +144,7 @@ This key is shown only once. Store it now.`)
         console.error('--overlap takes a duration such as 0, 30m, 24h or 7d')
         return 2
       }
-      const rolled = await rollWebhookSecret(config, tenant, overlapMs)
+      const rolled = await rollWebhookSecret(config, appRef, overlapMs)
       console.log(`New ${mode} signing secret (version ${rolled.version}): ${rolled.secret}
 
 ${rolled.previousExpireAt ? `The previous secret keeps signing until ${rolled.previousExpireAt.toISOString()}.` : 'There was no previous secret.'}

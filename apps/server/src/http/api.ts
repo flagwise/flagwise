@@ -2,7 +2,7 @@
 // routing to the modules' routes. No business logic lives here.
 
 import { createHash, randomUUID } from 'node:crypto'
-import { FlagwiseError, toProblem, type Clock, type TenantContext } from '@flagwise/kernel'
+import { FlagwiseError, toProblem, type Clock, type Caller } from '@flagwise/kernel'
 import { runInRequest, withSystem, type BucketConfig, type Database, type IdempotencyStore, type RateLimiter } from '@flagwise/platform'
 import { auditRoutes, type AuditRoutesDeps } from '@flagwise/audit'
 import { moderationRoutes, type ModerationRoutesDeps } from '@flagwise/moderation'
@@ -15,7 +15,7 @@ import { pgKeyDirectory, resolveApiKey, type KeyResolution } from '@flagwise/ten
 import { Hono, type Context } from 'hono'
 
 export interface ApiDeps {
-  /** Resolves a presented API key to its tenant. */
+  /** Resolves a presented API key to its caller. */
   readonly keys: { resolve(key: string, now: Date): Promise<KeyResolution> }
   readonly limiter: RateLimiter
   /** The token bucket of each app (self-host: from config). */
@@ -41,7 +41,7 @@ export interface ApiDeps {
 }
 
 interface ApiEnv {
-  Variables: { tenant: TenantContext; requestId: string }
+  Variables: { caller: Caller; requestId: string }
 }
 
 const REQUEST_ID = /^[A-Za-z0-9_.-]{1,128}$/
@@ -93,13 +93,13 @@ export function createApi(deps: ApiDeps): Hono<ApiEnv> {
       if (resolution.reason === 'app_deleted') throw new FlagwiseError('gone', 'The app of this API key was deleted')
       throw unauthorized(resolution.reason === 'inactive' ? 'The API key was revoked or has expired' : 'The API key is not valid')
     }
-    c.set('tenant', resolution.context)
+    c.set('caller', resolution.context)
     // Events published while handling the request carry its id and the key as their actor.
     await runInRequest({ requestId: c.get('requestId'), actor: actorRef(resolution.context.actor) }, next)
   })
 
   api.use(async (c, next) => {
-    const { appId, livemode } = c.get('tenant')
+    const { appId, livemode } = c.get('caller')
     const taken = await deps.limiter.take(`${appId}:${livemode}`, deps.rateLimit, deps.clock.now().getTime())
     if (!taken.allowed) throw new FlagwiseError('rate_limited', 'Too many requests for this app', { retryAfterSeconds: taken.retryAfterSeconds })
     await next()
@@ -107,12 +107,12 @@ export function createApi(deps: ApiDeps): Hono<ApiEnv> {
 
   api.use(async (c, next) => {
     const key = c.req.header('idempotency-key')
-    const { appId, livemode } = c.get('tenant')
+    const { appId, livemode } = c.get('caller')
     if (!deps.idempotency || c.req.method !== 'POST' || key === undefined || !appId || c.req.path.endsWith('/flagging/reports')) return next()
     if (!IDEMPOTENCY_KEY.test(key)) throw new FlagwiseError('invalid_request', 'Idempotency-Key must be 1 to 255 visible ASCII characters')
-    const tenant = { appId, livemode }
+    const appRef = { appId, livemode }
     const fingerprint = createHash('sha256').update(`POST ${c.req.path}\n`).update(await c.req.text()).digest('hex')
-    const started = await deps.idempotency.start(tenant, key, fingerprint, deps.clock.now())
+    const started = await deps.idempotency.start(appRef, key, fingerprint, deps.clock.now())
     if (started.kind === 'mismatch') throw new FlagwiseError('conflict', 'This Idempotency-Key was used with a different request')
     if (started.kind === 'in_progress') throw new FlagwiseError('conflict', 'A request with this Idempotency-Key is still running')
     if (started.kind === 'replay') {
@@ -122,12 +122,12 @@ export function createApi(deps: ApiDeps): Hono<ApiEnv> {
     try {
       await next()
     } catch (err) {
-      await deps.idempotency.release(tenant, key, fingerprint)
+      await deps.idempotency.release(appRef, key, fingerprint)
       throw err
     }
-    if (c.res.status >= 500) return deps.idempotency.release(tenant, key, fingerprint)
+    if (c.res.status >= 500) return deps.idempotency.release(appRef, key, fingerprint)
     const body = await c.res.clone().text()
-    await deps.idempotency.finish(tenant, key, fingerprint, { status: c.res.status, contentType: c.res.headers.get('content-type') ?? 'application/json', body })
+    await deps.idempotency.finish(appRef, key, fingerprint, { status: c.res.status, contentType: c.res.headers.get('content-type') ?? 'application/json', body })
   })
 
   api.route('/', flaggingRoutes(deps.flagging))
@@ -151,7 +151,7 @@ export function createApi(deps: ApiDeps): Hono<ApiEnv> {
 }
 
 /** The actor as the audit log names it: embedded staff as `embed:{sub}`. */
-function actorRef(actor: TenantContext['actor']): { type: string; id: string } {
+function actorRef(actor: Caller['actor']): { type: string; id: string } {
   if (actor.type === 'embed') return { type: 'embed', id: `embed:${actor.sub}` }
   if (actor.type === 'system') return { type: 'system', id: 'system' }
   return { type: actor.type, id: actor.id }

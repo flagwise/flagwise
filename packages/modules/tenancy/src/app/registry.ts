@@ -2,7 +2,7 @@
 // transaction; resolving a key on an incoming request goes through the key directory, which the
 // system role reads because no tenant is known until the key is resolved.
 
-import { FlagwiseError, type ApiKeyScope, type Clock, type TenantContext, type TenantRef } from '@flagwise/kernel'
+import { FlagwiseError, type ApiKeyScope, type Clock, type Caller, type AppRef } from '@flagwise/kernel'
 import { generateApiKey, isKeyActive, maskApiKey, normalizeScopes, parseApiKey, rotationExpiry, verifyApiKey } from '../domain/api-keys.ts'
 
 export interface App {
@@ -25,7 +25,7 @@ export interface ApiKeyRecord {
   readonly revokedAt: Date | null
 }
 
-/** Registry access inside one tenant transaction: every method sees only its apps. */
+/** Registry access inside one app transaction: every method sees only its apps. */
 export interface TenancyStore {
   insertApp(app: App): Promise<void>
   findApp(appId: string): Promise<App | null>
@@ -51,16 +51,16 @@ export interface KeyDirectory {
 }
 
 /** The app and mode a key belongs to. */
-const refOf = (k: ApiKeyRecord): TenantRef => ({ appId: k.appId, livemode: k.livemode })
+const refOf = (k: ApiKeyRecord): AppRef => ({ appId: k.appId, livemode: k.livemode })
 
 /** The key's lifetime in the form isKeyActive takes. */
 const lifetime = (k: ApiKeyRecord) => ({ createdAt: k.createdAt, revokedAt: k.revokedAt ?? undefined, expiresAt: k.expiresAt ?? undefined })
 
 /** What tenancy publishes when a key changes; ids and scopes only, never a key. */
 export type TenancyEvent =
-  | { readonly type: 'api_key.issued'; readonly tenant: TenantRef; readonly keyId: string; readonly scopes: readonly ApiKeyScope[]; readonly occurredAt: Date }
-  | { readonly type: 'api_key.rotated'; readonly tenant: TenantRef; readonly keyId: string; readonly replacedBy: string; readonly expiresAt: Date; readonly occurredAt: Date }
-  | { readonly type: 'api_key.revoked'; readonly tenant: TenantRef; readonly keyId: string; readonly occurredAt: Date }
+  | { readonly type: 'api_key.issued'; readonly appRef: AppRef; readonly keyId: string; readonly scopes: readonly ApiKeyScope[]; readonly occurredAt: Date }
+  | { readonly type: 'api_key.rotated'; readonly appRef: AppRef; readonly keyId: string; readonly replacedBy: string; readonly expiresAt: Date; readonly occurredAt: Date }
+  | { readonly type: 'api_key.revoked'; readonly appRef: AppRef; readonly keyId: string; readonly occurredAt: Date }
 
 export interface TenancyEventPublisher {
   /** Publishes in the same transaction as the change. */
@@ -120,7 +120,7 @@ export async function issueApiKey(
       revokedAt: null,
     }
     if (await deps.store.insertApiKey(record)) {
-      await deps.events?.publish({ type: 'api_key.issued', tenant: refOf(record), keyId: record.id, scopes, occurredAt: now })
+      await deps.events?.publish({ type: 'api_key.issued', appRef: refOf(record), keyId: record.id, scopes, occurredAt: now })
       return { key: generated.key, masked: maskApiKey(generated.key), record }
     }
   }
@@ -142,7 +142,7 @@ export async function rotateApiKey(
   if (!old || !isKeyActive(lifetime(old), now)) throw new FlagwiseError('not_found', `No active API key ${input.keyId}`)
   const issued = await issueApiKey(deps, { appId: old.appId, livemode: old.livemode, scopes: old.scopes })
   if (await deps.store.endApiKey(old.appId, old.id, { expiresAt }, now)) {
-    await deps.events?.publish({ type: 'api_key.rotated', tenant: refOf(old), keyId: old.id, replacedBy: issued.record.id, expiresAt, occurredAt: now })
+    await deps.events?.publish({ type: 'api_key.rotated', appRef: refOf(old), keyId: old.id, replacedBy: issued.record.id, expiresAt, occurredAt: now })
   }
   return issued
 }
@@ -153,12 +153,12 @@ export async function revokeApiKey(deps: RegistryDeps, input: { readonly appId: 
   const key = await deps.store.findApiKey(input.appId, input.keyId)
   if (!key) throw new FlagwiseError('not_found', `No API key ${input.keyId}`)
   if (await deps.store.endApiKey(input.appId, input.keyId, { revokedAt: now }, now)) {
-    await deps.events?.publish({ type: 'api_key.revoked', tenant: refOf(key), keyId: key.id, occurredAt: now })
+    await deps.events?.publish({ type: 'api_key.revoked', appRef: refOf(key), keyId: key.id, occurredAt: now })
   }
 }
 
 export type KeyResolution =
-  | { readonly ok: true; readonly context: TenantContext }
+  | { readonly ok: true; readonly context: Caller }
   /**
    * Why the key does not let the request in. 'app_deleted': the key is valid but its app is deleted, which flagging answers with 410; every other reason is a 401.
    */

@@ -1,5 +1,5 @@
 -- Reports as received. The evidence itself is in object storage under snapshot_key; this row keeps
--- what intake needs to find a report, answer for it and replay an idempotent request. Tenant-scoped:
+-- what intake needs to find a report, answer for it and replay an idempotent request. App-scoped:
 -- row-level security limits the app role to the apps and mode of the current transaction.
 
 CREATE SCHEMA intake;
@@ -26,6 +26,6 @@ CREATE TABLE intake.reports (
 
 ALTER TABLE intake.reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE intake.reports FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON intake.reports TO {{app}}
+CREATE POLICY app ON intake.reports TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());

@@ -1,10 +1,10 @@
-import { manualClock, type ManualClock, type TenantRef } from '@flagwise/kernel'
+import { manualClock, type ManualClock, type AppRef } from '@flagwise/kernel'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { AppealError, appealDeadline, fileAppeal, resolveAppeal, type FileAppealInput } from '../src/app/appeals.ts'
 import { VersionConflictError, type AppealRecord, type AppealsDeps, type DecisionView } from '../src/app/ports.ts'
 import { InMemoryAppeals, InMemoryDecisions, RecordingPublisher } from './fakes.ts'
 
-const tenant: TenantRef = { appId: 'app_a', livemode: true }
+const appRef: AppRef = { appId: 'app_a', livemode: true }
 const DECIDED = new Date('2026-11-03T09:00:00.000Z')
 const DAY = 86_400_000
 const REVERSE: Record<string, string> = { suspend_7d: 'unsuspend', hide_content: 'unhide_content' }
@@ -18,7 +18,7 @@ let ids: number
 
 const decision = (o: Partial<DecisionView> = {}): DecisionView => ({
   decisionId: 'dec_1',
-  tenant,
+  appRef,
   caseId: 'case_1',
   outcome: 'violation',
   actionKeys: ['suspend_7d', 'warn', 'hide_content'],
@@ -48,7 +48,7 @@ beforeEach(() => {
 })
 
 const reportedAppeal = (o: Partial<FileAppealInput> = {}): FileAppealInput => ({
-  tenant,
+  appRef,
   decisionId: 'dec_1',
   appellant: 'reported',
   appellantExternalId: 'u_5531',
@@ -84,7 +84,7 @@ describe('fileAppeal', () => {
     const r = await fileAppeal(deps, reportedAppeal())
     const expected: AppealRecord = {
       id: 'apl_1',
-      tenant,
+      appRef,
       decisionId: 'dec_1',
       caseId: 'case_1',
       appellant: 'reported',
@@ -100,7 +100,7 @@ describe('fileAppeal', () => {
     expect(r).toEqual(expected)
     expect(appeals.all()).toEqual([expected])
     expect(publisher.events).toEqual([
-      { type: 'appeal.filed', tenant, appealId: 'apl_1', decisionId: 'dec_1', caseId: 'case_1', appellant: 'reported', dueAt: expected.dueAt, occurredAt: now },
+      { type: 'appeal.filed', appRef, appealId: 'apl_1', decisionId: 'dec_1', caseId: 'case_1', appellant: 'reported', dueAt: expected.dueAt, occurredAt: now },
     ])
   })
 
@@ -113,13 +113,13 @@ describe('fileAppeal', () => {
 
   it('allows one appeal per party even after it was resolved', async () => {
     await fileAppeal(deps, reportedAppeal())
-    await resolveAppeal(deps, { tenant, appealId: 'apl_1', reviewerId: 'mem_john', outcome: 'upheld' })
+    await resolveAppeal(deps, { appRef, appealId: 'apl_1', reviewerId: 'mem_john', outcome: 'upheld' })
     await rejectsWith(fileAppeal(deps, reportedAppeal()), 'already_appealed')
   })
 
   it.each<[string, Partial<FileAppealInput>, string]>([
     ['an unknown decision', { decisionId: 'dec_x' }, 'decision_not_found'],
-    ['a decision of another tenant', { tenant: { ...tenant, livemode: false } }, 'decision_not_found'],
+    ['a decision of another appRef', { appRef: { ...appRef, livemode: false } }, 'decision_not_found'],
     ['blank text', { text: '   ' }, 'invalid_text'],
     ['text over 2000 characters', { text: 'x'.repeat(2001) }, 'invalid_text'],
     ['someone who is not the reported user', { appellantExternalId: 'u_1029' }, 'not_a_party'],
@@ -150,7 +150,7 @@ describe('fileAppeal', () => {
 })
 
 describe('resolveAppeal', () => {
-  const resolve = (outcome: 'upheld' | 'overturned', reviewerId = 'mem_john') => resolveAppeal(deps, { tenant, appealId: 'apl_1', reviewerId, outcome })
+  const resolve = (outcome: 'upheld' | 'overturned', reviewerId = 'mem_john') => resolveAppeal(deps, { appRef, appealId: 'apl_1', reviewerId, outcome })
 
   it('upholds a decision', async () => {
     await fileAppeal(deps, reportedAppeal())
@@ -161,7 +161,7 @@ describe('resolveAppeal', () => {
     expect(appeals.get('apl_1')).toEqual(r)
     expect(publisher.events[1]).toEqual({
       type: 'appeal.resolved',
-      tenant,
+      appRef,
       appealId: 'apl_1',
       decisionId: 'dec_1',
       caseId: 'case_1',
@@ -245,7 +245,7 @@ describe('resolveAppeal', () => {
 
     await fileAppeal(deps, reportedAppeal({ decisionId: 'dec_nv', appellant: 'reporter', appellantExternalId: 'u_1029' }))
     appeals.failUpdatesWith = [new VersionConflictError('apl_2'), new VersionConflictError('apl_2')]
-    await expect(resolveAppeal(deps, { tenant, appealId: 'apl_2', reviewerId: 'mem_john', outcome: 'upheld' })).rejects.toBeInstanceOf(VersionConflictError)
+    await expect(resolveAppeal(deps, { appRef, appealId: 'apl_2', reviewerId: 'mem_john', outcome: 'upheld' })).rejects.toBeInstanceOf(VersionConflictError)
     expect(appeals.get('apl_2')?.status).toBe('open')
   })
 })

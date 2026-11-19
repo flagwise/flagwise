@@ -2,14 +2,14 @@
 // still triage start from moderation's tables, with the classification each was triaged on. Runs
 // against a real Postgres through TEST_DATABASE_URL; skipped without it.
 import { moderationMigrations, pgCaseRepository } from '@flagwise/moderation'
-import type { TenantRef } from '@flagwise/kernel'
-import { createDatabase, migrate, scopeOfRef, withTenant, type Database } from '@flagwise/platform'
+import type { AppRef } from '@flagwise/kernel'
+import { createDatabase, migrate, scopeOfApp, withApps, type Database } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { pgTriageCaseStore, triageMigrations } from '@flagwise/triage'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-const A: TenantRef = { appId: 'app_jane', livemode: true }
+const A: AppRef = { appId: 'app_jane', livemode: true }
 const T0 = new Date('2026-11-19T09:00:00.000Z')
 const triage = { severity: 'P1' as const, priority: 2000, slaDueAt: T0, suggestedActionKeys: [] }
 
@@ -29,9 +29,9 @@ describe.skipIf(!testDatabaseUrl)('upgrading to triage records', () => {
   it('starts from the cases moderation held, leaving decided ones out, with forced row-level security back on', async () => {
     // A release before: moderation's cases, and triage with only its policy copies.
     await migrate(t.ownerUrl, [moderationMigrations, { ...triageMigrations, migrations: triageMigrations.migrations.slice(0, 1) }], t.roles)
-    await withTenant(db, scopeOfRef(A), async (tx) => {
+    await withApps(db, scopeOfApp(A), async (tx) => {
       const repo = pgCaseRepository(tx)
-      const base = { tenant: A, subjectExternalId: 'u_john_doe', band: 'standard' as const, openedAt: T0 }
+      const base = { appRef: A, subjectExternalId: 'u_john_doe', band: 'standard' as const, openedAt: T0 }
       const classification = { categoryId: 'scams_fraud.romance_scam', customCategoryId: 'asking_for_money', signals: ['minor_involved'], injectionSuspected: false, classifiedBy: 'rules' as const }
       await repo.insert({ ...base, id: 'case_open', state: 'open', reportIds: ['rpt_1', 'rpt_2'], triage, classification })
       // What that release kept of the reports' account facts.
@@ -41,7 +41,7 @@ describe.skipIf(!testDatabaseUrl)('upgrading to triage records', () => {
     })
     await migrate(t.ownerUrl, [moderationMigrations, triageMigrations], t.roles)
     expect((await db.system.execute(sql`SELECT 1 FROM platform.consumer_groups WHERE name = 'triage'`)).rows).toEqual([])
-    const records = await withTenant(db, scopeOfRef(A), async (tx) => {
+    const records = await withApps(db, scopeOfApp(A), async (tx) => {
       const store = pgTriageCaseStore(tx)
       // One after another: the queries share the transaction's connection.
       return [await store.find(A, 'case_open'), await store.find(A, 'case_waiting'), await store.find(A, 'case_done')]
@@ -56,7 +56,7 @@ describe.skipIf(!testDatabaseUrl)('upgrading to triage records', () => {
     })
     expect(records[1]).toMatchObject({ state: 'untriaged', classification: null, claimed: true, everClaimed: true })
     expect(records[2]).toBeNull()
-    const forced = await withTenant(db, scopeOfRef(A), (tx) =>
+    const forced = await withApps(db, scopeOfApp(A), (tx) =>
       tx.execute<{ relname: string; relforcerowsecurity: boolean }>(sql`SELECT relname, relforcerowsecurity FROM pg_class WHERE relnamespace IN ('cases'::regnamespace, 'triage'::regnamespace) AND relkind = 'r'`),
     )
     expect(forced.rows.every((r) => r.relforcerowsecurity)).toBe(true)
@@ -69,7 +69,7 @@ describe.skipIf(!testDatabaseUrl)('upgrading to triage records', () => {
       // A release before: triage with only its policy copies, and moderation's group that triaged cases itself.
       await migrate(u.ownerUrl, [moderationMigrations, { ...triageMigrations, migrations: triageMigrations.migrations.slice(0, 1) }], u.roles)
       const event = (id: string, type: string, fannedOut: boolean) =>
-        withTenant(udb, scopeOfRef(A), (tx) =>
+        withApps(udb, scopeOfApp(A), (tx) =>
           tx.execute<{ seq: string }>(sql`
             INSERT INTO platform.events (id, type, key, data, app_id, livemode, fanned_out)
             VALUES (${id}, ${type}, 'case_1', '{}', ${A.appId}, true, ${fannedOut}) RETURNING seq`),

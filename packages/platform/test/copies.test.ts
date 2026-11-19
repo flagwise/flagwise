@@ -1,5 +1,5 @@
 // Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
-import type { TenantRef } from '@flagwise/kernel'
+import type { AppRef } from '@flagwise/kernel'
 import { pgSchema } from 'drizzle-orm/pg-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { copyTable, createDatabase, migrate, pgDocumentCopy, type Database, type DocumentCopy, type MigrationSet } from '../src/index.ts'
@@ -22,7 +22,7 @@ CREATE TABLE sample.policy_copies (
 );
 ALTER TABLE sample.policy_copies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sample.policy_copies FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON sample.policy_copies TO {{app}}
+CREATE POLICY app ON sample.policy_copies TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 `,
@@ -30,8 +30,8 @@ CREATE POLICY tenant ON sample.policy_copies TO {{app}}
   ],
 }
 
-const LIVE: TenantRef = { appId: 'app_a', livemode: true }
-const TEST: TenantRef = { ...LIVE, livemode: false }
+const LIVE: AppRef = { appId: 'app_a', livemode: true }
+const TEST: AppRef = { ...LIVE, livemode: false }
 
 describe.skipIf(!testDatabaseUrl)('a document copy on Postgres', () => {
   let t: TestDatabase

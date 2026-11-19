@@ -1,9 +1,9 @@
-// The core loop's services on Postgres: tenant transactions of their own, the Postgres bus and
+// The core loop's services on Postgres: app transactions of their own, the Postgres bus and
 // row-level security; a fixed classifier stands in for classify.
 // Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
-import { manualClock, type TenantRef } from '@flagwise/kernel'
+import { manualClock, type AppRef } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
-import { createDatabase, createPgBus, migrate, pgUnitOfWork, scopeOfRef, withTenant, type Database, type PgBus } from '@flagwise/platform'
+import { createDatabase, createPgBus, migrate, pgUnitOfWork, scopeOfApp, withApps, type Database, type PgBus } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { moderationMigrations, moderationTables, pgCaseRepository, pgModerationPolicyCopy } from '@flagwise/moderation'
 import { deliveryMigrations, deliveryTables, pgActionRequestStore, pgDeliveryDeps } from '@flagwise/delivery'
@@ -12,8 +12,8 @@ import { pgTriageDeps, triageMigrations, triageTables } from '@flagwise/triage'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { composeServices, policyWithKeys, type Classification, type Services } from './support/services.ts'
 
-const A: TenantRef = { appId: 'app_a', livemode: true }
-const B: TenantRef = { appId: 'app_b', livemode: true }
+const A: AppRef = { appId: 'app_a', livemode: true }
+const B: AppRef = { appId: 'app_b', livemode: true }
 const T0 = new Date('2026-11-05T09:00:00.000Z')
 const H = 3_600_000
 const CATEGORY = 'scams_fraud.romance_scam'
@@ -25,14 +25,14 @@ describe.skipIf(!testDatabaseUrl)('core flow on Postgres', () => {
   let flow: Services
   let n: number
 
-  const caseOf = (tenant: TenantRef, id: string) => withTenant(db, scopeOfRef(tenant), (tx) => pgCaseRepository(tx).findById(tenant, id))
-  const casesOf = (tenant: TenantRef, subject: string) => withTenant(db, scopeOfRef(tenant), (tx) => pgCaseRepository(tx).findBySubject(tenant, subject))
-  const requestsOf = (tenant: TenantRef, decisionId: string) =>
-    withTenant(db, scopeOfRef(tenant), (tx) => pgActionRequestStore(tx).findByDecision(tenant, decisionId))
+  const caseOf = (appRef: AppRef, id: string) => withApps(db, scopeOfApp(appRef), (tx) => pgCaseRepository(tx).findById(appRef, id))
+  const casesOf = (appRef: AppRef, subject: string) => withApps(db, scopeOfApp(appRef), (tx) => pgCaseRepository(tx).findBySubject(appRef, subject))
+  const requestsOf = (appRef: AppRef, decisionId: string) =>
+    withApps(db, scopeOfApp(appRef), (tx) => pgActionRequestStore(tx).findByDecision(appRef, decisionId))
   const types = async () => (await bus.log()).map((l) => l.event.type)
-  const report = (reportId: string, tenant = A, subjectExternalId = 'u_jane_doe') => ({ tenant, reportId, subjectExternalId, p0Signal: false })
+  const report = (reportId: string, appRef = A, subjectExternalId = 'u_jane_doe') => ({ appRef, reportId, subjectExternalId, p0Signal: false })
   const decideInput = (caseId: string, actionKeys: string[]) => ({
-    tenant: A,
+    appRef: A,
     caseId,
     memberId: 'mem_jane',
     outcome: 'violation' as const,
@@ -44,7 +44,7 @@ describe.skipIf(!testDatabaseUrl)('core flow on Postgres', () => {
     await flow.submitReport(report('rpt_1'))
     await flow.drain()
     const [opened] = await casesOf(A, 'u_jane_doe')
-    await flow.claim({ tenant: A, caseId: opened!.id, memberId: 'mem_jane' })
+    await flow.claim({ appRef: A, caseId: opened!.id, memberId: 'mem_jane' })
     const decision = await flow.decide(decideInput(opened!.id, actionKeys))
     await flow.drain()
     return { caseId: opened!.id, decision, requests: await requestsOf(A, decision.id) }
@@ -58,7 +58,7 @@ describe.skipIf(!testDatabaseUrl)('core flow on Postgres', () => {
     bus = createPgBus(db, { retryDelayMs: () => 0, contract: eventContract })
     const classification: Classification = { categoryId: CATEGORY, signals: [], injectionSuspected: false, preRuleP0: false, classifiedBy: 'llm' }
     const policy = pgModerationPolicyCopy(db)
-    for (const tenant of [A, B]) await policy.keep(tenant, 1, policyWithKeys('warn', 'suspend_7d', 'hide_content'))
+    for (const appRef of [A, B]) await policy.keep(appRef, 1, policyWithKeys('warn', 'suspend_7d', 'hide_content'))
     const clock = manualClock(T0)
     flow = composeServices({
       bus,
@@ -94,7 +94,7 @@ describe.skipIf(!testDatabaseUrl)('core flow on Postgres', () => {
       triage: { severity: 'P1', priority: 2000, slaDueAt: new Date(T0.getTime() + 24 * H), suggestedActionKeys: [] },
     })
     expect(await types()).toEqual(['report.received.v1', 'case.opened.v1', 'case.classified.v1', 'case.triaged.v1'])
-    expect((await bus.log()).every((l) => l.event.tenant?.appId === 'app_a')).toBe(true)
+    expect((await bus.log()).every((l) => l.event.appRef?.appId === 'app_a')).toBe(true)
     expect(await bus.deadLetters()).toEqual([])
   })
 
@@ -132,7 +132,7 @@ describe.skipIf(!testDatabaseUrl)('core flow on Postgres', () => {
     expect(await bus.deadLetters()).toEqual([])
   })
 
-  it('keeps tenants apart', async () => {
+  it('keeps appRefs apart', async () => {
     await flow.submitReport(report('rpt_1', A))
     await flow.submitReport(report('rpt_2', B))
     await flow.drain()
@@ -148,7 +148,7 @@ describe.skipIf(!testDatabaseUrl)('core flow on Postgres', () => {
     const uow = pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx) }))
     await expect(
       uow.run(A, async (w) => {
-        await w.stores.cases.insert({ id: 'case_x', tenant: A, subjectExternalId: 'u_john_doe', band: 'standard', state: 'classifying', reportIds: ['rpt_x'], openedAt: T0 })
+        await w.stores.cases.insert({ id: 'case_x', appRef: A, subjectExternalId: 'u_john_doe', band: 'standard', state: 'classifying', reportIds: ['rpt_x'], openedAt: T0 })
         await w.publish({ id: 'evt_x', type: 'case.opened.v1', key: 'case_x', data: { caseId: 'case_x', reportId: 'rpt_x', subjectExternalId: 'u_john_doe', band: 'standard', occurredAt: T0 } })
         throw new Error('boom')
       }),

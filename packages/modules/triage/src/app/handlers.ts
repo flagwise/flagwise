@@ -5,8 +5,8 @@
 // case.untriaged; moderation saves them on the case.
 
 import { currentType, erasedId, erasureAnswer, policyIn, type EventData } from '@flagwise/contracts'
-import type { TenantRef } from '@flagwise/kernel'
-import { subscribeCopy, tenantOf, type BusEvent, type EventBus, type Work } from '@flagwise/platform'
+import type { AppRef } from '@flagwise/kernel'
+import { subscribeCopy, appOf, type BusEvent, type EventBus, type Work } from '@flagwise/platform'
 import { triageCase } from './case-triage.ts'
 import type { Severity } from '../domain/triage.ts'
 import type { ReportAccounts, TriageCase, TriageClassification, TriageDeps, TriageStores } from './ports.ts'
@@ -56,26 +56,26 @@ export function subscribeTriage(bus: EventBus, deps: TriageDeps): void {
     return { version: u.version, document: u.policy }
   })
   bus.subscribe('triage.erasure', [currentType('subject.erasure_requested')], async (event) => {
-    const tenant = tenantOf(event)
+    const appRef = appOf(event)
     const request = event.data as EventData<'subject.erasure_requested.v1'>
-    await deps.uow.run(tenant, async (w) => {
-      const had = await w.stores.cases.eraseAccount(tenant, request.subjectExternalId, erasedId(request.erasureId))
+    await deps.uow.run(appRef, async (w) => {
+      const had = await w.stores.cases.eraseAccount(appRef, request.subjectExternalId, erasedId(request.erasureId))
       await w.publish(erasureAnswer(request, 'triage.erasure', had > 0 ? 'erased' : 'nothing_held', new Date()))
     })
   })
   bus.subscribe('triage', TRIAGE_EVENT_TYPES, async (event) => {
-    const tenant = tenantOf(event)
-    await deps.uow.run(tenant, (w) => handle(deps, w, tenant, event))
+    const appRef = appOf(event)
+    await deps.uow.run(appRef, (w) => handle(deps, w, appRef, event))
   })
 }
 
-async function handle(deps: TriageDeps, w: Work<TriageStores>, tenant: TenantRef, event: BusEvent): Promise<void> {
+async function handle(deps: TriageDeps, w: Work<TriageStores>, appRef: AppRef, event: BusEvent): Promise<void> {
   const cases = w.stores.cases
   switch (event.type) {
     case 'case.opened.v1': {
       const d = event.data as EventData<'case.opened.v1'>
       await cases.open({
-        tenant,
+        appRef,
         caseId: d.caseId,
         subjectExternalId: d.subjectExternalId,
         openedAt: new Date(d.occurredAt),
@@ -93,44 +93,44 @@ async function handle(deps: TriageDeps, w: Work<TriageStores>, tenant: TenantRef
     case 'case.report_attached.v1': {
       const d = event.data as EventData<'case.report_attached.v1'>
       const facts = d.facts ? accountsOf(d.reportId, d.facts) : null
-      await cases.attach(tenant, d.caseId, d.reportId, facts && { reporterExternalId: facts.reporterExternalId, reporterAccountCreatedAt: facts.reporterAccountCreatedAt, reportedAccountCreatedAt: facts.reportedAccountCreatedAt })
+      await cases.attach(appRef, d.caseId, d.reportId, facts && { reporterExternalId: facts.reporterExternalId, reporterAccountCreatedAt: facts.reporterAccountCreatedAt, reportedAccountCreatedAt: facts.reportedAccountCreatedAt })
       return
     }
     case 'case.claimed.v1':
-      await cases.change(tenant, (event.data as EventData<'case.claimed.v1'>).caseId, { claimed: true, everClaimed: true })
+      await cases.change(appRef, (event.data as EventData<'case.claimed.v1'>).caseId, { claimed: true, everClaimed: true })
       return
     case 'case.released.v1':
-      await cases.change(tenant, (event.data as EventData<'case.released.v1'>).caseId, { claimed: false })
+      await cases.change(appRef, (event.data as EventData<'case.released.v1'>).caseId, { claimed: false })
       return
     case 'case.corrected.v1': {
       const d = event.data as EventData<'case.corrected.v1'>
-      const record = await cases.find(tenant, d.caseId)
+      const record = await cases.find(appRef, d.caseId)
       if (!record) return
-      await cases.change(tenant, d.caseId, { corrected: true, ...(record.classification && { classification: corrected(record.classification, d.after.categoryId) }) })
+      await cases.change(appRef, d.caseId, { corrected: true, ...(record.classification && { classification: corrected(record.classification, d.after.categoryId) }) })
       return
     }
     case 'case.corrected.v2': {
       const d = event.data as EventData<'case.corrected.v2'>
-      const record = await cases.find(tenant, d.caseId)
+      const record = await cases.find(appRef, d.caseId)
       if (!record?.classification) throw new Error(`Triage has no classification of case ${d.caseId}`)
       if (record.decided) return
       const classification = corrected(record.classification, d.after.categoryId)
-      await cases.change(tenant, d.caseId, { corrected: true })
+      await cases.change(appRef, d.caseId, { corrected: true })
       await publishTriaged(deps, w, record, classification, `case.triaged:${event.id}`, 'correction', d.after.severity ?? undefined)
       return
     }
     case 'case.decided.v1':
-      await cases.change(tenant, (event.data as EventData<'case.decided.v1'>).caseId, { decided: true, claimed: false })
+      await cases.change(appRef, (event.data as EventData<'case.decided.v1'>).caseId, { decided: true, claimed: false })
       return
     case 'case.classified.v1': {
       const c = event.data as Classified
-      const record = await cases.find(tenant, c.caseId)
+      const record = await cases.find(appRef, c.caseId)
       if (!record) throw new Error(`Triage has no record of case ${c.caseId}`)
       if (record.state !== 'classifying') return
-      const policy = await policyIn(deps.policy, tenant)
+      const policy = await policyIn(deps.policy, appRef)
       const classification = classificationOf(c)
       if (c.rulesReason === 'llm_failed' && !policy.llm.fallbackToRules) {
-        await cases.change(tenant, c.caseId, { state: 'untriaged', classification })
+        await cases.change(appRef, c.caseId, { state: 'untriaged', classification })
         await w.publish({ id: `case.untriaged:${c.caseId}`, type: currentType('case.untriaged'), key: c.caseId, data: { caseId: c.caseId, reason: 'provider_error' } })
         return
       }
@@ -139,7 +139,7 @@ async function handle(deps: TriageDeps, w: Work<TriageStores>, tenant: TenantRef
     }
     case 'case.reclassified.v1': {
       const c = event.data as Classified
-      const record = await cases.find(tenant, c.caseId)
+      const record = await cases.find(appRef, c.caseId)
       if (!record || record.claimed || record.corrected || record.decided) return
       if (record.state === 'classifying' || (record.state === 'untriaged' && record.everClaimed)) return
       await publishTriaged(deps, w, record, classificationOf(c), `case.triaged:${c.caseId}:llm_retry`, 'llm_retry')
@@ -153,7 +153,7 @@ async function publishTriaged(deps: TriageDeps, w: Work<TriageStores>, record: T
   const customCategoryId = c.customCategoryId
   const result = triageCase({
     openedAt: record.openedAt,
-    policy: await policyIn(deps.policy, record.tenant),
+    policy: await policyIn(deps.policy, record.appRef),
     categoryId: c.categoryId,
     customCategoryId,
     severity,
@@ -161,7 +161,7 @@ async function publishTriaged(deps: TriageDeps, w: Work<TriageStores>, record: T
     reports: record.reports,
     ...(deps.config && { config: deps.config }),
   })
-  await w.stores.cases.change(record.tenant, record.caseId, { state: 'triaged', classification: c })
+  await w.stores.cases.change(record.appRef, record.caseId, { state: 'triaged', classification: c })
   const data: EventData<'case.triaged.v1'> = {
     caseId: record.caseId,
     reportIds: [...record.reportIds],

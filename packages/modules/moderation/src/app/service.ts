@@ -4,7 +4,7 @@
 
 import { allowedActionKeys, currentType, erasedId, erasureAnswer, policyIn, type EventData, type Policy } from '@flagwise/contracts'
 import type { Clock } from '@flagwise/kernel'
-import { subscribeCopy, tenantOf, type DocumentCopy, type EventBus, type UnitOfWork, type Work } from '@flagwise/platform'
+import { subscribeCopy, appOf, type DocumentCopy, type EventBus, type UnitOfWork, type Work } from '@flagwise/platform'
 import { nextState } from '../domain/case-state.ts'
 import type { ActionCatalog, CaseClassification, CaseRecord, CaseRepository, CaseTriage, CaseWorkDeps, ModerationEvent, Decision, Severity } from './ports.ts'
 import { receiveReport, type ReportReceived } from './receive-report.ts'
@@ -35,7 +35,7 @@ export interface ModerationService {
 
 /** Which action keys a category allows, from moderation's copy of the policy. */
 const catalogOf = (deps: ModerationServiceDeps): ActionCatalog => ({
-  allowedActionKeys: async (tenant, categoryId) => allowedActionKeys(await policyIn(deps.policy, tenant), categoryId),
+  allowedActionKeys: async (appRef, categoryId) => allowedActionKeys(await policyIn(deps.policy, appRef), categoryId),
 })
 
 const workOf = (deps: ModerationServiceDeps, w: Work<ModerationStores>): CaseWorkDeps => ({
@@ -46,7 +46,7 @@ const workOf = (deps: ModerationServiceDeps, w: Work<ModerationStores>): CaseWor
   newDecisionId: deps.newDecisionId,
   events: {
     async publish(event: ModerationEvent) {
-      const { type, tenant: _tenant, ...data } = event
+      const { type, appRef: _appRef, ...data } = event
       await w.publish({ id: casesEventId(event, deps.newEventId), type: currentType(type), key: event.caseId, data })
     },
   },
@@ -56,11 +56,11 @@ const workOf = (deps: ModerationServiceDeps, w: Work<ModerationStores>): CaseWor
 export function moderationService(deps: ModerationServiceDeps): ModerationService {
   const { uow } = deps
   return {
-    claim: (input) => uow.run(input.tenant, (w) => claimCase(workOf(deps, w), input)),
-    release: (input) => uow.run(input.tenant, (w) => releaseCase(workOf(deps, w), input)),
-    decide: (input) => uow.run(input.tenant, (w) => decideCase(workOf(deps, w), input)),
-    correct: (input) => uow.run(input.tenant, (w) => correctCase(workOf(deps, w), input)),
-    retryActions: (input) => uow.run(input.tenant, (w) => retryActions(workOf(deps, w), input)),
+    claim: (input) => uow.run(input.appRef, (w) => claimCase(workOf(deps, w), input)),
+    release: (input) => uow.run(input.appRef, (w) => releaseCase(workOf(deps, w), input)),
+    decide: (input) => uow.run(input.appRef, (w) => decideCase(workOf(deps, w), input)),
+    correct: (input) => uow.run(input.appRef, (w) => correctCase(workOf(deps, w), input)),
+    retryActions: (input) => uow.run(input.appRef, (w) => retryActions(workOf(deps, w), input)),
   }
 }
 
@@ -93,32 +93,32 @@ export function subscribeModeration(bus: EventBus, deps: ModerationServiceDeps):
 
   bus.subscribe('cases.intake', ['report.received.v1'], async (event) => {
     const { facts, p0Signals: _signals, injectionSuspected: _injection, ...report } = event.data as EventData<'report.received.v1'>
-    const tenant = tenantOf(event)
+    const appRef = appOf(event)
     const time = (v: string | null) => (v === null ? null : new Date(v))
     const received: ReportReceived = {
       ...report,
-      tenant,
+      appRef,
       ...(facts && { facts: { reporterExternalId: facts.reporterExternalId, reporterAccountCreatedAt: time(facts.reporterAccountCreatedAt), reportedAccountCreatedAt: time(facts.reportedAccountCreatedAt) } }),
     }
-    await uow.run(tenant, (w) => receiveReport(workOf(deps, w), received))
+    await uow.run(appRef, (w) => receiveReport(workOf(deps, w), received))
   })
 
   bus.subscribe('cases.triage', ['case.classified.v1', 'case.untriaged.v1', 'case.triaged.v1'], async (event) => {
-    const tenant = tenantOf(event)
-    await uow.run(tenant, async (w) => {
+    const appRef = appOf(event)
+    await uow.run(appRef, async (w) => {
       const cases = w.stores.cases
       if (event.type === 'case.classified.v1') {
         const c = event.data as EventData<'case.classified.v1'>
-        await cases.change(tenant, c.caseId, { states: ['classifying'] }, { classification: classificationOf(c) })
+        await cases.change(appRef, c.caseId, { states: ['classifying'] }, { classification: classificationOf(c) })
         return
       }
       if (event.type === 'case.untriaged.v1') {
         const { caseId } = event.data as EventData<'case.untriaged.v1'>
-        await cases.change(tenant, caseId, { states: ['classifying'] }, { state: nextState('classifying', { type: 'marked_untriaged' }) })
+        await cases.change(appRef, caseId, { states: ['classifying'] }, { state: nextState('classifying', { type: 'marked_untriaged' }) })
         return
       }
       const d = event.data as EventData<'case.triaged.v1'>
-      const record = await cases.findById(tenant, d.caseId)
+      const record = await cases.findById(appRef, d.caseId)
       if (!record) return
       const triage: CaseTriage = {
         severity: d.severity,
@@ -130,19 +130,19 @@ export function subscribeModeration(bus: EventBus, deps: ModerationServiceDeps):
       }
       if (d.cause === 'correction') {
         if ((record.state === 'claimed' || record.state === 'open') && record.classification?.categoryId === d.categoryId) {
-          await cases.change(tenant, d.caseId, { states: [record.state], claimedBy: record.claim?.memberId ?? null }, { triage })
+          await cases.change(appRef, d.caseId, { states: [record.state], claimedBy: record.claim?.memberId ?? null }, { triage })
         }
         return
       }
       const classification = classificationOf(d)
       let taken = false
       if (record.state === 'classifying') {
-        await cases.change(tenant, d.caseId, { states: ['classifying'] }, { state: nextState('classifying', { type: 'triaged' }), triage, classification })
+        await cases.change(appRef, d.caseId, { states: ['classifying'] }, { state: nextState('classifying', { type: 'triaged' }), triage, classification })
       } else if (record.state === 'untriaged') {
         const state = nextState(nextState('untriaged', { type: 'classify_retried' }), { type: 'triaged' })
-        taken = await cases.change(tenant, d.caseId, { states: ['untriaged'] }, { state, triage, classification })
+        taken = await cases.change(appRef, d.caseId, { states: ['untriaged'] }, { state, triage, classification })
       } else if (record.state === 'open' && record.triage) {
-        taken = await cases.change(tenant, d.caseId, { states: ['open'], claimedBy: null }, { triage, classification })
+        taken = await cases.change(appRef, d.caseId, { states: ['open'], claimedBy: null }, { triage, classification })
       }
       if (taken && d.cause === 'llm_retry') {
         const { cause: _cause, ...retriaged } = d
@@ -152,27 +152,27 @@ export function subscribeModeration(bus: EventBus, deps: ModerationServiceDeps):
   })
 
   bus.subscribe('cases.erasure', [currentType('subject.erasure_requested')], async (event) => {
-    const tenant = tenantOf(event)
+    const appRef = appOf(event)
     const request = event.data as EventData<'subject.erasure_requested.v1'>
-    await uow.run(tenant, async (w) => {
-      await w.stores.cases.lockSubject(tenant, request.subjectExternalId)
-      const had = await w.stores.cases.eraseAccount(tenant, request.subjectExternalId, erasedId(request.erasureId))
+    await uow.run(appRef, async (w) => {
+      await w.stores.cases.lockSubject(appRef, request.subjectExternalId)
+      const had = await w.stores.cases.eraseAccount(appRef, request.subjectExternalId, erasedId(request.erasureId))
       await w.publish(erasureAnswer(request, 'cases.erasure', had > 0 ? 'erased' : 'nothing_held', deps.clock.now()))
     })
   })
 
   bus.subscribe('cases.actions', ['action.failed.v1', 'decision.actions_confirmed.v1'], async (event) => {
-    const tenant = tenantOf(event)
-    await uow.run(tenant, async (w) => {
+    const appRef = appOf(event)
+    await uow.run(appRef, async (w) => {
       const cases = w.stores.cases
       if (event.type === 'action.failed.v1') {
         const { caseId, actionRequestId } = event.data as EventData<'action.failed.v1'>
-        if (!(await cases.addActionFailure(tenant, caseId, actionRequestId, deps.clock.now()))) return
-        await cases.change(tenant, caseId, { states: ['decided'] }, { state: nextState('decided', { type: 'action_failed' }) })
+        if (!(await cases.addActionFailure(appRef, caseId, actionRequestId, deps.clock.now()))) return
+        await cases.change(appRef, caseId, { states: ['decided'] }, { state: nextState('decided', { type: 'action_failed' }) })
         return
       }
       const { caseId, decisionId } = event.data as EventData<'decision.actions_confirmed.v1'>
-      await cases.change(tenant, caseId, { states: ['decided', 'action_failed'], decisionId }, { state: 'actioned' })
+      await cases.change(appRef, caseId, { states: ['decided', 'action_failed'], decisionId }, { state: 'actioned' })
     })
   })
 }

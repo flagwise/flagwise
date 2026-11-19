@@ -1,21 +1,21 @@
 // The case routes: the queue, one case, and working it (claim, release, decide). The edge
-// authenticates, sets the tenant context and maps thrown FlagwiseErrors to problem+json; these
+// authenticates, sets the caller and maps thrown FlagwiseErrors to problem+json; these
 // routes authorize from the context and call the use cases. They serve only the cases module's
 // own data: the summary and the evidence come from the classify and flagging routes.
 
-import { can, FlagwiseError, type Clock, type FieldError, type TenantContext, type TenantRef } from '@flagwise/kernel'
+import { can, FlagwiseError, type Clock, type FieldError, type Caller, type AppRef } from '@flagwise/kernel'
 import { Hono, type Context } from 'hono'
 import { CASE_STATES, type CaseState } from '../domain/case-state.ts'
 import { CaseChangedError, type CaseOrder, type CaseQuery, type CaseReader, type CaseRecord, type CaseTriage, type Decision, type Severity } from '../app/ports.ts'
 import { CaseWorkError, type CaseRef, type CorrectInput, type DecideInput, type RetryActionsInput } from '../app/work-case.ts'
 
 export interface ModerationEnv {
-  Variables: { tenant: TenantContext }
+  Variables: { caller: Caller }
 }
 
 export interface ModerationRoutesDeps {
-  /** Runs `fn` in a tenant transaction. */
-  read<T>(tenant: TenantRef, fn: (cases: CaseReader) => Promise<T>): Promise<T>
+  /** Runs `fn` in an app transaction. */
+  read<T>(appRef: AppRef, fn: (cases: CaseReader) => Promise<T>): Promise<T>
   /** claimCase, releaseCase and decideCase, each with its events published in the same transaction. */
   claim(input: CaseRef): Promise<CaseRecord>
   release(input: CaseRef & { readonly force?: boolean }): Promise<CaseRecord>
@@ -66,9 +66,9 @@ export function moderationRoutes(deps: ModerationRoutesDeps): Hono<ModerationEnv
   const routes = new Hono<ModerationEnv>().basePath('/moderation')
 
   routes.get('/cases', async (c) => {
-    const { tenant } = caseWork(c.get('tenant'))
+    const { appRef } = caseWork(c.get('caller'))
     const query = queueQuery(c, deps.clock.now())
-    const page = await deps.read(tenant, (cases) => cases.list(tenant, query)).catch((err: unknown) => {
+    const page = await deps.read(appRef, (cases) => cases.list(appRef, query)).catch((err: unknown) => {
       // The reader refuses a cursor it cannot decode, or one from a page of the other order.
       if (err instanceof RangeError) throw new FlagwiseError('validation_failed', 'The queue filters are not valid', { errors: [{ path: 'cursor', message: 'Not a valid cursor' }] })
       throw err
@@ -77,51 +77,51 @@ export function moderationRoutes(deps: ModerationRoutesDeps): Hono<ModerationEnv
   })
 
   routes.get('/cases/:id', async (c) => {
-    const { tenant } = caseWork(c.get('tenant'))
-    const record = await deps.read(tenant, (cases) => cases.findById(tenant, c.req.param('id')))
+    const { appRef } = caseWork(c.get('caller'))
+    const record = await deps.read(appRef, (cases) => cases.findById(appRef, c.req.param('id')))
     if (!record) throw new FlagwiseError('not_found', 'No such case')
     return c.json(caseBody(record))
   })
 
   routes.post('/cases/:id/claim', async (c) => {
-    const { tenant, actorId } = caseWork(c.get('tenant'))
-    return c.json(caseBody(await working(() => deps.claim({ tenant, caseId: c.req.param('id'), memberId: actorId }))))
+    const { appRef, actorId } = caseWork(c.get('caller'))
+    return c.json(caseBody(await working(() => deps.claim({ appRef, caseId: c.req.param('id'), memberId: actorId }))))
   })
 
   routes.post('/cases/:id/release', async (c) => {
-    const ctx = c.get('tenant')
-    const { tenant, actorId } = caseWork(ctx)
+    const ctx = c.get('caller')
+    const { appRef, actorId } = caseWork(ctx)
     const body = await jsonBody(c, true)
     const errors: FieldError[] = []
     const force = optionalBoolean(body, 'force', errors)
     if (errors.length) throw new FlagwiseError('validation_failed', 'The release is not valid', { errors })
-    if (force && !can(ctx, { action: 'policy.configure', appId: tenant.appId })) {
+    if (force && !can(ctx, { action: 'policy.configure', appId: appRef.appId })) {
       throw new FlagwiseError('forbidden', "Only an App Admin can release someone else's claim")
     }
-    return c.json(caseBody(await working(() => deps.release({ tenant, caseId: c.req.param('id'), memberId: actorId, ...(force && { force }) }))))
+    return c.json(caseBody(await working(() => deps.release({ appRef, caseId: c.req.param('id'), memberId: actorId, ...(force && { force }) }))))
   })
 
   routes.post('/cases/:id/decision', async (c) => {
-    const { tenant, actorId } = caseWork(c.get('tenant'))
+    const { appRef, actorId } = caseWork(c.get('caller'))
     const input = decideInput(await jsonBody(c, false))
-    const decision = await working(() => deps.decide({ tenant, caseId: c.req.param('id'), memberId: actorId, ...input }))
+    const decision = await working(() => deps.decide({ appRef, caseId: c.req.param('id'), memberId: actorId, ...input }))
     return c.json(decisionBody(decision), 201)
   })
 
   routes.patch('/cases/:id', async (c) => {
-    const { tenant, actorId } = caseWork(c.get('tenant'))
+    const { appRef, actorId } = caseWork(c.get('caller'))
     const input = correctInput(await jsonBody(c, false))
-    return c.json(caseBody(await working(() => deps.correct({ tenant, caseId: c.req.param('id'), memberId: actorId, ...input }))))
+    return c.json(caseBody(await working(() => deps.correct({ appRef, caseId: c.req.param('id'), memberId: actorId, ...input }))))
   })
 
   routes.post('/cases/:id/actions/retry', async (c) => {
-    const { tenant, actorId } = caseWork(c.get('tenant'))
+    const { appRef, actorId } = caseWork(c.get('caller'))
     const body = await jsonBody(c, false)
     const actionKeys = body.action_keys
     if (!isKeyList(actionKeys)) {
       throw new FlagwiseError('validation_failed', 'The retry is not valid', { errors: [{ path: 'action_keys', message: 'A list of action keys' }] })
     }
-    return c.json(caseBody(await working(() => deps.retryActions({ tenant, caseId: c.req.param('id'), memberId: actorId, actionKeys }))))
+    return c.json(caseBody(await working(() => deps.retryActions({ appRef, caseId: c.req.param('id'), memberId: actorId, actionKeys }))))
   })
 
   return routes
@@ -130,13 +130,13 @@ export function moderationRoutes(deps: ModerationRoutesDeps): Hono<ModerationEnv
 const isKeyList = (v: unknown): v is string[] => Array.isArray(v) && v.every((k) => typeof k === 'string' && k !== '')
 
 /** The app, mode and actor of a caller allowed to work its app's cases. */
-function caseWork(ctx: TenantContext): { tenant: TenantRef; actorId: string } {
+function caseWork(ctx: Caller): { appRef: AppRef; actorId: string } {
   if (!ctx.appId || !can(ctx, { action: 'case.work', appId: ctx.appId })) {
     throw new FlagwiseError('forbidden', 'This API key does not have the admin scope')
   }
   const { actor } = ctx
   const actorId = actor.type === 'member' || actor.type === 'api_key' ? actor.id : actor.type === 'embed' ? `embed:${actor.sub}` : 'system'
-  return { tenant: { appId: ctx.appId, livemode: ctx.livemode }, actorId }
+  return { appRef: { appId: ctx.appId, livemode: ctx.livemode }, actorId }
 }
 
 /** Runs a case-work use case, turning its refusals into API errors. */
@@ -281,7 +281,7 @@ export function caseBody(r: CaseRecord) {
     classified_by: r.classification?.classifiedBy ?? null,
     claim: r.claim ? { holder: r.claim.memberId, claimed_at: r.claim.claimedAt.toISOString(), last_activity_at: r.claim.lastActivityAt.toISOString() } : null,
     decision: r.decision ? decisionBody(r.decision) : null,
-    livemode: r.tenant.livemode,
+    livemode: r.appRef.livemode,
   }
 }
 

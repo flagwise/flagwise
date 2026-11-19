@@ -105,6 +105,6 @@ export function policyCategory(policy: Policy, key: string): PolicyCategory | nu
 }
 
 /** The app's policy in a service's copy of it: DEFAULT_POLICY until its first version reaches the copy. */
-export async function policyIn<T>(copy: { get(tenant: T): Promise<{ readonly document: Policy } | null> }, tenant: T): Promise<Policy> {
-  return (await copy.get(tenant))?.document ?? DEFAULT_POLICY
+export async function policyIn<T>(copy: { get(appRef: T): Promise<{ readonly document: Policy } | null> }, appRef: T): Promise<Policy> {
+  return (await copy.get(appRef))?.document ?? DEFAULT_POLICY
 }

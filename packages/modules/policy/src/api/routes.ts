@@ -1,8 +1,8 @@
 // The policy routes: the action keys moderators pick from, the categories and the LLM settings,
-// the report screen's menu, and what an app maps to and starts from (the global taxonomy, the presets). The edge authenticates and sets the tenant context; these
+// the report screen's menu, and what an app maps to and starts from (the global taxonomy, the presets). The edge authenticates and sets the caller; these
 // routes authorize from it and call the use cases.
 
-import { can, FlagwiseError, type AppAction, type TenantContext, type TenantRef } from '@flagwise/kernel'
+import { can, FlagwiseError, type AppAction, type Caller, type AppRef } from '@flagwise/kernel'
 import { GLOBAL_CATEGORIES, GLOBAL_GROUPS } from '@flagwise/contracts'
 import { Hono } from 'hono'
 import type { ReportScreenCategory } from '../app/policy.ts'
@@ -11,24 +11,24 @@ import { isUnmapped, parseCategories, type AppCategory, type LlmSettings } from 
 import { PRESET_NAMES, PRESETS, type PresetName } from '../domain/presets.ts'
 
 export interface PolicyEnv {
-  Variables: { tenant: TenantContext }
+  Variables: { caller: Caller }
 }
 
 export interface PolicyRoutesDeps {
-  /** listActionKeys in a tenant transaction. */
-  listActionKeys(tenant: TenantRef): Promise<readonly ActionKey[]>
-  /** replaceActionKeys in a tenant transaction. */
-  replaceActionKeys(tenant: TenantRef, keys: readonly ActionKey[]): Promise<readonly ActionKey[]>
-  /** listCategories in a tenant transaction. */
-  listCategories(tenant: TenantRef): Promise<readonly AppCategory[]>
-  /** replaceCategories in a tenant transaction. */
-  replaceCategories(tenant: TenantRef, categories: readonly AppCategory[]): Promise<readonly AppCategory[]>
-  /** reportScreenCategories in a tenant transaction. */
-  reportScreenCategories(tenant: TenantRef, locale: 'en' | 'id'): Promise<readonly ReportScreenCategory[]>
-  /** getLlmSettings in a tenant transaction. */
-  getLlmSettings(tenant: TenantRef): Promise<LlmSettings>
-  /** setLlmSettings in a tenant transaction. */
-  setLlmSettings(tenant: TenantRef, settings: LlmSettings): Promise<LlmSettings>
+  /** listActionKeys in an app transaction. */
+  listActionKeys(appRef: AppRef): Promise<readonly ActionKey[]>
+  /** replaceActionKeys in an app transaction. */
+  replaceActionKeys(appRef: AppRef, keys: readonly ActionKey[]): Promise<readonly ActionKey[]>
+  /** listCategories in an app transaction. */
+  listCategories(appRef: AppRef): Promise<readonly AppCategory[]>
+  /** replaceCategories in an app transaction. */
+  replaceCategories(appRef: AppRef, categories: readonly AppCategory[]): Promise<readonly AppCategory[]>
+  /** reportScreenCategories in an app transaction. */
+  reportScreenCategories(appRef: AppRef, locale: 'en' | 'id'): Promise<readonly ReportScreenCategory[]>
+  /** getLlmSettings in an app transaction. */
+  getLlmSettings(appRef: AppRef): Promise<LlmSettings>
+  /** setLlmSettings in an app transaction. */
+  setLlmSettings(appRef: AppRef, settings: LlmSettings): Promise<LlmSettings>
 }
 
 /**
@@ -67,73 +67,73 @@ export function policyRoutes(deps: PolicyRoutesDeps): Hono<PolicyEnv> {
   const routes = new Hono<PolicyEnv>().basePath('/policy')
 
   routes.get('/action-keys', async (c) => {
-    const tenant = allowed(c.get('tenant'), 'config.read')
-    return c.json(listBody(await deps.listActionKeys(tenant)))
+    const appRef = allowed(c.get('caller'), 'config.read')
+    return c.json(listBody(await deps.listActionKeys(appRef)))
   })
 
   routes.put('/action-keys', async (c) => {
-    const tenant = allowed(c.get('tenant'), 'integration.configure')
+    const appRef = allowed(c.get('caller'), 'integration.configure')
     const parsed = parseActionKeys((await jsonObject(c.req.text())).data)
     if (!parsed.ok) throw new FlagwiseError('validation_failed', 'The action keys are not valid', { errors: parsed.errors })
-    return c.json(listBody(await deps.replaceActionKeys(tenant, parsed.keys)))
+    return c.json(listBody(await deps.replaceActionKeys(appRef, parsed.keys)))
   })
 
   routes.get('/categories/definitions', async (c) => {
-    const tenant = allowed(c.get('tenant'), 'config.read')
-    return c.json(categoriesBody(await deps.listCategories(tenant)))
+    const appRef = allowed(c.get('caller'), 'config.read')
+    return c.json(categoriesBody(await deps.listCategories(appRef)))
   })
 
   routes.put('/categories/definitions', async (c) => {
-    const tenant = allowed(c.get('tenant'), 'policy.configure')
+    const appRef = allowed(c.get('caller'), 'policy.configure')
     const body = await jsonObject(c.req.text())
     if (body.preset !== undefined) {
       if (body.data !== undefined) throw new FlagwiseError('validation_failed', 'Give data or preset, not both', { errors: [{ path: 'preset', message: 'Give data or preset, not both' }] })
       if (!PRESET_NAMES.includes(body.preset as PresetName)) {
         throw new FlagwiseError('validation_failed', 'Unknown preset', { errors: [{ path: 'preset', message: `One of ${PRESET_NAMES.join(', ')}` }] })
       }
-      return c.json(categoriesBody(await deps.replaceCategories(tenant, PRESETS[body.preset as PresetName])))
+      return c.json(categoriesBody(await deps.replaceCategories(appRef, PRESETS[body.preset as PresetName])))
     }
     const parsed = parseCategories(body.data)
     if (!parsed.ok) throw new FlagwiseError('validation_failed', 'The categories are not valid', { errors: parsed.errors })
-    return c.json(categoriesBody(await deps.replaceCategories(tenant, parsed.categories)))
+    return c.json(categoriesBody(await deps.replaceCategories(appRef, parsed.categories)))
   })
 
   routes.get('/categories/menu', async (c) => {
-    const tenant = allowed(c.get('tenant'), 'categories.read')
+    const appRef = allowed(c.get('caller'), 'categories.read')
     const locale = c.req.query('locale') ?? 'en'
     if (locale !== 'en' && locale !== 'id') throw new FlagwiseError('validation_failed', 'Unknown locale', { errors: [{ path: 'locale', message: 'en or id' }] })
-    const data = await deps.reportScreenCategories(tenant, locale)
+    const data = await deps.reportScreenCategories(appRef, locale)
     return c.json({ object: 'list', locale, data: data.map((d) => ({ object: 'category', key: d.key, label: d.label })) })
   })
 
   routes.get('/llm-settings', async (c) => {
-    const tenant = allowed(c.get('tenant'), 'config.read')
-    return c.json(llmBody(await deps.getLlmSettings(tenant)))
+    const appRef = allowed(c.get('caller'), 'config.read')
+    return c.json(llmBody(await deps.getLlmSettings(appRef)))
   })
 
   routes.put('/llm-settings', async (c) => {
-    const tenant = allowed(c.get('tenant'), 'policy.configure')
+    const appRef = allowed(c.get('caller'), 'policy.configure')
     const body = await jsonObject(c.req.text())
     const errors = (['rules_only', 'fallback_to_rules'] as const).filter((f) => typeof body[f] !== 'boolean').map((path) => ({ path, message: 'Must be true or false' }))
     if (errors.length) throw new FlagwiseError('validation_failed', 'The LLM settings are not valid', { errors })
-    return c.json(llmBody(await deps.setLlmSettings(tenant, { rulesOnly: body.rules_only as boolean, fallbackToRules: body.fallback_to_rules as boolean })))
+    return c.json(llmBody(await deps.setLlmSettings(appRef, { rulesOnly: body.rules_only as boolean, fallbackToRules: body.fallback_to_rules as boolean })))
   })
 
   routes.get('/taxonomy', (c) => {
-    allowed(c.get('tenant'), 'config.read')
+    allowed(c.get('caller'), 'config.read')
     const data = GLOBAL_CATEGORIES.map((g) => ({ object: 'global_category', id: g.id, group: g.group, label: g.label, severity: g.severity, p0_locked: g.severity === 'P0' }))
     return c.json({ object: 'list', groups: GLOBAL_GROUPS, data })
   })
 
   routes.get('/presets', (c) => {
-    allowed(c.get('tenant'), 'config.read')
+    allowed(c.get('caller'), 'config.read')
     return c.json({ object: 'list', data: PRESET_NAMES.map((name) => ({ object: 'preset', name, categories: categoriesBody(PRESETS[name]).data })) })
   })
 
   return routes
 }
 
-function allowed(ctx: TenantContext, action: AppAction): TenantRef {
+function allowed(ctx: Caller, action: AppAction): AppRef {
   if (!ctx.appId || !can(ctx, { action, appId: ctx.appId })) {
     throw new FlagwiseError('forbidden', action === 'categories.read' ? 'This API key does not have the flagging scope' : 'This API key does not have the admin scope')
   }

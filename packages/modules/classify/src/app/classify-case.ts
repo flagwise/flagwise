@@ -4,13 +4,13 @@
 // without calling the LLM.
 
 import { globalCategory, namesCategory, OTHER_CATEGORY_ID, parseReportSnapshot } from '@flagwise/contracts'
-import type { TenantRef } from '@flagwise/kernel'
+import type { AppRef } from '@flagwise/kernel'
 import { buildInput, CLASSIFICATION_SCHEMA } from '../domain/prompt.ts'
 import { escalation, validateClassification, type Classification, type ClassificationField } from '../domain/classification.ts'
 import { LlmError, type AppCategoryRef, type ClassificationRecord, type ClassifyDeps, type LlmConfig, type LlmUsage, type ReportScreening } from './ports.ts'
 
 export interface ClassifyCaseInput {
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly caseId: string
   /** The report the case was opened with. */
   readonly reportId: string
@@ -52,11 +52,11 @@ const NO_USAGE: LlmUsage = { input: 0, output: 0, cached: 0 }
  * When a concurrent run stored first, its record is returned.
  */
 export async function classifyCase(deps: ClassifyDeps, input: ClassifyCaseInput): Promise<ClassificationRecord> {
-  const { tenant, caseId } = input
-  const existing = await deps.run(tenant, (store) => store.find(tenant, caseId))
+  const { appRef, caseId } = input
+  const existing = await deps.run(appRef, (store) => store.find(appRef, caseId))
   if (existing) return existing
   const record = await classifyOnce(deps, input)
-  return deps.run(tenant, async (store) => ((await store.insert(record)) ? record : (await store.find(tenant, caseId))!))
+  return deps.run(appRef, async (store) => ((await store.insert(record)) ? record : (await store.find(appRef, caseId))!))
 }
 
 /**
@@ -70,14 +70,14 @@ export async function classifyCase(deps: ClassifyDeps, input: ClassifyCaseInput)
  * (the tokens of failed calls are not kept).
  */
 export async function retryClassification(deps: ClassifyDeps, input: ClassifyCaseInput): Promise<ClassificationRecord | 'failed' | null> {
-  const { tenant, caseId } = input
-  const existing = await deps.run(tenant, (store) => store.find(tenant, caseId))
+  const { appRef, caseId } = input
+  const existing = await deps.run(appRef, (store) => store.find(appRef, caseId))
   if (existing?.classifiedBy !== 'rules' || existing.rulesReason !== 'llm_failed') return null
-  if (!deps.llm || !(await (deps.llmEnabled?.(tenant) ?? true))) return null
+  if (!deps.llm || !(await (deps.llmEnabled?.(appRef) ?? true))) return null
   const fresh = await classifyOnce(deps, input)
   if (fresh.classifiedBy !== 'llm') return 'failed'
   const record = { ...fresh, usage: add(existing.usage, fresh.usage) }
-  return deps.run(tenant, async (store) => ((await store.replaceFailed(record)) ? record : null))
+  return deps.run(appRef, async (store) => ((await store.replaceFailed(record)) ? record : null))
 }
 
 /** classifyCase found no screening for the report yet. */
@@ -93,21 +93,21 @@ export class ScreeningMissingError extends Error {
  * Keeping it again changes nothing.
  */
 export async function recordScreening(deps: Pick<ClassifyDeps, 'run'>, screening: ReportScreening): Promise<void> {
-  await deps.run(screening.tenant, (store) => store.keepScreening(screening))
+  await deps.run(screening.appRef, (store) => store.keepScreening(screening))
 }
 
 /** One classification run, steps 1 to 7 of classifyCase, without storing it. */
 async function classifyOnce(deps: ClassifyDeps, input: ClassifyCaseInput): Promise<ClassificationRecord> {
-  const { tenant } = input
-  const pre = await deps.run(tenant, (store) => store.findScreening(tenant, input.reportId))
+  const { appRef } = input
+  const pre = await deps.run(appRef, (store) => store.findScreening(appRef, input.reportId))
   if (!pre) throw new ScreeningMissingError(input.reportId)
   const bytes = await deps.snapshots.get(pre.evidenceRef)
   if (!bytes) throw new Error(`No evidence snapshot for report ${input.reportId}`)
   const snapshot = parseReportSnapshot(bytes)
-  const picked = (await deps.categories?.find(tenant, snapshot.report.category)) ?? null
+  const picked = (await deps.categories?.find(appRef, snapshot.report.category)) ?? null
   const summaryLanguage = snapshot.report.reporter.locale ?? 'en'
 
-  const llm = deps.llm && (await (deps.llmEnabled?.(tenant) ?? true)) ? deps.llm : undefined
+  const llm = deps.llm && (await (deps.llmEnabled?.(appRef) ?? true)) ? deps.llm : undefined
   let usage = NO_USAGE
   const ask = async (config: LlmConfig, model: string, maxTokens: number): Promise<{ value: Classification; model: string }> => {
     let repairFields: readonly ClassificationField[] | undefined
@@ -135,7 +135,7 @@ async function classifyOnce(deps: ClassifyDeps, input: ClassifyCaseInput): Promi
       const small = await ask(llm, llm.model, SMALL_MAX_TOKENS)
       const now = deps.clock.now()
       const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
-      const counts = await deps.run(tenant, (store) => store.monthCounts(tenant, monthStart))
+      const counts = await deps.run(appRef, (store) => store.monthCounts(appRef, monthStart))
       const wanted = escalation({
         confidence: small.value.confidence,
         signals: [...small.value.signals, ...pre.p0Signals],
@@ -226,6 +226,6 @@ const add = (a: LlmUsage, b: LlmUsage): LlmUsage => ({ input: a.input + b.input,
 const unique = (items: readonly string[]) => [...new Set(items)]
 
 /** The classification of a case, or null when it has none yet. */
-export function findClassification(deps: Pick<ClassifyDeps, 'run'>, tenant: TenantRef, caseId: string): Promise<ClassificationRecord | null> {
-  return deps.run(tenant, (store) => store.find(tenant, caseId))
+export function findClassification(deps: Pick<ClassifyDeps, 'run'>, appRef: AppRef, caseId: string): Promise<ClassificationRecord | null> {
+  return deps.run(appRef, (store) => store.find(appRef, caseId))
 }

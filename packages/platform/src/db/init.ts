@@ -1,4 +1,4 @@
-// Prepares the roles Flagwise runs as. Row-level security only protects tenants when queries run as
+// Prepares the roles Flagwise runs as. Row-level security only protects appRefs when queries run as
 // a role that does not own the tables, so the app and system roles exist in both setups:
 // - separate roles (initDatabase): each role logs in with its own password, and the server never
 //   holds the owner's;

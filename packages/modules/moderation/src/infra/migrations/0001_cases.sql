@@ -1,4 +1,4 @@
--- Cases, the reports attached to them, and decisions. Every table is tenant-scoped: row-level
+-- Cases, the reports attached to them, and decisions. Every table is app-scoped: row-level
 -- security limits the app role to the apps and mode of the current transaction.
 
 CREATE SCHEMA cases;
@@ -60,18 +60,18 @@ ALTER TABLE cases.cases ADD FOREIGN KEY (app_id, decision_id) REFERENCES cases.d
 
 ALTER TABLE cases.cases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cases.cases FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON cases.cases TO {{app}}
+CREATE POLICY app ON cases.cases TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 
 ALTER TABLE cases.case_reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cases.case_reports FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON cases.case_reports TO {{app}}
+CREATE POLICY app ON cases.case_reports TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 
 ALTER TABLE cases.decisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cases.decisions FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON cases.decisions TO {{app}}
+CREATE POLICY app ON cases.decisions TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());

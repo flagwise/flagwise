@@ -64,9 +64,9 @@ describe.skipIf(!testDatabaseUrl)('local development with no outside service', (
       WEBHOOKS_ALLOW_HTTP: 'true',
     })
     installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' })
-    const tenant = { appId: installed.app.id, livemode: true }
-    admin = await createKey(config, { ...tenant, scopes: ['admin'] })
-    secret = (await addWebhookEndpoint(config, tenant, { url })).secret!
+    const appRef = { appId: installed.app.id, livemode: true }
+    admin = await createKey(config, { ...appRef, scopes: ['admin'] })
+    secret = (await addWebhookEndpoint(config, appRef, { url })).secret!
     server = createServer(config, { onError: () => {} })
     await server.start()
   })

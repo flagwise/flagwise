@@ -1,13 +1,13 @@
 // The classification route: how a case was classified, with the LLM summary. The summary is derived
 // from evidence, so it is served here, by the module that wrote it, and never copied elsewhere.
 
-import { can, FlagwiseError, type TenantContext } from '@flagwise/kernel'
+import { can, FlagwiseError, type Caller } from '@flagwise/kernel'
 import { Hono } from 'hono'
 import { findClassification } from '../app/classify-case.ts'
 import type { ClassificationRecord, ClassifyDeps } from '../app/ports.ts'
 
 export interface ClassifyEnv {
-  Variables: { tenant: TenantContext }
+  Variables: { caller: Caller }
 }
 
 /**
@@ -18,12 +18,12 @@ export interface ClassifyEnv {
 export function classifyRoutes(deps: Pick<ClassifyDeps, 'run'>): Hono<ClassifyEnv> {
   const routes = new Hono<ClassifyEnv>().basePath('/classify')
   routes.get('/classifications/:caseId', async (c) => {
-    const ctx = c.get('tenant')
+    const ctx = c.get('caller')
     if (!ctx.appId || !can(ctx, { action: 'case.work', appId: ctx.appId })) {
       throw new FlagwiseError('forbidden', 'This API key does not have the admin scope')
     }
-    const tenant = { appId: ctx.appId, livemode: ctx.livemode }
-    const record = await findClassification(deps, tenant, c.req.param('caseId'))
+    const appRef = { appId: ctx.appId, livemode: ctx.livemode }
+    const record = await findClassification(deps, appRef, c.req.param('caseId'))
     if (!record) throw new FlagwiseError('not_found', 'This case has no classification yet')
     return c.json(classificationBody(record))
   })

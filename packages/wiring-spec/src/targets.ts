@@ -85,7 +85,7 @@ function bootsAlone(): CheckResult {
 /**
  * 3. No transaction or query touches another service's tables (static proxy until per-service
  * roles): no service's SQL names another service's schema, and every transaction apps/server opens
- * (withTenant, withSystem, pgUnitOfWork) uses the pg factories of one service only.
+ * (withApps, withSystem, pgUnitOfWork) uses the pg factories of one service only.
  */
 function ownTablesOnly(): CheckResult {
   const names = services()
@@ -115,7 +115,7 @@ function ownTablesOnly(): CheckResult {
       if (!names.includes(m[2]!)) continue
       for (const n of m[1]!.split(',').map((x) => x.trim().replace(/^type\s+/, ''))) if (n) owner.set(n, m[2]!)
     }
-    for (const span of callSpans(text, /\b(?:withTenant|withSystem|pgUnitOfWork)\(/g)) {
+    for (const span of callSpans(text, /\b(?:withApps|withSystem|pgUnitOfWork)\(/g)) {
       const used = new Set([...span.matchAll(/\bpg[A-Z]\w*/g)].flatMap((m) => (owner.has(m[0]) ? [owner.get(m[0])!] : [])))
       if (used.size > 1) found.push(`${rel(file)}: one transaction across ${[...used].sort().join(', ')}`)
     }

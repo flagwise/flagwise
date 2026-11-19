@@ -1,7 +1,7 @@
-// The flagging routes. The edge authenticates the API key, sets the tenant context and maps thrown
+// The flagging routes. The edge authenticates the API key, sets the caller and maps thrown
 // FlagwiseErrors to problem+json; these routes authorize from the context and call the use cases.
 
-import { can, FlagwiseError, type TenantContext, type TenantRef } from '@flagwise/kernel'
+import { can, FlagwiseError, type Caller, type AppRef } from '@flagwise/kernel'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import type { ReportSnapshot } from '@flagwise/contracts'
@@ -9,7 +9,7 @@ import { getEvidence, getReport, submitReport, type FlaggingDeps, type Report } 
 import { MAX_REPORT_BYTES } from '../domain/validate-report.ts'
 
 export interface FlaggingEnv {
-  Variables: { tenant: TenantContext }
+  Variables: { caller: Caller }
 }
 
 /**
@@ -34,9 +34,9 @@ export function flaggingRoutes(deps: FlaggingDeps): Hono<FlaggingEnv> {
       },
     }),
     async (c) => {
-      const tenant = flaggingTenant(c.get('tenant'))
+      const appRef = flaggingApp(c.get('caller'))
       const { report, replayed } = await submitReport(deps, {
-        tenant,
+        appRef,
         body: await c.req.text(),
         idempotencyKey: c.req.header('idempotency-key'),
       })
@@ -46,17 +46,17 @@ export function flaggingRoutes(deps: FlaggingDeps): Hono<FlaggingEnv> {
   )
 
   routes.get('/reports/:id', async (c) => {
-    const tenant = flaggingTenant(c.get('tenant'))
-    return c.json(reportBody(await getReport(deps, tenant, c.req.param('id')), { asReceived: false }))
+    const appRef = flaggingApp(c.get('caller'))
+    return c.json(reportBody(await getReport(deps, appRef, c.req.param('id')), { asReceived: false }))
   })
 
   routes.get('/reports/:id/evidence', async (c) => {
-    const ctx = c.get('tenant')
+    const ctx = c.get('caller')
     if (!ctx.appId || !can(ctx, { action: 'case.work', appId: ctx.appId })) {
       throw new FlagwiseError('forbidden', 'This API key does not have the admin scope')
     }
-    const tenant = { appId: ctx.appId, livemode: ctx.livemode }
-    return c.json(evidenceBody(await getEvidence(deps, tenant, c.req.param('id'))))
+    const appRef = { appId: ctx.appId, livemode: ctx.livemode }
+    return c.json(evidenceBody(await getEvidence(deps, appRef, c.req.param('id'))))
   })
 
   return routes
@@ -84,7 +84,7 @@ function evidenceBody(s: ReportSnapshot) {
 }
 
 /** The key's app and mode, when the caller may use the flagging endpoints of its app. */
-function flaggingTenant(ctx: TenantContext): TenantRef {
+function flaggingApp(ctx: Caller): AppRef {
   if (!ctx.appId || !can(ctx, { action: 'report.create', appId: ctx.appId })) {
     throw new FlagwiseError('forbidden', 'This API key does not have the flagging scope')
   }
@@ -103,7 +103,7 @@ function reportBody(r: Report, opts: { readonly asReceived: boolean }) {
     status: assigned ? 'assigned' : 'received',
     case_id: assigned ? r.caseId : null,
     ...(assigned && { joined_existing_case: r.joinedExistingCase }),
-    livemode: r.tenant.livemode,
+    livemode: r.appRef.livemode,
     received_at: r.receivedAt.toISOString(),
   }
 }

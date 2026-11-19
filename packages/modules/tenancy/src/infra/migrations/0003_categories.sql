@@ -34,12 +34,12 @@ CREATE TABLE tenancy.llm_settings (
 
 ALTER TABLE tenancy.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenancy.categories FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON tenancy.categories TO {{app}}
+CREATE POLICY app ON tenancy.categories TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 
 ALTER TABLE tenancy.llm_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenancy.llm_settings FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON tenancy.llm_settings TO {{app}}
+CREATE POLICY app ON tenancy.llm_settings TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());

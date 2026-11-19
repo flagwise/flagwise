@@ -3,7 +3,7 @@
 // with growing waits, for a case rules classified because the LLM failed.
 
 import { currentType, erasedId, erasureAnswer, policyCategory, policyIn, type EventData, type Policy } from '@flagwise/contracts'
-import { subscribeCopy, tenantOf, type DocumentCopy, type EventBus } from '@flagwise/platform'
+import { subscribeCopy, appOf, type DocumentCopy, type EventBus } from '@flagwise/platform'
 import { classifyCase, recordScreening, retryClassification } from './classify-case.ts'
 import type { ClassificationRecord, ClassifyDeps } from './ports.ts'
 
@@ -25,8 +25,8 @@ export interface ClassifyServiceDeps {
 export function classifyDepsWithPolicy(deps: Omit<ClassifyDeps, 'llmEnabled' | 'categories'>, policy: DocumentCopy<Policy>): ClassifyDeps {
   return {
     ...deps,
-    llmEnabled: async (tenant) => !(await policyIn(policy, tenant)).llm.rulesOnly,
-    categories: { find: async (tenant, key) => policyCategory(await policyIn(policy, tenant), key) },
+    llmEnabled: async (appRef) => !(await policyIn(policy, appRef)).llm.rulesOnly,
+    categories: { find: async (appRef, key) => policyCategory(await policyIn(policy, appRef), key) },
   }
 }
 
@@ -57,29 +57,29 @@ export function subscribeClassify(bus: EventBus, deps: ClassifyServiceDeps): voi
     const r = event.data as EventData<'report.received.v1'>
     if (r.p0Signals === undefined || r.injectionSuspected === undefined) return
     await recordScreening(classify, {
-      tenant: tenantOf(event),
+      appRef: appOf(event),
       reportId: r.reportId,
       p0Signals: r.p0Signals,
       injectionSuspected: r.injectionSuspected,
       reportedExternalId: r.subjectExternalId,
       reporterExternalId: r.facts?.reporterExternalId ?? null,
-      evidenceRef: r.evidenceRef ?? `apps/${tenantOf(event).appId}/${r.reportId}`,
+      evidenceRef: r.evidenceRef ?? `apps/${appOf(event).appId}/${r.reportId}`,
     })
   })
 
   bus.subscribe('classify.erasure', [currentType('subject.erasure_requested')], async (event) => {
-    const tenant = tenantOf(event)
+    const appRef = appOf(event)
     const request = event.data as EventData<'subject.erasure_requested.v1'>
-    const had = await classify.run(tenant, (store) => store.eraseAccount(tenant, request.subjectExternalId, erasedId(request.erasureId)))
+    const had = await classify.run(appRef, (store) => store.eraseAccount(appRef, request.subjectExternalId, erasedId(request.erasureId)))
     // Published after the erase commits; should it be lost, the redelivery finds nothing left and answers nothing_held.
-    await bus.publish({ ...erasureAnswer(request, 'classify.erasure', had > 0 ? 'erased' : 'nothing_held', classify.clock.now()), tenant })
+    await bus.publish({ ...erasureAnswer(request, 'classify.erasure', had > 0 ? 'erased' : 'nothing_held', classify.clock.now()), appRef })
   })
 
   bus.subscribe('classify', ['case.opened.v1'], async (event) => {
-    const tenant = tenantOf(event)
+    const appRef = appOf(event)
     const { caseId, reportId } = event.data as EventData<'case.opened.v1'>
-    const record = await classifyCase(classify, { tenant, caseId, reportId })
-    await bus.publish({ id: `case.classified:${caseId}`, type: currentType('case.classified'), key: caseId, data: factsOf(record), tenant })
+    const record = await classifyCase(classify, { appRef, caseId, reportId })
+    await bus.publish({ id: `case.classified:${caseId}`, type: currentType('case.classified'), key: caseId, data: factsOf(record), appRef })
   })
 
   const delays = deps.llmRetryDelaysMs ?? LLM_RETRY_DELAYS_MS
@@ -89,17 +89,17 @@ export function subscribeClassify(bus: EventBus, deps: ClassifyServiceDeps): voi
     'classify.retry',
     ['case.classified.v1'],
     async (event, ctx) => {
-      const tenant = tenantOf(event)
+      const appRef = appOf(event)
       const c = event.data as EventData<'case.classified.v1'>
       if (c.rulesReason !== 'llm_failed' || !c.reportId) return
       if (ctx.attempt === 1) throw new Error('Waiting before the first LLM retry')
-      const result = await retryClassification(classify, { tenant, caseId: c.caseId, reportId: c.reportId })
+      const result = await retryClassification(classify, { appRef, caseId: c.caseId, reportId: c.reportId })
       if (result === 'failed') {
         if (ctx.attempt > delays.length) return
         throw new Error('The LLM failed again')
       }
       if (result === null) return
-      await bus.publish({ id: `case.reclassified:${c.caseId}`, type: currentType('case.reclassified'), key: c.caseId, data: factsOf(result), tenant })
+      await bus.publish({ id: `case.reclassified:${c.caseId}`, type: currentType('case.reclassified'), key: c.caseId, data: factsOf(result), appRef })
     },
     { maxAttempts: delays.length + 1, retryDelayMs: jittered },
   )

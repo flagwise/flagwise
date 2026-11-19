@@ -1,8 +1,8 @@
-// The ActionRequestStore on Postgres. It works inside a tenant transaction, so row-level security
-// limits it to that tenant; every query also filters by the tenant it is given.
+// The ActionRequestStore on Postgres. It works inside an app transaction, so row-level security
+// limits it to that app; every query also filters by the app it is given.
 
-import type { TenantRef } from '@flagwise/kernel'
-import { loadMigrations, type MigrationSet, type TenantTx } from '@flagwise/platform'
+import type { AppRef } from '@flagwise/kernel'
+import { loadMigrations, type MigrationSet, type AppTx } from '@flagwise/platform'
 import { and, asc, eq, sql } from 'drizzle-orm'
 import type { ActionRequest, ActionRequestStore } from '../app/action-requests.ts'
 import { actionRequestsTable as t } from './schema.ts'
@@ -10,15 +10,15 @@ import { actionRequestsTable as t } from './schema.ts'
 export const deliveryMigrations: MigrationSet = loadMigrations('delivery', new URL('./migrations/', import.meta.url))
 
 /**
- * An ActionRequestStore on the given tenant transaction. Requests read back equal the requests
+ * An ActionRequestStore on the given app transaction. Requests read back equal the requests
  * written. `insert` places a request after the decision's existing ones; `update` saves status,
  * failReason and replacedBy only.
  */
-export function pgActionRequestStore(tx: TenantTx): ActionRequestStore {
-  const tenantOf = (tenant: TenantRef) => and(eq(t.appId, tenant.appId), eq(t.livemode, tenant.livemode))
+export function pgActionRequestStore(tx: AppTx): ActionRequestStore {
+  const appOf = (appRef: AppRef) => and(eq(t.appId, appRef.appId), eq(t.livemode, appRef.livemode))
   const toRequest = (r: typeof t.$inferSelect): ActionRequest => ({
     id: r.id,
-    tenant: { appId: r.appId, livemode: r.livemode },
+    appRef: { appId: r.appId, livemode: r.livemode },
     caseId: r.caseId,
     decisionId: r.decisionId,
     actionKey: r.actionKey,
@@ -29,19 +29,19 @@ export function pgActionRequestStore(tx: TenantTx): ActionRequestStore {
   })
 
   return {
-    async findById(tenant, id) {
-      const [row] = await tx.select().from(t).where(and(tenantOf(tenant), eq(t.id, id)))
+    async findById(appRef, id) {
+      const [row] = await tx.select().from(t).where(and(appOf(appRef), eq(t.id, id)))
       return row ? toRequest(row) : null
     },
 
-    async findByDecision(tenant, decisionId) {
-      const rows = await tx.select().from(t).where(and(tenantOf(tenant), eq(t.decisionId, decisionId))).orderBy(asc(t.position))
+    async findByDecision(appRef, decisionId) {
+      const rows = await tx.select().from(t).where(and(appOf(appRef), eq(t.decisionId, decisionId))).orderBy(asc(t.position))
       return rows.map(toRequest)
     },
 
-    async lockDecision(tenant, decisionId) {
+    async lockDecision(appRef, decisionId) {
       // A transaction-scoped advisory lock; a hash collision only makes two decisions wait for each other.
-      const key = JSON.stringify([tenant.appId, tenant.livemode, decisionId])
+      const key = JSON.stringify([appRef.appId, appRef.livemode, decisionId])
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`delivery.decision:${key}`}, 0))`)
     },
 
@@ -49,10 +49,10 @@ export function pgActionRequestStore(tx: TenantTx): ActionRequestStore {
       const [{ n } = { n: 0 }] = await tx
         .select({ n: sql<number>`count(*)::int` })
         .from(t)
-        .where(and(tenantOf(r.tenant), eq(t.decisionId, r.decisionId)))
+        .where(and(appOf(r.appRef), eq(t.decisionId, r.decisionId)))
       await tx.insert(t).values({
-        appId: r.tenant.appId,
-        livemode: r.tenant.livemode,
+        appId: r.appRef.appId,
+        livemode: r.appRef.livemode,
         id: r.id,
         caseId: r.caseId,
         decisionId: r.decisionId,
@@ -69,7 +69,7 @@ export function pgActionRequestStore(tx: TenantTx): ActionRequestStore {
       await tx
         .update(t)
         .set({ status: r.status, failReason: r.failReason, replacedBy: r.replacedBy })
-        .where(and(tenantOf(r.tenant), eq(t.id, r.id)))
+        .where(and(appOf(r.appRef), eq(t.id, r.id)))
     },
   }
 }

@@ -1,6 +1,6 @@
 // Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
 import { manualClock, type ManualClock } from '@flagwise/kernel'
-import { createDatabase, migrate, withSystem, withTenant, type Database } from '@flagwise/platform'
+import { createDatabase, migrate, withSystem, withApps, type Database } from '@flagwise/platform'
 import { createTestDatabase, schemaDrift, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -26,9 +26,9 @@ describe.skipIf(!testDatabaseUrl)('tenancy registry on Postgres', () => {
   let clock: ManualClock
   let n = 0
   const ids = (prefix: string) => `${prefix}_${++n}`
-  /** A tenant transaction for the listed apps, with the registry deps on it. */
+  /** A app transaction for the listed apps, with the registry deps on it. */
   const asApps = <R>(appIds: string[], fn: (deps: RegistryDeps) => Promise<R>) =>
-    withTenant(db, { appIds, livemode: true }, (tx) => fn({ store: pgTenancyStore(tx), clock, newId: ids }))
+    withApps(db, { appIds, livemode: true }, (tx) => fn({ store: pgTenancyStore(tx), clock, newId: ids }))
   const resolve = (key: string, at = clock.now()) => withSystem(db, (tx) => resolveApiKey(pgKeyDirectory(tx), key, at))
 
   beforeAll(async () => {
@@ -108,7 +108,7 @@ describe.skipIf(!testDatabaseUrl)('tenancy registry on Postgres', () => {
   it('tells a deleted app apart, so flagging can answer 410', async () => {
     await asApps(['app_gone'], (d) => createApp(d, { id: 'app_gone', name: 'Old app' }))
     const issued = await asApps(['app_gone'], (d) => issueApiKey(d, { appId: 'app_gone', livemode: true, scopes: ['flagging'] }))
-    await withTenant(db, { appIds: ['app_gone'], livemode: true }, (tx) => tx.execute(sql`UPDATE tenancy.apps SET deleted_at = now() WHERE id = 'app_gone'`))
+    await withApps(db, { appIds: ['app_gone'], livemode: true }, (tx) => tx.execute(sql`UPDATE tenancy.apps SET deleted_at = now() WHERE id = 'app_gone'`))
     expect(await resolve(issued.key)).toEqual({ ok: false, reason: 'app_deleted' })
     await expect(asApps(['app_gone'], (d) => issueApiKey(d, { appId: 'app_gone', livemode: true, scopes: ['flagging'] }))).rejects.toThrow('No app app_gone')
   })
@@ -119,7 +119,7 @@ describe.skipIf(!testDatabaseUrl)('tenancy registry on Postgres', () => {
     await expect(asApps(['app_a'], (d) => createApp(d, { name: '  ' }))).rejects.toThrow('name')
   })
 
-  it('keeps tenants apart, and lets the system role only read', async () => {
+  it('keeps appRefs apart, and lets the system role only read', async () => {
     const issued = await asApps(['app_a'], (d) => issueApiKey(d, { appId: 'app_a', livemode: true, scopes: ['flagging'] }))
     // A transaction for other apps cannot see app A or its key, even when it asks for them by id.
     expect(await asApps(['app_b'], (d) => d.store.findApp('app_a'))).toBeNull()
@@ -134,7 +134,7 @@ describe.skipIf(!testDatabaseUrl)('tenancy registry on Postgres', () => {
   it('publishes key changes with ids and scopes, never the key', async () => {
     const seen: TenancyEvent[] = []
     const withEvents = <R>(fn: (deps: RegistryDeps) => Promise<R>) => asApps(['app_a'], (d) => fn({ ...d, events: { publish: async (e) => void seen.push(e) } }))
-    const tenant = { appId: 'app_a', livemode: true }
+    const appRef = { appId: 'app_a', livemode: true }
     const issued = await withEvents((d) => issueApiKey(d, { appId: 'app_a', livemode: true, scopes: ['admin'] }))
     const rotated = await withEvents((d) => rotateApiKey(d, { appId: 'app_a', keyId: issued.record.id, overlapMs: H }))
     await withEvents((d) => revokeApiKey(d, { appId: 'app_a', keyId: rotated.record.id }))
@@ -142,10 +142,10 @@ describe.skipIf(!testDatabaseUrl)('tenancy registry on Postgres', () => {
     await withEvents((d) => revokeApiKey(d, { appId: 'app_a', keyId: rotated.record.id }))
     const now = clock.now()
     expect(seen).toEqual([
-      { type: 'api_key.issued', tenant, keyId: issued.record.id, scopes: ['admin'], occurredAt: now },
-      { type: 'api_key.issued', tenant, keyId: rotated.record.id, scopes: ['admin'], occurredAt: now },
-      { type: 'api_key.rotated', tenant, keyId: issued.record.id, replacedBy: rotated.record.id, expiresAt: new Date(now.getTime() + H), occurredAt: now },
-      { type: 'api_key.revoked', tenant, keyId: rotated.record.id, occurredAt: now },
+      { type: 'api_key.issued', appRef, keyId: issued.record.id, scopes: ['admin'], occurredAt: now },
+      { type: 'api_key.issued', appRef, keyId: rotated.record.id, scopes: ['admin'], occurredAt: now },
+      { type: 'api_key.rotated', appRef, keyId: issued.record.id, replacedBy: rotated.record.id, expiresAt: new Date(now.getTime() + H), occurredAt: now },
+      { type: 'api_key.revoked', appRef, keyId: rotated.record.id, occurredAt: now },
     ])
     expect(JSON.stringify(seen)).not.toContain(issued.key.slice(8))
   })

@@ -17,16 +17,16 @@ import {
   MigrationError,
   pendingMigrations,
   withSystem,
-  withTenant,
+  withApps,
   type Database,
   type MigrationSet,
 } from '../src/index.ts'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '../src/testing/pg.ts'
 
-const tenantPolicy = (table: string) => `
+const appPolicy = (table: string) => `
 ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ${table} FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON ${table} TO {{app}}
+CREATE POLICY app ON ${table} TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 `
@@ -39,7 +39,7 @@ const sample: MigrationSet = {
 CREATE SCHEMA sample;
 GRANT USAGE ON SCHEMA sample TO {{app}};
 CREATE TABLE sample.notes (id text PRIMARY KEY, app_id text NOT NULL, livemode boolean NOT NULL, body text NOT NULL);
-${tenantPolicy('sample.notes')}
+${appPolicy('sample.notes')}
 `,
     },
   ],
@@ -104,11 +104,11 @@ describe('input checks (no database needed)', () => {
     expect(() => loadMigrations('sample', pathToFileURL(`${dir}/missing/`))).toThrow(MigrationError)
   })
 
-  it('withTenant rejects ids that cannot be ids, before any query', async () => {
+  it('withApps rejects ids that cannot be ids, before any query', async () => {
     const db = { app: { transaction: () => Promise.reject(new Error('queried')) } } as unknown as Database
-    await expect(withTenant(db, { appIds: ["app'x"], livemode: true }, async () => 1)).rejects.toThrow(RangeError)
-    await expect(withTenant(db, { appIds: ['app_a', ''], livemode: true }, async () => 1)).rejects.toThrow(RangeError)
-    await expect(withTenant(db, { appIds: ['a'.repeat(65)], livemode: true }, async () => 1)).rejects.toThrow(RangeError)
+    await expect(withApps(db, { appIds: ["app'x"], livemode: true }, async () => 1)).rejects.toThrow(RangeError)
+    await expect(withApps(db, { appIds: ['app_a', ''], livemode: true }, async () => 1)).rejects.toThrow(RangeError)
+    await expect(withApps(db, { appIds: ['a'.repeat(65)], livemode: true }, async () => 1)).rejects.toThrow(RangeError)
   })
 })
 
@@ -205,29 +205,29 @@ describe.skipIf(!testDatabaseUrl)('migrate', () => {
   })
 })
 
-describe.skipIf(!testDatabaseUrl)('withTenant', () => {
+describe.skipIf(!testDatabaseUrl)('withApps', () => {
   let t: TestDatabase
   let db: Database
   const A = { appIds: ['app_a1'], livemode: true }
   const insert = (id: string, app: string, live: boolean) =>
     sql`INSERT INTO sample.notes (id, app_id, livemode, body) VALUES (${id}, ${app}, ${live}, 'Jane Doe was rude')`
   const ids = async (scope: typeof A) =>
-    withTenant(db, scope, async (tx) => (await tx.execute<{ id: string }>(sql`SELECT id FROM sample.notes ORDER BY id`)).rows.map((r) => r.id))
+    withApps(db, scope, async (tx) => (await tx.execute<{ id: string }>(sql`SELECT id FROM sample.notes ORDER BY id`)).rows.map((r) => r.id))
 
   beforeAll(async () => {
     t = await createTestDatabase()
     await migrate(t.ownerUrl, [sample], t.roles)
     db = createDatabase({ appUrl: t.appUrl, systemUrl: t.systemUrl, max: 1 })
-    await withTenant(db, A, async (tx) => {
+    await withApps(db, A, async (tx) => {
       await tx.execute(insert('n1', 'app_a1', true))
     })
-    await withTenant(db, { appIds: ['app_a2'], livemode: true }, async (tx) => {
+    await withApps(db, { appIds: ['app_a2'], livemode: true }, async (tx) => {
       await tx.execute(insert('n2', 'app_a2', true))
     })
-    await withTenant(db, { appIds: ['app_a1'], livemode: false }, async (tx) => {
+    await withApps(db, { appIds: ['app_a1'], livemode: false }, async (tx) => {
       await tx.execute(insert('n3', 'app_a1', false))
     })
-    await withTenant(db, { appIds: ['app_b1'], livemode: true }, async (tx) => {
+    await withApps(db, { appIds: ['app_b1'], livemode: true }, async (tx) => {
       await tx.execute(insert('n4', 'app_b1', true))
     })
   })
@@ -249,9 +249,9 @@ describe.skipIf(!testDatabaseUrl)('withTenant', () => {
     expect(await failure(db.app.execute(insert('n9', 'app_a1', true)))).toMatch(/row-level security/)
   })
 
-  it('refuses to write a row of another tenant', async () => {
-    expect(await failure(withTenant(db, A, async (tx) => tx.execute(insert('n9', 'app_b1', true))))).toMatch(/row-level security/)
-    expect(await failure(withTenant(db, A, async (tx) => tx.execute(insert('n9', 'app_a1', false))))).toMatch(/row-level security/)
+  it('refuses to write a row of another appRef', async () => {
+    expect(await failure(withApps(db, A, async (tx) => tx.execute(insert('n9', 'app_b1', true))))).toMatch(/row-level security/)
+    expect(await failure(withApps(db, A, async (tx) => tx.execute(insert('n9', 'app_a1', false))))).toMatch(/row-level security/)
   })
 
   it('does not carry the context into the next use of the connection', async () => {
@@ -263,7 +263,7 @@ describe.skipIf(!testDatabaseUrl)('withTenant', () => {
   it('rolls back when the function throws, and rethrows', async () => {
     const boom = new Error('boom')
     await expect(
-      withTenant(db, A, async (tx) => {
+      withApps(db, A, async (tx) => {
         await tx.execute(insert('n5', 'app_a1', true))
         throw boom
       }),
@@ -272,10 +272,10 @@ describe.skipIf(!testDatabaseUrl)('withTenant', () => {
   })
 
   it('returns what the function returns', async () => {
-    expect(await withTenant(db, A, async () => 42)).toBe(42)
+    expect(await withApps(db, A, async () => 42)).toBe(42)
   })
 
-  it('gives the system role no access to tenant tables', async () => {
+  it('gives the system role no access to appRef tables', async () => {
     expect(await failure(withSystem(db, async (tx) => tx.execute(sql`SELECT id FROM sample.notes`)))).toMatch(/permission denied/)
   })
 })
@@ -305,8 +305,8 @@ describe.skipIf(!testDatabaseUrl)('one database URL', () => {
     await initSingleUser(url, roles)
     await migrate(url, [sample], roles)
     db = createDatabase({ appUrl: url, systemUrl: url, max: 1, assumeRoles: roles })
-    await withTenant(db, A, async (tx) => tx.execute(insert('n1', 'app_a1')))
-    await withTenant(db, { appIds: ['app_b1'], livemode: true }, async (tx) => tx.execute(insert('n2', 'app_b1')))
+    await withApps(db, A, async (tx) => tx.execute(insert('n1', 'app_a1')))
+    await withApps(db, { appIds: ['app_b1'], livemode: true }, async (tx) => tx.execute(insert('n2', 'app_b1')))
   })
   afterAll(async () => {
     await db?.close()
@@ -329,11 +329,11 @@ describe.skipIf(!testDatabaseUrl)('one database URL', () => {
     expect((await db.app.execute(sql`SELECT current_user AS u`)).rows).toEqual([{ u: roles.app }])
   })
 
-  it('keeps tenants apart as with separate role URLs', async () => {
-    const ids = await withTenant(db, A, async (tx) => (await tx.execute<{ id: string }>(sql`SELECT id FROM sample.notes ORDER BY id`)).rows.map((r) => r.id))
+  it('keeps appRefs apart as with separate role URLs', async () => {
+    const ids = await withApps(db, A, async (tx) => (await tx.execute<{ id: string }>(sql`SELECT id FROM sample.notes ORDER BY id`)).rows.map((r) => r.id))
     expect(ids).toEqual(['n1'])
     expect((await db.app.execute(sql`SELECT id FROM sample.notes`)).rows).toEqual([])
-    expect(await failure(withTenant(db, A, async (tx) => tx.execute(insert('n9', 'app_b1'))))).toMatch(/row-level security/)
+    expect(await failure(withApps(db, A, async (tx) => tx.execute(insert('n9', 'app_b1'))))).toMatch(/row-level security/)
     expect(await failure(withSystem(db, async (tx) => tx.execute(sql`SELECT id FROM sample.notes`)))).toMatch(/permission denied/)
   })
 

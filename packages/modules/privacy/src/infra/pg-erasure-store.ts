@@ -1,8 +1,8 @@
-// Erasures on Postgres, inside a tenant transaction (row-level security limits it to its
+// Erasures on Postgres, inside an app transaction (row-level security limits it to its
 // apps and the mode).
 
 import type { Clock } from '@flagwise/kernel'
-import { loadMigrations, pgUnitOfWork, type Database, type EventBus, type MigrationSet, type TenantTx } from '@flagwise/platform'
+import { loadMigrations, pgUnitOfWork, type Database, type EventBus, type MigrationSet, type AppTx } from '@flagwise/platform'
 import { and, eq, isNull } from 'drizzle-orm'
 import type { ErasureRecord, ErasureStore, GroupAnswer } from '../app/erasure.ts'
 import type { PrivacyServiceDeps } from '../app/handlers.ts'
@@ -14,7 +14,7 @@ type StoredAnswer = Omit<GroupAnswer, 'at'> & { readonly at: string | null }
 
 const toRecord = (r: typeof erasures.$inferSelect): ErasureRecord => ({
   id: r.id,
-  tenant: { appId: r.appId, livemode: r.livemode },
+  appRef: { appId: r.appId, livemode: r.livemode },
   subjectExternalId: r.subjectExternalId,
   requestedAt: r.requestedAt,
   deadlineAt: r.deadlineAt,
@@ -24,24 +24,24 @@ const toRecord = (r: typeof erasures.$inferSelect): ErasureRecord => ({
   heldItems: r.heldItems,
 })
 
-export function pgErasureStore(tx: TenantTx): ErasureStore {
+export function pgErasureStore(tx: AppTx): ErasureStore {
   return {
-    async find(tenant, id) {
+    async find(appRef, id) {
       const [row] = await tx
         .select()
         .from(erasures)
-        .where(and(eq(erasures.appId, tenant.appId), eq(erasures.livemode, tenant.livemode), eq(erasures.id, id)))
+        .where(and(eq(erasures.appId, appRef.appId), eq(erasures.livemode, appRef.livemode), eq(erasures.id, id)))
       return row ? toRecord(row) : null
     },
-    async findActive(tenant, subjectExternalId) {
+    async findActive(appRef, subjectExternalId) {
       const [row] = await tx
         .select()
         .from(erasures)
         .where(
           and(
             
-            eq(erasures.appId, tenant.appId),
-            eq(erasures.livemode, tenant.livemode),
+            eq(erasures.appId, appRef.appId),
+            eq(erasures.livemode, appRef.livemode),
             eq(erasures.subjectExternalId, subjectExternalId),
             isNull(erasures.completedAt),
           ),
@@ -52,8 +52,8 @@ export function pgErasureStore(tx: TenantTx): ErasureStore {
       const rows = await tx
         .insert(erasures)
         .values({
-          appId: r.tenant.appId,
-          livemode: r.tenant.livemode,
+          appId: r.appRef.appId,
+          livemode: r.appRef.livemode,
           id: r.id,
           subjectExternalId: r.subjectExternalId,
           requestedAt: r.requestedAt,
@@ -71,7 +71,7 @@ export function pgErasureStore(tx: TenantTx): ErasureStore {
       await tx
         .update(erasures)
         .set({ expected: r.expected === null ? null : [...r.expected], groups: r.groups, completedAt: r.completedAt, heldItems: r.heldItems })
-        .where(and(eq(erasures.appId, r.tenant.appId), eq(erasures.livemode, r.tenant.livemode), eq(erasures.id, r.id)))
+        .where(and(eq(erasures.appId, r.appRef.appId), eq(erasures.livemode, r.appRef.livemode), eq(erasures.id, r.id)))
     },
   }
 }

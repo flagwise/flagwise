@@ -1,13 +1,13 @@
-// The erasure routes. The edge authenticates and sets the tenant context; these routes authorize
+// The erasure routes. The edge authenticates and sets the caller; these routes authorize
 // from it and call the use cases.
 
-import { can, FlagwiseError, type Clock, type TenantContext, type TenantRef } from '@flagwise/kernel'
+import { can, FlagwiseError, type Clock, type Caller, type AppRef } from '@flagwise/kernel'
 import { Hono } from 'hono'
 import { erasureStatus, type ErasureRecord } from '../app/erasure.ts'
 import type { PrivacyService } from '../app/handlers.ts'
 
 export interface PrivacyEnv {
-  Variables: { tenant: TenantContext }
+  Variables: { caller: Caller }
 }
 
 export interface PrivacyRoutesDeps extends PrivacyService {
@@ -33,18 +33,18 @@ export function privacyRoutes(deps: PrivacyRoutesDeps): Hono<PrivacyEnv> {
   const routes = new Hono<PrivacyEnv>().basePath('/privacy')
 
   routes.post('/subjects/:external_id/erase', async (c) => {
-    const tenant = eraser(c.get('tenant'))
+    const appRef = eraser(c.get('caller'))
     const subject = c.req.param('external_id')
     if (subject.length === 0 || subject.length > MAX_ID) {
       throw new FlagwiseError('validation_failed', 'The account id is not valid', { errors: [{ path: 'external_id', message: `An id of 1 to ${MAX_ID} characters` }] })
     }
-    const { erasure, created } = await deps.erase(tenant, subject)
+    const { erasure, created } = await deps.erase(appRef, subject)
     return c.json(body(erasure, deps.clock.now()), created ? 202 : 200)
   })
 
   routes.get('/erasures/:id', async (c) => {
-    const tenant = eraser(c.get('tenant'))
-    const erasure = await deps.find(tenant, c.req.param('id'))
+    const appRef = eraser(c.get('caller'))
+    const erasure = await deps.find(appRef, c.req.param('id'))
     if (!erasure) throw new FlagwiseError('not_found', 'No such erasure')
     return c.json(body(erasure, deps.clock.now()))
   })
@@ -52,7 +52,7 @@ export function privacyRoutes(deps: PrivacyRoutesDeps): Hono<PrivacyEnv> {
   return routes
 }
 
-function eraser(ctx: TenantContext): TenantRef {
+function eraser(ctx: Caller): AppRef {
   if (!ctx.appId || !can(ctx, { action: 'subject.erase', appId: ctx.appId })) throw new FlagwiseError('forbidden', 'This API key does not have the admin scope')
   return { appId: ctx.appId, livemode: ctx.livemode }
 }

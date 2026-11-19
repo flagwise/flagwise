@@ -1,7 +1,7 @@
 // What the cases use cases need from the outside world. Production code gets Postgres-backed
 // implementations; tests get the in-memory fakes in test/fakes.ts.
 
-import type { Clock, TenantRef } from '@flagwise/kernel'
+import type { Clock, AppRef } from '@flagwise/kernel'
 import type { CaseState } from '../domain/case-state.ts'
 
 /** Reports with a P0 signal never share a case with ordinary reports. */
@@ -9,7 +9,7 @@ export type SeverityBand = 'p0' | 'standard'
 
 export interface CaseRecord {
   readonly id: string
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly subjectExternalId: string
   readonly band: SeverityBand
   readonly state: CaseState
@@ -115,37 +115,37 @@ export interface CaseChange {
   readonly decision?: Decision
 }
 
-/** Every method only sees cases of the given tenant (app and livemode). */
+/** Every method only sees cases of the given app and mode. */
 export interface CaseRepository {
-  findById(tenant: TenantRef, caseId: string): Promise<CaseRecord | null>
-  findBySubject(tenant: TenantRef, subjectExternalId: string): Promise<readonly CaseRecord[]>
-  findByReportId(tenant: TenantRef, reportId: string): Promise<CaseRecord | null>
+  findById(appRef: AppRef, caseId: string): Promise<CaseRecord | null>
+  findBySubject(appRef: AppRef, subjectExternalId: string): Promise<readonly CaseRecord[]>
+  findByReportId(appRef: AppRef, reportId: string): Promise<CaseRecord | null>
   /**
-   * Until the current transaction ends, another caller locking the same tenant and subject waits.
+   * Until the current transaction ends, another caller locking the same app and subject waits.
    * Serializes the reports about one account, so two first reports cannot open two cases.
    */
-  lockSubject(tenant: TenantRef, subjectExternalId: string): Promise<void>
+  lockSubject(appRef: AppRef, subjectExternalId: string): Promise<void>
   /**
    * Erases an account: the cases about it take `erasedId` as their subject and their decisions
    * lose the free text (public reason, internal note); the report rows it filed, and those of its
    * cases, lose what they said about the accounts. Returns how many cases and report rows it
    * changed.
    */
-  eraseAccount(tenant: TenantRef, externalId: string, erasedId: string): Promise<number>
+  eraseAccount(appRef: AppRef, externalId: string, erasedId: string): Promise<number>
   insert(record: CaseRecord): Promise<void>
   /** Applies `change` only if the case exists and meets `condition`; true when it did. */
-  change(tenant: TenantRef, caseId: string, condition: CaseCondition, change: CaseChange): Promise<boolean>
+  change(appRef: AppRef, caseId: string, condition: CaseCondition, change: CaseChange): Promise<boolean>
   /**
    * Appends `reportId` to the case's reports only if the case is in one of `states`; true when it
    * did. While it runs, the case cannot move to another state.
    */
-  attachReport(tenant: TenantRef, caseId: string, reportId: string, states: readonly CaseState[]): Promise<boolean>
+  attachReport(appRef: AppRef, caseId: string, reportId: string, states: readonly CaseState[]): Promise<boolean>
   /** Notes a failed action request of the case; false, changing nothing, when it was noted before. */
-  addActionFailure(tenant: TenantRef, caseId: string, actionRequestId: string, at: Date): Promise<boolean>
+  addActionFailure(appRef: AppRef, caseId: string, actionRequestId: string, at: Date): Promise<boolean>
   /** The case's noted failures no retry has answered yet, oldest first. */
-  openActionFailures(tenant: TenantRef, caseId: string): Promise<readonly string[]>
+  openActionFailures(appRef: AppRef, caseId: string): Promise<readonly string[]>
   /** Marks the case's noted failures as answered by a retry. */
-  answerActionFailures(tenant: TenantRef, caseId: string, actionRequestIds: readonly string[]): Promise<void>
+  answerActionFailures(appRef: AppRef, caseId: string, actionRequestIds: readonly string[]): Promise<void>
 }
 
 /** The states the queue shows when no state filter is given. */
@@ -182,20 +182,20 @@ export interface CasePage {
 
 /** The read side the cases routes need. */
 export interface CaseReader {
-  findById(tenant: TenantRef, caseId: string): Promise<CaseRecord | null>
+  findById(appRef: AppRef, caseId: string): Promise<CaseRecord | null>
   /**
-   * Cases of the tenant matching every filter given. By default most urgent first: by triage
+   * Cases of the app matching every filter given. By default most urgent first: by triage
    * priority (higher first; untriaged cases last), then SLA due time (sooner first), then id. With
    * `order: 'recent'`, by opened time (latest first), then id. The cursor is opaque and belongs to
    * its order; a malformed one, or one of the other order, is a RangeError.
    */
-  list(tenant: TenantRef, query: CaseQuery): Promise<CasePage>
+  list(appRef: AppRef, query: CaseQuery): Promise<CasePage>
 }
 
 export type ModerationEvent =
   | {
       readonly type: 'case.opened'
-      readonly tenant: TenantRef
+      readonly appRef: AppRef
       readonly caseId: string
       readonly reportId: string
       readonly subjectExternalId: string
@@ -206,7 +206,7 @@ export type ModerationEvent =
     }
   | {
       readonly type: 'case.report_attached'
-      readonly tenant: TenantRef
+      readonly appRef: AppRef
       readonly caseId: string
       readonly reportId: string
       /** What the report said about the accounts, when it said it. */
@@ -216,14 +216,14 @@ export type ModerationEvent =
 
   | {
       readonly type: 'case.claimed'
-      readonly tenant: TenantRef
+      readonly appRef: AppRef
       readonly caseId: string
       readonly memberId: string
       readonly occurredAt: Date
     }
   | {
       readonly type: 'case.released'
-      readonly tenant: TenantRef
+      readonly appRef: AppRef
       readonly caseId: string
       /** The member who held the claim. */
       readonly memberId: string
@@ -232,7 +232,7 @@ export type ModerationEvent =
     }
   | {
       readonly type: 'case.decided'
-      readonly tenant: TenantRef
+      readonly appRef: AppRef
       readonly caseId: string
       /** The reported account, so the actions it needs can name it. */
       readonly subjectExternalId: string
@@ -249,7 +249,7 @@ export type ModerationEvent =
   | {
       /** A moderator changed the category or severity before deciding; triage triages it again. */
       readonly type: 'case.corrected'
-      readonly tenant: TenantRef
+      readonly appRef: AppRef
       readonly caseId: string
       /** severity is null when the case was untriaged: the moderator triages it by hand. */
       readonly before: { readonly categoryId: string; readonly severity: Severity | null }
@@ -264,7 +264,7 @@ export type ModerationEvent =
        * Delivery replaces the failed requests in `replaces` with one per action key.
        */
       readonly type: 'case.actions_retried'
-      readonly tenant: TenantRef
+      readonly appRef: AppRef
       readonly caseId: string
       readonly decisionId: string
       readonly subjectExternalId: string
@@ -291,7 +291,7 @@ export interface ModerationDeps {
 /** Which action keys a category allows (from moderation's copy of the app's policy). */
 export interface ActionCatalog {
   /** null when the category does not exist in the app. */
-  allowedActionKeys(tenant: TenantRef, categoryId: string): Promise<readonly string[] | null>
+  allowedActionKeys(appRef: AppRef, categoryId: string): Promise<readonly string[] | null>
 }
 
 export interface CaseWorkDeps extends ModerationDeps {

@@ -1,10 +1,10 @@
-import { manualClock, type ManualClock, type TenantRef } from '@flagwise/kernel'
+import { manualClock, type ManualClock, type AppRef } from '@flagwise/kernel'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { CaseRecord, CaseTriage, CaseWorkDeps, Decision, Severity } from '../src/app/ports.ts'
 import { CaseWorkError, correctCase, decideCase, retryActions, type DecideInput } from '../src/app/work-case.ts'
 import { InMemoryCaseRepository, RecordingPublisher } from './fakes.ts'
 
-const tenant: TenantRef = { appId: 'app_a', livemode: true }
+const appRef: AppRef = { appId: 'app_a', livemode: true }
 const T0 = new Date('2026-11-03T09:00:00.000Z')
 const OPENED = new Date('2026-11-02T00:00:00.000Z')
 const HOUR = 3_600_000
@@ -44,7 +44,7 @@ beforeEach(() => {
 
 const record = (o: Partial<CaseRecord> = {}): CaseRecord => ({
   id: 'case_1',
-  tenant,
+  appRef,
   subjectExternalId: 'u_jane_doe',
   band: 'standard',
   state: 'open',
@@ -74,7 +74,7 @@ const decision = (o: Partial<Decision> = {}): Decision => ({
   ...o,
 })
 
-const ref = (memberId = 'mem_jane') => ({ tenant, caseId: 'case_1', memberId })
+const ref = (memberId = 'mem_jane') => ({ appRef, caseId: 'case_1', memberId })
 
 async function rejectsWith(p: Promise<unknown>, code: string) {
   const err = await p.then(
@@ -145,7 +145,7 @@ describe('correctCase', () => {
     expect(publisher.events).toEqual([
       {
         type: 'case.corrected',
-        tenant,
+        appRef,
         caseId: 'case_1',
         before: { categoryId: 'scams_fraud.romance_scam', severity: 'P1' },
         after: { categoryId: 'spam.spam', severity: null },
@@ -231,16 +231,16 @@ describe('retryActions', () => {
 
   it('moves the case back to decided and publishes the retry, naming the failures it answers', async () => {
     repo.seed(failed())
-    await repo.addActionFailure(tenant, 'case_1', 'acr_1')
-    await repo.addActionFailure(tenant, 'case_1', 'acr_2')
-    await repo.answerActionFailures(tenant, 'case_1', ['acr_1'])
+    await repo.addActionFailure(appRef, 'case_1', 'acr_1')
+    await repo.addActionFailure(appRef, 'case_1', 'acr_2')
+    await repo.answerActionFailures(appRef, 'case_1', ['acr_1'])
     const saved = await retryActions(deps, { ...ref('key_admin'), actionKeys: ['warn'] })
     expect(saved.state).toBe('decided')
     expect(repo.get('case_1')?.state).toBe('decided')
     expect(publisher.events).toEqual([
       {
         type: 'case.actions_retried',
-        tenant,
+        appRef,
         caseId: 'case_1',
         decisionId: 'dec_1',
         subjectExternalId: 'u_jane_doe',
@@ -252,7 +252,7 @@ describe('retryActions', () => {
         occurredAt: T0,
       },
     ])
-    expect(await repo.openActionFailures(tenant, 'case_1')).toEqual([])
+    expect(await repo.openActionFailures(appRef, 'case_1')).toEqual([])
   })
 
   it('accepts an empty list', async () => {

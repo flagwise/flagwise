@@ -1,15 +1,15 @@
 // Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
-import { manualClock, type TenantRef } from '@flagwise/kernel'
+import { manualClock, type AppRef } from '@flagwise/kernel'
 import { sql } from 'drizzle-orm'
 import pg from 'pg'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createDatabase, createPgBus, migrate, runInRequest, withTenant, type BusEvent, type Database, type EventContract, type PgBus, type PgBusOptions } from '../src/index.ts'
+import { createDatabase, createPgBus, migrate, runInRequest, withApps, type BusEvent, type Database, type EventContract, type PgBus, type PgBusOptions } from '../src/index.ts'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '../src/testing/pg.ts'
 
-const A: TenantRef = { appId: 'app_a', livemode: true }
-const B: TenantRef = { appId: 'app_b', livemode: true }
+const A: AppRef = { appId: 'app_a', livemode: true }
+const B: AppRef = { appId: 'app_b', livemode: true }
 let n = 0
-const ev = (type: string, key: string, data: unknown = null, tenant: TenantRef = A, id = `evt_${++n}`): BusEvent => ({ id, type, key, data, tenant })
+const ev = (type: string, key: string, data: unknown = null, appRef: AppRef = A, id = `evt_${++n}`): BusEvent => ({ id, type, key, data, appRef })
 
 function recorder() {
   const calls: string[] = []
@@ -55,7 +55,7 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
     expect(await bus.pending()).toBe(0)
   })
 
-  it('logs events with sequence numbers and their tenant', async () => {
+  it('logs events with sequence numbers and their appRef', async () => {
     await bus.publish(ev('a', 'k'))
     await bus.publish([ev('b', 'k', { x: 1 }, B), ev('c', 'j')])
     const log = await bus.log()
@@ -64,7 +64,7 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
       [2, 'evt_2'],
       [3, 'evt_3'],
     ])
-    expect(log[1]?.event).toEqual({ id: 'evt_2', type: 'b', key: 'k', data: { x: 1 }, tenant: B })
+    expect(log[1]?.event).toEqual({ id: 'evt_2', type: 'b', key: 'k', data: { x: 1 }, appRef: B })
   })
 
   it('ignores an event id that was already published', async () => {
@@ -80,9 +80,9 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
   })
 
   it.each([
-    ['an empty id', { id: '', type: 'a', key: 'k', data: null, tenant: A }],
-    ['an empty key', { id: 'x', type: 'a', key: '', data: null, tenant: A }],
-    ['no tenant', { id: 'x', type: 'a', key: 'k', data: null }],
+    ['an empty id', { id: '', type: 'a', key: 'k', data: null, appRef: A }],
+    ['an empty key', { id: 'x', type: 'a', key: '', data: null, appRef: A }],
+    ['no appRef', { id: 'x', type: 'a', key: 'k', data: null }],
   ])('refuses %s and publishes nothing from that call', async (_label, bad) => {
     await expect(bus.publish([ev('a', 'k'), bad as BusEvent])).rejects.toThrow(TypeError)
     expect(await bus.log()).toEqual([])
@@ -93,23 +93,23 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
     bus.subscribe('g', '*', handler())
     await bus.drain()
     await expect(
-      withTenant(db, { appIds: ['app_a'], livemode: true }, async (tx) => {
+      withApps(db, { appIds: ['app_a'], livemode: true }, async (tx) => {
         await bus.publish(ev('a', 'k'), tx)
         throw new Error('rolled back')
       }),
     ).rejects.toThrow('rolled back')
-    await withTenant(db, { appIds: ['app_a'], livemode: true }, (tx) => bus.publish(ev('b', 'k'), tx))
+    await withApps(db, { appIds: ['app_a'], livemode: true }, (tx) => bus.publish(ev('b', 'k'), tx))
     await bus.drain()
     expect(calls).toEqual(['g:evt_2#1'])
   })
 
-  it('lets the app role read only its own tenant events, and no deliveries', async () => {
+  it('lets the app role read only its own appRef events, and no deliveries', async () => {
     await bus.publish([ev('a', 'k', null, A), ev('b', 'k', null, B)])
-    const mine = await withTenant(db, { appIds: ['app_a'], livemode: true }, (tx) =>
+    const mine = await withApps(db, { appIds: ['app_a'], livemode: true }, (tx) =>
       tx.execute<{ id: string }>(sql`SELECT id FROM platform.events ORDER BY seq`),
     )
     expect(mine.rows.map((r) => r.id)).toEqual(['evt_1'])
-    const writeOther = withTenant(db, { appIds: ['app_a'], livemode: true }, (tx) => bus.publish(ev('c', 'k', null, B), tx))
+    const writeOther = withApps(db, { appIds: ['app_a'], livemode: true }, (tx) => bus.publish(ev('c', 'k', null, B), tx))
     await expect(writeOther).rejects.toThrow()
     await expect(db.app.execute(sql`SELECT * FROM platform.deliveries`)).rejects.toThrow()
   })
@@ -131,17 +131,17 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
     expect(() => bus.subscribe('i', '*', () => {}, { maxAttempts: 0 })).toThrow(RangeError)
   })
 
-  it('passes the group, sequence number, attempt and tenant', async () => {
+  it('passes the group, sequence number, attempt and appRef', async () => {
     const seen: unknown[] = []
     bus.subscribe('g', '*', (e, ctx) => {
-      seen.push({ ...ctx, tenant: e.tenant })
+      seen.push({ ...ctx, appRef: e.appRef })
     })
     await bus.drain()
     await bus.publish([ev('a', 'k'), ev('b', 'k', null, B)])
     await bus.drain()
     expect(seen).toEqual([
-      { group: 'g', seq: 1, attempt: 1, tenant: A },
-      { group: 'g', seq: 2, attempt: 1, tenant: B },
+      { group: 'g', seq: 1, attempt: 1, appRef: A },
+      { group: 'g', seq: 2, attempt: 1, appRef: B },
     ])
   })
 
@@ -388,7 +388,7 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
     bus.subscribe('g', '*', (e) => void seen.push(e.meta))
     await bus.drain()
     await runInRequest({ requestId: 'req_1', actor: { type: 'api_key', id: 'key_1' } }, () => bus.publish(ev('a', 'k')))
-    await withTenant(db, { appIds: [A.appId], livemode: A.livemode }, (tx) =>
+    await withApps(db, { appIds: [A.appId], livemode: A.livemode }, (tx) =>
       runInRequest({ actor: { type: 'operator', id: 'cli' } }, () => bus.publish(ev('b', 'k'), tx)),
     )
     await bus.publish(ev('c', 'k'))
@@ -400,7 +400,7 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
     ])
   })
 
-  it('follows a tracked event with the groups it was queued for, in its tenant and key', async () => {
+  it('follows a tracked event with the groups it was queued for, in its appRef and key', async () => {
     const { handler } = recorder()
     bus.subscribe('g2', ['x'], handler())
     bus.subscribe('g1', ['x'], handler())
@@ -410,7 +410,7 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
     await bus.drain()
     const facts = (await bus.log()).filter((l) => l.event.type === 'bus.event_fanned_out.v1').map((l) => l.event)
     expect(facts).toEqual([
-      expect.objectContaining({ id: 'bus.event_fanned_out:evt_tracked', key: 'ers_1', tenant: B, data: { eventId: 'evt_tracked', type: 'x', groups: ['g1', 'g2'] } }),
+      expect.objectContaining({ id: 'bus.event_fanned_out:evt_tracked', key: 'ers_1', appRef: B, data: { eventId: 'evt_tracked', type: 'x', groups: ['g1', 'g2'] } }),
     ])
     // A tracked event no group takes still says so.
     await bus.publish({ ...ev('z', 'ers_2', null, A, 'evt_lonely'), track: true })
@@ -478,7 +478,7 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
       const checked = newBus({ contract })
       await expect(checked.publish([ev('order.placed.v1', 'o1', { orderId: 'o1' }), ev('order.placed.v1', 'o2', {})])).rejects.toThrow(/needs an orderId/)
       await expect(
-        withTenant(db, { appIds: [A.appId], livemode: A.livemode }, (tx) => checked.publish([ev('order.placed.v1', 'o3', { orderId: 'o3' }), ev('order.placed', 'o4', { orderId: 'o4' })], tx)),
+        withApps(db, { appIds: [A.appId], livemode: A.livemode }, (tx) => checked.publish([ev('order.placed.v1', 'o3', { orderId: 'o3' }), ev('order.placed', 'o4', { orderId: 'o4' })], tx)),
       ).rejects.toThrow(/not in the contract/)
       expect(await checked.log()).toEqual([])
     })

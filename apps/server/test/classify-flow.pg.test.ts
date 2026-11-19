@@ -1,8 +1,8 @@
 // A report through flagging and the services of the core loop on Postgres, with classify on a
 // scripted LLM. Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
-import { manualClock, type TenantRef } from '@flagwise/kernel'
+import { manualClock, type AppRef } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
-import { createDatabase, createPgBus, memoryStorage, migrate, pgUnitOfWork, scopeOfRef, withTenant, type Database, type PgBus } from '@flagwise/platform'
+import { createDatabase, createPgBus, memoryStorage, migrate, pgUnitOfWork, scopeOfApp, withApps, type Database, type PgBus } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { moderationMigrations, pgCaseRepository, pgModerationPolicyCopy } from '@flagwise/moderation'
 import {
@@ -22,7 +22,7 @@ import { pgTriageDeps, triageMigrations } from '@flagwise/triage'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { composeServices } from './support/services.ts'
 
-const A: TenantRef = { appId: 'app_a', livemode: true }
+const A: AppRef = { appId: 'app_a', livemode: true }
 
 const report = (text: string) =>
   JSON.stringify({
@@ -48,9 +48,9 @@ describe.skipIf(!testDatabaseUrl)('classify in the core loop on Postgres', () =>
       return { json: answers.shift(), usage: { input: 1000, output: 100, cached: 2000 }, model: request.model }
     },
   }
-  const caseOf = (id: string) => withTenant(db, scopeOfRef(A), (tx) => pgCaseRepository(tx).findById(A, id))
+  const caseOf = (id: string) => withApps(db, scopeOfApp(A), (tx) => pgCaseRepository(tx).findById(A, id))
   const send = async (text: string) => {
-    const { report: r } = await submitReport(flagging, { tenant: A, body: report(text) })
+    const { report: r } = await submitReport(flagging, { appRef: A, body: report(text) })
     await bus.drain()
     const caseId = (await bus.log()).map((l) => l.event).find((e) => e.type === 'case.opened.v1' && (e.data as { reportId: string }).reportId === r.id)!.key
     return caseId

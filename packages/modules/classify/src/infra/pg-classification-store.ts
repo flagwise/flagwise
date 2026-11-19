@@ -1,23 +1,23 @@
 // The ClassificationStore on Postgres, and the classify transaction runner.
 
-import type { TenantRef } from '@flagwise/kernel'
-import { loadMigrations, scopeOfRef, withTenant, type Database, type MigrationSet, type TenantTx } from '@flagwise/platform'
+import type { AppRef } from '@flagwise/kernel'
+import { loadMigrations, scopeOfApp, withApps, type Database, type MigrationSet, type AppTx } from '@flagwise/platform'
 import { and, count, eq, gte, inArray, or, sql } from 'drizzle-orm'
 import type { ClassificationRecord, ClassificationStore, ClassifyDeps } from '../app/ports.ts'
 import { reportScreeningsTable as rs, classificationsTable as t } from './schema.ts'
 
 export const classifyMigrations: MigrationSet = loadMigrations('classify', new URL('./migrations/', import.meta.url))
 
-/** A ClassificationStore on the given tenant transaction. Records read back equal the records written. */
-export function pgClassificationStore(tx: TenantTx): ClassificationStore {
-  const tenantOf = (tenant: TenantRef) => and(eq(t.appId, tenant.appId), eq(t.livemode, tenant.livemode))
+/** A ClassificationStore on the given app transaction. Records read back equal the records written. */
+export function pgClassificationStore(tx: AppTx): ClassificationStore {
+  const appOf = (appRef: AppRef) => and(eq(t.appId, appRef.appId), eq(t.livemode, appRef.livemode))
 
   return {
-    async find(tenant, caseId) {
-      const [r] = await tx.select().from(t).where(and(tenantOf(tenant), eq(t.caseId, caseId)))
+    async find(appRef, caseId) {
+      const [r] = await tx.select().from(t).where(and(appOf(appRef), eq(t.caseId, caseId)))
       if (!r) return null
       return {
-        tenant: { appId: r.appId, livemode: r.livemode },
+        appRef: { appId: r.appId, livemode: r.livemode },
         caseId: r.caseId,
         reportId: r.reportId,
         categoryId: r.categoryId,
@@ -42,7 +42,7 @@ export function pgClassificationStore(tx: TenantTx): ClassificationStore {
     async insert(c) {
       const inserted = await tx
         .insert(t)
-        .values({ appId: c.tenant.appId, livemode: c.tenant.livemode, caseId: c.caseId, ...columns(c) })
+        .values({ appId: c.appRef.appId, livemode: c.appRef.livemode, caseId: c.caseId, ...columns(c) })
         .onConflictDoNothing({ target: [t.appId, t.caseId] })
         .returning({ caseId: t.caseId })
       return inserted.length === 1
@@ -52,16 +52,16 @@ export function pgClassificationStore(tx: TenantTx): ClassificationStore {
       const replaced = await tx
         .update(t)
         .set(columns(c))
-        .where(and(tenantOf(c.tenant), eq(t.caseId, c.caseId), eq(t.classifiedBy, 'rules'), eq(t.rulesReason, 'llm_failed')))
+        .where(and(appOf(c.appRef), eq(t.caseId, c.caseId), eq(t.classifiedBy, 'rules'), eq(t.rulesReason, 'llm_failed')))
         .returning({ caseId: t.caseId })
       return replaced.length === 1
     },
 
-    async monthCounts(tenant, since) {
+    async monthCounts(appRef, since) {
       const [row] = await tx
         .select({ cases: count(), escalations: sql`count(*) FILTER (WHERE ${t.escalated})`.mapWith(Number) })
         .from(t)
-        .where(and(tenantOf(tenant), eq(t.classifiedBy, 'llm'), gte(t.classifiedAt, since)))
+        .where(and(appOf(appRef), eq(t.classifiedBy, 'llm'), gte(t.classifiedAt, since)))
       return { cases: row?.cases ?? 0, escalations: row?.escalations ?? 0 }
     },
 
@@ -69,8 +69,8 @@ export function pgClassificationStore(tx: TenantTx): ClassificationStore {
       await tx
         .insert(rs)
         .values({
-          appId: s.tenant.appId,
-          livemode: s.tenant.livemode,
+          appId: s.appRef.appId,
+          livemode: s.appRef.livemode,
           reportId: s.reportId,
           p0Signals: [...s.p0Signals],
           injectionSuspected: s.injectionSuspected,
@@ -81,33 +81,33 @@ export function pgClassificationStore(tx: TenantTx): ClassificationStore {
         .onConflictDoNothing()
     },
 
-    async eraseAccount(tenant, externalId, erasedId) {
-      const ofTenant = and(eq(rs.appId, tenant.appId), eq(rs.livemode, tenant.livemode))
+    async eraseAccount(appRef, externalId, erasedId) {
+      const ofApp = and(eq(rs.appId, appRef.appId), eq(rs.livemode, appRef.livemode))
       const reports = await tx
         .update(rs)
         .set({
           reportedExternalId: sql`CASE WHEN ${rs.reportedExternalId} = ${externalId} THEN ${erasedId} ELSE ${rs.reportedExternalId} END`,
           reporterExternalId: sql`CASE WHEN ${rs.reporterExternalId} = ${externalId} THEN ${erasedId} ELSE ${rs.reporterExternalId} END`,
         })
-        .where(and(ofTenant, or(eq(rs.reportedExternalId, externalId), eq(rs.reporterExternalId, externalId))))
+        .where(and(ofApp, or(eq(rs.reportedExternalId, externalId), eq(rs.reporterExternalId, externalId))))
         .returning({ reportId: rs.reportId })
       if (reports.length > 0) {
         await tx
           .update(t)
           .set({ summary: null })
-          .where(and(tenantOf(tenant), inArray(t.reportId, reports.map((r) => r.reportId))))
+          .where(and(appOf(appRef), inArray(t.reportId, reports.map((r) => r.reportId))))
       }
       return reports.length
     },
 
-    async findScreening(tenant, reportId) {
+    async findScreening(appRef, reportId) {
       const [r] = await tx
         .select()
         .from(rs)
-        .where(and(eq(rs.appId, tenant.appId), eq(rs.livemode, tenant.livemode), eq(rs.reportId, reportId)))
+        .where(and(eq(rs.appId, appRef.appId), eq(rs.livemode, appRef.livemode), eq(rs.reportId, reportId)))
       return r
         ? {
-            tenant: { appId: r.appId, livemode: r.livemode },
+            appRef: { appId: r.appId, livemode: r.livemode },
             reportId: r.reportId,
             p0Signals: r.p0Signals,
             injectionSuspected: r.injectionSuspected,
@@ -120,7 +120,7 @@ export function pgClassificationStore(tx: TenantTx): ClassificationStore {
   }
 }
 
-/** The columns of a record other than its tenant and case. */
+/** The columns of a record other than its app and case. */
 const columns = (c: ClassificationRecord) => ({
   reportId: c.reportId,
   categoryId: c.categoryId,
@@ -143,7 +143,7 @@ const columns = (c: ClassificationRecord) => ({
   classifiedAt: c.classifiedAt,
 })
 
-/** Runs classify work in one tenant transaction on Postgres. */
+/** Runs classify work in one app transaction on Postgres. */
 export function pgClassifyRunner(db: Database): ClassifyDeps['run'] {
-  return (tenant, fn) => withTenant(db, scopeOfRef(tenant), (tx) => fn(pgClassificationStore(tx)))
+  return (appRef, fn) => withApps(db, scopeOfApp(appRef), (tx) => fn(pgClassificationStore(tx)))
 }

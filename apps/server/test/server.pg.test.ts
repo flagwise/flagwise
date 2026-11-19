@@ -5,7 +5,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pgCaseRepository } from '@flagwise/moderation'
-import { scopeOfRef, withTenant } from '@flagwise/platform'
+import { scopeOfApp, withApps } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
@@ -31,8 +31,8 @@ async function reportToCase(server: Server, installed: Bootstrapped) {
   const get = await server.app.http.request(`/v1/flagging/reports/${id}`, { headers: { authorization: `Bearer ${installed.liveKey}` } })
   const report = (await get.json()) as { status: string; case_id: string }
   expect(report.status).toBe('assigned')
-  const tenant = { appId: installed.app.id, livemode: true }
-  return withTenant(server.db, scopeOfRef(tenant), (tx) => pgCaseRepository(tx).findById(tenant, report.case_id))
+  const appRef = { appId: installed.app.id, livemode: true }
+  return withApps(server.db, scopeOfApp(appRef), (tx) => pgCaseRepository(tx).findById(appRef, report.case_id))
 }
 
 describe.skipIf(!testDatabaseUrl)('the install path on Postgres', () => {
@@ -159,7 +159,7 @@ describe.skipIf(!testDatabaseUrl)('the install path with one DATABASE_URL', () =
 
     expect((await server.db.app.execute(sql`SELECT current_user AS u`)).rows).toEqual([{ u: 'fw_app' }])
     expect((await server.db.system.execute(sql`SELECT current_user AS u`)).rows).toEqual([{ u: 'fw_system' }])
-    // Without a tenant context, the app role sees no case even though the URL's user is a superuser.
+    // With no apps set, the app role sees no case even though the URL's user is a superuser.
     expect((await server.db.app.execute(sql`SELECT count(*)::int AS n FROM cases.cases`)).rows).toEqual([{ n: 0 }])
   })
 })

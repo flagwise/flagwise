@@ -29,13 +29,13 @@ CREATE TABLE tenancy.api_keys (
 
 ALTER TABLE tenancy.apps ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenancy.apps FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON tenancy.apps TO {{app}}
+CREATE POLICY app ON tenancy.apps TO {{app}}
   USING (id = ANY (platform.app_ids()))
   WITH CHECK (id = ANY (platform.app_ids()));
 
 ALTER TABLE tenancy.api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenancy.api_keys FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON tenancy.api_keys TO {{app}}
+CREATE POLICY app ON tenancy.api_keys TO {{app}}
   USING (app_id = ANY (platform.app_ids()))
   WITH CHECK (app_id = ANY (platform.app_ids()));
 

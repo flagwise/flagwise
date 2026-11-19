@@ -1,7 +1,7 @@
 // The audit log of each app and mode: one hash chain, appended to from the event bus, searched and
 // verified through the API.
 
-import type { Clock, TenantRef } from '@flagwise/kernel'
+import type { Clock, AppRef } from '@flagwise/kernel'
 import { appendEntry, verifyChain, type AuditEntry, type ChainProblem } from '../domain/chain.ts'
 import { auditRecordOf, type RecordedEvent } from '../domain/events.ts'
 
@@ -24,27 +24,27 @@ export interface AuditPage {
   readonly nextAfterSeq: number | null
 }
 
-/** One app and mode's chain, inside one tenant transaction. */
+/** One app and mode's chain, inside one app transaction. */
 export interface AuditStore {
   /**
    * Holds the chain for the rest of the transaction, so entries are appended one at a time, and
    * returns its last entry (null when empty) and whether `sourceEventId` is recorded already.
    */
-  lockChain(tenant: TenantRef, sourceEventId: string): Promise<{ readonly last: AuditEntry | null; readonly recorded: boolean }>
-  insert(tenant: TenantRef, entry: AuditEntry, found: { readonly sourceEventId: string; readonly caseId: string | null; readonly subjectExternalId: string | null }): Promise<void>
+  lockChain(appRef: AppRef, sourceEventId: string): Promise<{ readonly last: AuditEntry | null; readonly recorded: boolean }>
+  insert(appRef: AppRef, entry: AuditEntry, found: { readonly sourceEventId: string; readonly caseId: string | null; readonly subjectExternalId: string | null }): Promise<void>
   /** Matching entries in seq order. */
-  search(tenant: TenantRef, query: AuditQuery): Promise<AuditPage>
+  search(appRef: AppRef, query: AuditQuery): Promise<AuditPage>
   /** Entries after `afterSeq` in seq order, at most `limit`. */
-  entriesAfter(tenant: TenantRef, afterSeq: number, limit: number): Promise<readonly AuditEntry[]>
+  entriesAfter(appRef: AppRef, afterSeq: number, limit: number): Promise<readonly AuditEntry[]>
   /** The last purged entry's seq and hash, once retention has purged any. */
-  checkpoint(tenant: TenantRef): Promise<{ readonly seq: number; readonly hash: string } | null>
+  checkpoint(appRef: AppRef): Promise<{ readonly seq: number; readonly hash: string } | null>
   /**
    * Erases an account from the entries found by it: their personal data and its salt are cleared
    * (the digest stays, so the chain still verifies) and `erasedId` takes its place in the column
    * they are searched by. The ids in an entry's facts are covered by the chain and stay. Returns
    * how many entries it changed.
    */
-  eraseAccount(tenant: TenantRef, externalId: string, erasedId: string): Promise<number>
+  eraseAccount(appRef: AppRef, externalId: string, erasedId: string): Promise<number>
 }
 
 export interface AuditDeps {
@@ -56,13 +56,13 @@ export interface AuditDeps {
  * Appends the entry for an event to its app and mode's chain and returns it. Null, writing nothing,
  * for a type the log does not record or an event already recorded (a redelivery).
  */
-export async function recordEvent(deps: AuditDeps, tenant: TenantRef, event: RecordedEvent): Promise<AuditEntry | null> {
+export async function recordEvent(deps: AuditDeps, appRef: AppRef, event: RecordedEvent): Promise<AuditEntry | null> {
   const record = auditRecordOf(event, deps.clock.now())
   if (!record) return null
-  const { last, recorded } = await deps.store.lockChain(tenant, event.id)
+  const { last, recorded } = await deps.store.lockChain(appRef, event.id)
   if (recorded) return null
   const entry = appendEntry(last, record.input)
-  await deps.store.insert(tenant, entry, { sourceEventId: event.id, caseId: record.caseId, subjectExternalId: record.subjectExternalId })
+  await deps.store.insert(appRef, entry, { sourceEventId: event.id, caseId: record.caseId, subjectExternalId: record.subjectExternalId })
   return entry
 }
 
@@ -76,11 +76,11 @@ const VERIFY_PAGE = 1_000
  * Verifies the whole chain from its checkpoint (or its start), a page at a time; reports the first
  * broken entry, and how many entries were checked up to it.
  */
-export async function verifyAuditLog(deps: Pick<AuditDeps, 'store'>, tenant: TenantRef): Promise<AuditVerification> {
-  let from = (await deps.store.checkpoint(tenant)) ?? undefined
+export async function verifyAuditLog(deps: Pick<AuditDeps, 'store'>, appRef: AppRef): Promise<AuditVerification> {
+  let from = (await deps.store.checkpoint(appRef)) ?? undefined
   let checked = 0
   for (;;) {
-    const page = await deps.store.entriesAfter(tenant, from?.seq ?? 0, VERIFY_PAGE)
+    const page = await deps.store.entriesAfter(appRef, from?.seq ?? 0, VERIFY_PAGE)
     if (page.length === 0) return { ok: true, checked }
     const result = verifyChain(page, from)
     if (!result.ok) return { ok: false, checked: checked + page.findIndex((e) => e.seq === result.seq), seq: result.seq, reason: result.reason }

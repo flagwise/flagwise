@@ -4,9 +4,9 @@
 // wrote it commits. Fan-out and delivery run as the system role; handlers open their own tenant
 // transactions.
 
-import type { Clock, TenantRef } from '@flagwise/kernel'
+import type { Clock, AppRef } from '@flagwise/kernel'
 import { sql } from 'drizzle-orm'
-import { withSystem, withTenant, type Database, type SystemTx, type TenantTx } from '../db/tenant.ts'
+import { withSystem, withApps, type Database, type SystemTx, type AppTx } from '../db/database.ts'
 import { checkedEvent, deadLetteredEvent, fannedOutEvent, type BusEvent, type DeadLetter, type EventBus, type EventContract, type Handler } from './memory-bus.ts'
 import { stampRequest, type EventMeta } from './request-context.ts'
 
@@ -91,7 +91,7 @@ type Leased = {
 
 /** The identity of a stored event, enough to name it in the bus's facts. */
 type Named = { id: string; type: string; key: string; app_id: string; livemode: boolean }
-const named = (r: Named): BusEvent => ({ id: r.id, type: r.type, key: r.key, data: null, tenant: { appId: r.app_id, livemode: r.livemode } })
+const named = (r: Named): BusEvent => ({ id: r.id, type: r.type, key: r.key, data: null, appRef: { appId: r.app_id, livemode: r.livemode } })
 
 /** The meta of a stored event: its request and actor when it has them, and when it was published. */
 const metaOf = (r: { request_id: string | null; actor_type: string | null; actor_id: string | null }, publishedAt?: Date | string): EventMeta | undefined => {
@@ -280,7 +280,7 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
       type: d.type,
       key: d.key,
       data: d.data,
-      tenant: { appId: d.app_id, livemode: d.livemode },
+      appRef: { appId: d.app_id, livemode: d.livemode },
       meta: metaOf(d, d.created_at)!,
       ...(d.schema_version !== null && { schemaVersion: d.schema_version }),
     }
@@ -314,11 +314,11 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
     return { queued, calls }
   }
 
-  const insertEvents = async (tx: TenantTx, events: readonly BusEvent[]): Promise<number> => {
+  const insertEvents = async (tx: AppTx, events: readonly BusEvent[]): Promise<number> => {
     let fresh = 0
     for (const published of events) {
       const e = stampRequest(published)
-      const t = e.tenant!
+      const t = e.appRef!
       const m = e.meta
       const res = await tx.execute(sql`
         INSERT INTO platform.events (id, type, key, data, schema_version, app_id, livemode, request_id, actor_type, actor_id, tracked)
@@ -334,7 +334,7 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
   const insertSystem = async (tx: SystemTx, events: readonly BusEvent[]) => {
     for (const given of events) {
       const e = checkedEvent(given, opts.contract)
-      const t = e.tenant!
+      const t = e.appRef!
       await tx.execute(sql`
         INSERT INTO platform.events (id, type, key, data, schema_version, app_id, livemode)
         VALUES (${e.id}, ${e.type}, ${e.key}, ${JSON.stringify(e.data ?? null)}::jsonb, ${e.schemaVersion ?? null}, ${t.appId}, ${t.livemode})
@@ -365,20 +365,20 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
         for (const field of ['id', 'type', 'key'] as const) {
           if (typeof e?.[field] !== 'string' || e[field] === '') throw new TypeError(`Every event needs a non-empty string ${field}`)
         }
-        if (!e.tenant) throw new TypeError(`Event ${e.id} has no tenant`)
+        if (!e.appRef) throw new TypeError(`Event ${e.id} has no appRef`)
       }
       const events = given.map((e) => checkedEvent(e, opts.contract))
       if (tx) return insertEvents(tx, events)
-      const byTenant = new Map<string, { tenant: TenantRef; events: BusEvent[] }>()
+      const byApp = new Map<string, { appRef: AppRef; events: BusEvent[] }>()
       for (const e of events) {
-        const k = `${e.tenant!.appId}|${e.tenant!.livemode}`
-        const entry = byTenant.get(k) ?? { tenant: e.tenant!, events: [] }
+        const k = `${e.appRef!.appId}|${e.appRef!.livemode}`
+        const entry = byApp.get(k) ?? { appRef: e.appRef!, events: [] }
         entry.events.push(e)
-        byTenant.set(k, entry)
+        byApp.set(k, entry)
       }
       let fresh = 0
-      for (const { tenant, events: list } of byTenant.values()) {
-        fresh += await withTenant(db, { appIds: [tenant.appId], livemode: tenant.livemode }, (t) => insertEvents(t, list))
+      for (const { appRef, events: list } of byApp.values()) {
+        fresh += await withApps(db, { appIds: [appRef.appId], livemode: appRef.livemode }, (t) => insertEvents(t, list))
       }
       return fresh
     },
@@ -501,7 +501,7 @@ const storedEvent = (r: StoredRow): BusEvent => ({
   type: r.type,
   key: r.key,
   data: r.data,
-  tenant: { appId: r.app_id, livemode: r.livemode },
+  appRef: { appId: r.app_id, livemode: r.livemode },
   ...(r.schema_version !== null && { schemaVersion: r.schema_version }),
 })
 

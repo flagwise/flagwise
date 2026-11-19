@@ -251,7 +251,7 @@ const SPECS = [
     major: 1,
     version: '1.0.0',
     owner: 'delivery',
-    meaning: "An action of a decision is to be carried out by the tenant's systems.",
+    meaning: "An action of a decision is to be carried out by the appRef's systems.",
     schema: z.strictObject({
       actionRequestId: id,
       caseId: id,
@@ -271,7 +271,7 @@ const SPECS = [
     major: 1,
     version: '1.0.0',
     owner: 'delivery',
-    meaning: "The tenant's systems carried out a requested action.",
+    meaning: "The appRef's systems carried out a requested action.",
     schema: z.strictObject({ actionRequestId: id, caseId: id }),
   }),
   spec({
@@ -279,7 +279,7 @@ const SPECS = [
     major: 1,
     version: '1.0.0',
     owner: 'delivery',
-    meaning: "The tenant's systems could not carry out a requested action.",
+    meaning: "The appRef's systems could not carry out a requested action.",
     schema: z.strictObject({ actionRequestId: id, caseId: id }),
   }),
   spec({
@@ -359,7 +359,7 @@ const SPECS = [
     major: 1,
     version: '1.0.0',
     owner: 'privacy',
-    meaning: "A tenant asked to erase an account's personal data. Published tracked: every group it reaches answers with subject.erased.",
+    meaning: "A appRef asked to erase an account's personal data. Published tracked: every group it reaches answers with subject.erased.",
     schema: z.strictObject({ erasureId: id, subjectExternalId: id, occurredAt: time }),
   }),
   spec({

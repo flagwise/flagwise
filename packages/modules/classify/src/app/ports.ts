@@ -1,7 +1,7 @@
 // What classify needs from the outside: the install's LLM, its own classification store, read
 // access to evidence snapshots, and whether an app may use the LLM.
 
-import type { Clock, TenantRef } from '@flagwise/kernel'
+import type { Clock, AppRef } from '@flagwise/kernel'
 import type { ObjectStorage } from '@flagwise/platform'
 import type { LlmFailure } from '../domain/classification.ts'
 import type { ClassifierPrompt } from '../domain/prompt.ts'
@@ -67,7 +67,7 @@ export type RulesReason = 'rules_only' | 'llm_failed'
 
 /** The classification of one case, as classify stores it. */
 export interface ClassificationRecord {
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly caseId: string
   /** The report the case was opened with, whose evidence was classified. */
   readonly reportId: string
@@ -107,7 +107,7 @@ export interface ClassificationRecord {
 
 /** What flagging's pre-rules found in one report, as classify keeps it from report.received. */
 export interface ReportScreening {
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly reportId: string
   /** The P0 signals found, in P0_SIGNALS order, each once. */
   readonly p0Signals: readonly string[]
@@ -119,9 +119,9 @@ export interface ReportScreening {
   readonly reporterExternalId?: string | null
 }
 
-/** Classification access inside one tenant transaction. */
+/** Classification access inside one app transaction. */
 export interface ClassificationStore {
-  find(tenant: TenantRef, caseId: string): Promise<ClassificationRecord | null>
+  find(appRef: AppRef, caseId: string): Promise<ClassificationRecord | null>
   /** Stores the record; false, writing nothing, when the case already has one. */
   insert(record: ClassificationRecord): Promise<boolean>
   /**
@@ -130,28 +130,28 @@ export interface ClassificationStore {
    */
   replaceFailed(record: ClassificationRecord): Promise<boolean>
   /** LLM-classified cases of the tenant's app and mode since `since`, and how many of them escalated. */
-  monthCounts(tenant: TenantRef, since: Date): Promise<{ readonly cases: number; readonly escalations: number }>
+  monthCounts(appRef: AppRef, since: Date): Promise<{ readonly cases: number; readonly escalations: number }>
   /** Keeps a report's screening; one already kept for the report stays as it is. */
   keepScreening(screening: ReportScreening): Promise<void>
-  findScreening(tenant: TenantRef, reportId: string): Promise<ReportScreening | null>
+  findScreening(appRef: AppRef, reportId: string): Promise<ReportScreening | null>
   /**
    * Erases an account: replaces its id with `erasedId` in the screenings of its reports (as
    * reported or reporter) and drops the LLM summary of the classifications made from those
    * reports. Returns how many reports it had.
    */
-  eraseAccount(tenant: TenantRef, externalId: string, erasedId: string): Promise<number>
+  eraseAccount(appRef: AppRef, externalId: string, erasedId: string): Promise<number>
 }
 
 export interface ClassifyDeps {
-  /** Runs `fn` in one transaction for the tenant. */
-  run<R>(tenant: TenantRef, fn: (store: ClassificationStore) => Promise<R>): Promise<R>
+  /** Runs `fn` in one transaction for the app. */
+  run<R>(appRef: AppRef, fn: (store: ClassificationStore) => Promise<R>): Promise<R>
   /** Evidence snapshots, read only. */
   readonly snapshots: Pick<ObjectStorage, 'get'>
   readonly clock: Clock
   /** The install's LLM; without one every case is classified by rules. */
   readonly llm?: LlmConfig | undefined
   /** Whether the app may send evidence to the LLM (default: every app may). */
-  llmEnabled?(tenant: TenantRef): Promise<boolean>
+  llmEnabled?(appRef: AppRef): Promise<boolean>
   /** Redact PII from the text sent to the LLM. */
   readonly redact: boolean
   /** Percent of the month's cases that may escalate (default 15). */
@@ -169,5 +169,5 @@ export interface AppCategoryRef {
 
 export interface AppCategories {
   /** The app's current category with this key, or null. */
-  find(tenant: TenantRef, key: string): Promise<AppCategoryRef | null>
+  find(appRef: AppRef, key: string): Promise<AppCategoryRef | null>
 }

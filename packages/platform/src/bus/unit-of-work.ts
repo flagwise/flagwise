@@ -2,8 +2,8 @@
 // events it publishes share one transaction, so the events exist exactly when the change does. A
 // unit of work holds the stores of one service only; services never share a transaction.
 
-import type { TenantRef } from '@flagwise/kernel'
-import { scopeOfRef, withTenant, type Database, type TenantTx } from '../db/tenant.ts'
+import type { AppRef } from '@flagwise/kernel'
+import { scopeOfApp, withApps, type Database, type AppTx } from '../db/database.ts'
 import type { BusEvent, EventBus } from './memory-bus.ts'
 
 export interface Work<S> {
@@ -13,24 +13,24 @@ export interface Work<S> {
 }
 
 export interface UnitOfWork<S> {
-  run<R>(tenant: TenantRef, fn: (work: Work<S>) => Promise<R>): Promise<R>
+  run<R>(appRef: AppRef, fn: (work: Work<S>) => Promise<R>): Promise<R>
 }
 
-const withTenantRef = (events: BusEvent | readonly BusEvent[], tenant: TenantRef): BusEvent[] =>
-  (Array.isArray(events) ? events : [events as BusEvent]).map((e) => ({ ...e, tenant }))
+const withAppRef = (events: BusEvent | readonly BusEvent[], appRef: AppRef): BusEvent[] =>
+  (Array.isArray(events) ? events : [events as BusEvent]).map((e) => ({ ...e, appRef }))
 
 /**
- * On Postgres: each run is one tenant transaction with the stores `storesOf` builds on it, and
+ * On Postgres: each run is one app transaction with the stores `storesOf` builds on it, and
  * events are written to the bus log in it. A run that throws is rolled back, events included.
  */
-export function pgUnitOfWork<S>(db: Database, bus: EventBus, storesOf: (tx: TenantTx) => S): UnitOfWork<S> {
+export function pgUnitOfWork<S>(db: Database, bus: EventBus, storesOf: (tx: AppTx) => S): UnitOfWork<S> {
   return {
-    run: (tenant, fn) =>
-      withTenant(db, scopeOfRef(tenant), (tx) =>
+    run: (appRef, fn) =>
+      withApps(db, scopeOfApp(appRef), (tx) =>
         fn({
           stores: storesOf(tx),
           publish: async (events) => {
-            await bus.publish(withTenantRef(events, tenant), tx)
+            await bus.publish(withAppRef(events, appRef), tx)
           },
         }),
       ),
@@ -43,12 +43,12 @@ export function pgUnitOfWork<S>(db: Database, bus: EventBus, storesOf: (tx: Tena
  */
 export function memoryUnitOfWork<S>(bus: EventBus, stores: S): UnitOfWork<S> {
   return {
-    async run(tenant, fn) {
+    async run(appRef, fn) {
       const held: BusEvent[] = []
       const result = await fn({
         stores,
         publish: async (events) => {
-          held.push(...withTenantRef(events, tenant))
+          held.push(...withAppRef(events, appRef))
         },
       })
       if (held.length) await bus.publish(held)
@@ -58,7 +58,7 @@ export function memoryUnitOfWork<S>(bus: EventBus, stores: S): UnitOfWork<S> {
 }
 
 /** The tenant of a delivered event: the bus stores it with every event. */
-export function tenantOf(event: BusEvent): TenantRef {
-  if (!event.tenant) throw new Error(`Event ${event.id} has no tenant`)
-  return event.tenant
+export function appOf(event: BusEvent): AppRef {
+  if (!event.appRef) throw new Error(`Event ${event.id} has no appRef`)
+  return event.appRef
 }

@@ -22,6 +22,6 @@ CREATE UNIQUE INDEX erasures_active ON privacy.erasures (app_id, livemode, subje
 REVOKE DELETE ON privacy.erasures FROM {{app}};
 ALTER TABLE privacy.erasures ENABLE ROW LEVEL SECURITY;
 ALTER TABLE privacy.erasures FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON privacy.erasures TO {{app}}
+CREATE POLICY app ON privacy.erasures TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());

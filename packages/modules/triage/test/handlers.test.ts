@@ -1,33 +1,33 @@
 // Triage on an in-memory bus: its record of each case from the cases' events, and when it triages.
 import { DEFAULT_POLICY, eventContract, type Policy } from '@flagwise/contracts'
-import type { TenantRef } from '@flagwise/kernel'
+import type { AppRef } from '@flagwise/kernel'
 import { createMemoryBus, memoryDocumentCopy, memoryUnitOfWork, type MemoryBus } from '@flagwise/platform'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { erasedFromCase, subscribeTriage, type TriageCase, type TriageCaseStore } from '../src/index.ts'
 
-const tenant: TenantRef = { appId: 'app_a', livemode: true }
+const appRef: AppRef = { appId: 'app_a', livemode: true }
 const T0 = '2026-11-19T09:00:00.000Z'
 const H = 3_600_000
 
 class Cases implements TriageCaseStore {
   readonly rows = new Map<string, TriageCase>()
-  async find(_t: TenantRef, id: string) {
+  async find(_t: AppRef, id: string) {
     return this.rows.get(id) ?? null
   }
   async open(r: TriageCase) {
     if (!this.rows.has(r.caseId)) this.rows.set(r.caseId, r)
   }
-  async attach(_t: TenantRef, id: string, reportId: string, facts: Parameters<TriageCaseStore['attach']>[3]) {
+  async attach(_t: AppRef, id: string, reportId: string, facts: Parameters<TriageCaseStore['attach']>[3]) {
     const r = this.rows.get(id)
     if (!r) return false
     if (!r.reportIds.includes(reportId)) this.rows.set(id, { ...r, reportIds: [...r.reportIds, reportId], reports: facts ? [...r.reports, { reportId, ...facts }] : r.reports })
     return true
   }
-  async change(_t: TenantRef, id: string, change: Parameters<TriageCaseStore['change']>[2]) {
+  async change(_t: AppRef, id: string, change: Parameters<TriageCaseStore['change']>[2]) {
     const r = this.rows.get(id)
     if (r) this.rows.set(id, { ...r, ...change })
     return !!r
-  }  async eraseAccount(_t: TenantRef, externalId: string, erasedId: string) {
+  }  async eraseAccount(_t: AppRef, externalId: string, erasedId: string) {
     let n = 0
     for (const [id, r] of this.rows) {
       const erased = erasedFromCase(r, externalId, erasedId)
@@ -50,7 +50,7 @@ beforeEach(() => {
   subscribeTriage(bus, { uow: memoryUnitOfWork(bus, { cases }), policy })
 })
 
-const publish = (type: string, data: Record<string, unknown>, id = `${type}:${++n}`) => bus.publish({ id, type, key: String(data['caseId']), data, tenant })
+const publish = (type: string, data: Record<string, unknown>, id = `${type}:${++n}`) => bus.publish({ id, type, key: String(data['caseId']), data, appRef })
 const classification = (over: Record<string, unknown> = {}) => ({
   caseId: 'case_1',
   reportId: 'rpt_1',
@@ -97,7 +97,7 @@ describe('triage on the bus', () => {
   })
 
   it("publishes case.untriaged when the LLM failed and the app's policy does not fall back to rules", async () => {
-    await policy.keep(tenant, 1, { ...DEFAULT_POLICY, llm: { rulesOnly: false, fallbackToRules: false } })
+    await policy.keep(appRef, 1, { ...DEFAULT_POLICY, llm: { rulesOnly: false, fallbackToRules: false } })
     await open()
     await publish('case.classified.v1', classification({ classifiedBy: 'rules', rulesReason: 'llm_failed' }))
     await bus.drain()
@@ -126,7 +126,7 @@ describe('triage on the bus', () => {
   })
 
   it('leaves a corrected case alone, and an untriaged one a moderator has claimed', async () => {
-    await policy.keep(tenant, 1, { ...DEFAULT_POLICY, llm: { rulesOnly: false, fallbackToRules: false } })
+    await policy.keep(appRef, 1, { ...DEFAULT_POLICY, llm: { rulesOnly: false, fallbackToRules: false } })
     await open()
     await publish('case.classified.v1', classification({ classifiedBy: 'rules', rulesReason: 'llm_failed' }))
     await publish('case.claimed.v1', { caseId: 'case_1', memberId: 'mem_jane', occurredAt: T0 })
@@ -169,7 +169,7 @@ describe('triage on the bus', () => {
   })
 
   it('triages an untriaged case a moderator triages by hand', async () => {
-    await policy.keep(tenant, 1, { ...DEFAULT_POLICY, llm: { rulesOnly: false, fallbackToRules: false } })
+    await policy.keep(appRef, 1, { ...DEFAULT_POLICY, llm: { rulesOnly: false, fallbackToRules: false } })
     await open()
     await publish('case.classified.v1', classification({ classifiedBy: 'rules', rulesReason: 'llm_failed', signals: ['minor_involved'] }))
     await publish('case.claimed.v1', { caseId: 'case_1', memberId: 'mem_jane', occurredAt: T0 })

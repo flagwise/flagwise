@@ -1,9 +1,9 @@
-// Categories and LLM settings on Postgres, inside a tenant transaction (row-level security limits it
+// Categories and LLM settings on Postgres, inside an app transaction (row-level security limits it
 // to its apps and the mode).
 
 import type { GlobalSeverity } from '@flagwise/contracts'
-import type { TenantRef } from '@flagwise/kernel'
-import type { TenantTx } from '@flagwise/platform'
+import type { AppRef } from '@flagwise/kernel'
+import type { AppTx } from '@flagwise/platform'
 import { and, asc, eq, isNull, notInArray, sql } from 'drizzle-orm'
 import type { CategoryStore, LlmSettingsStore } from '../app/ports.ts'
 import { DEFAULT_LLM_SETTINGS, type AppCategory } from '../domain/categories.ts'
@@ -18,19 +18,19 @@ const toCategory = (r: typeof t.$inferSelect): AppCategory => ({
   enabled: r.enabled,
 })
 
-export function pgCategoryStore(tx: TenantTx): CategoryStore {
-  const ofApp = (tenant: TenantRef) => and(eq(t.appId, tenant.appId), eq(t.livemode, tenant.livemode))
+export function pgCategoryStore(tx: AppTx): CategoryStore {
+  const ofApp = (appRef: AppRef) => and(eq(t.appId, appRef.appId), eq(t.livemode, appRef.livemode))
   const store: CategoryStore = {
-    async list(tenant) {
-      const rows = await tx.select().from(t).where(and(ofApp(tenant), isNull(t.removedAt))).orderBy(asc(t.position))
+    async list(appRef) {
+      const rows = await tx.select().from(t).where(and(ofApp(appRef), isNull(t.removedAt))).orderBy(asc(t.position))
       return rows.map(toCategory)
     },
 
-    async replace(tenant, categories, now) {
+    async replace(appRef, categories, now) {
       // A transaction-scoped advisory lock, so two replaces of one app and mode never mix their lists.
-      const lock = `policy.categories:${tenant.appId}:${tenant.livemode}`
+      const lock = `policy.categories:${appRef.appId}:${appRef.livemode}`
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lock}, 0))`)
-      const before = await store.list(tenant)
+      const before = await store.list(appRef)
       for (const [position, c] of categories.entries()) {
         const row = {
           position,
@@ -45,36 +45,36 @@ export function pgCategoryStore(tx: TenantTx): CategoryStore {
         }
         await tx
           .insert(t)
-          .values({ appId: tenant.appId, livemode: tenant.livemode, key: c.key, ...row })
+          .values({ appId: appRef.appId, livemode: appRef.livemode, key: c.key, ...row })
           .onConflictDoUpdate({ target: [t.appId, t.livemode, t.key], set: row })
       }
       const kept = categories.map((c) => c.key)
       await tx
         .update(t)
         .set({ removedAt: now, updatedAt: now })
-        .where(and(ofApp(tenant), isNull(t.removedAt), ...(kept.length ? [notInArray(t.key, kept)] : [])))
+        .where(and(ofApp(appRef), isNull(t.removedAt), ...(kept.length ? [notInArray(t.key, kept)] : [])))
       return before
     },
   }
   return store
 }
 
-export function pgLlmSettingsStore(tx: TenantTx): LlmSettingsStore {
-  const ofApp = (tenant: TenantRef) => and(eq(s.appId, tenant.appId), eq(s.livemode, tenant.livemode))
+export function pgLlmSettingsStore(tx: AppTx): LlmSettingsStore {
+  const ofApp = (appRef: AppRef) => and(eq(s.appId, appRef.appId), eq(s.livemode, appRef.livemode))
   const store: LlmSettingsStore = {
-    async get(tenant) {
-      const [row] = await tx.select().from(s).where(ofApp(tenant))
+    async get(appRef) {
+      const [row] = await tx.select().from(s).where(ofApp(appRef))
       return row ? { rulesOnly: row.rulesOnly, fallbackToRules: row.fallbackToRules } : DEFAULT_LLM_SETTINGS
     },
 
-    async set(tenant, settings, now) {
-      const lock = `policy.llm_settings:${tenant.appId}:${tenant.livemode}`
+    async set(appRef, settings, now) {
+      const lock = `policy.llm_settings:${appRef.appId}:${appRef.livemode}`
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lock}, 0))`)
-      const before = await store.get(tenant)
+      const before = await store.get(appRef)
       const row = { rulesOnly: settings.rulesOnly, fallbackToRules: settings.fallbackToRules, updatedAt: now }
       await tx
         .insert(s)
-        .values({ appId: tenant.appId, livemode: tenant.livemode, ...row })
+        .values({ appId: appRef.appId, livemode: appRef.livemode, ...row })
         .onConflictDoUpdate({ target: [s.appId, s.livemode], set: row })
       return before
     },

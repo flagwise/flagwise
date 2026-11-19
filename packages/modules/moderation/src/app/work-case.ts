@@ -4,7 +4,7 @@
 // caller gets the real reason. Events are published only after the write succeeded. Failures throw
 // CaseWorkError with a code, or CaseChangedError when the case kept changing after 3 attempts.
 
-import type { TenantRef } from '@flagwise/kernel'
+import type { AppRef } from '@flagwise/kernel'
 import { nextState } from '../domain/case-state.ts'
 import { globalCategory, hasP0Signal } from '@flagwise/contracts'
 import { CaseChangedError, type CaseRecord, type ModerationDeps, type CaseWorkDeps, type Decision, type Severity } from './ports.ts'
@@ -36,7 +36,7 @@ export class CaseWorkError extends Error {
 }
 
 export interface CaseRef {
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly caseId: string
   readonly memberId: string
 }
@@ -91,14 +91,14 @@ export function claimCase(deps: CaseWorkDeps, input: CaseRef): Promise<CaseRecor
 }
 
 async function claimOnce(deps: CaseWorkDeps, input: CaseRef): Promise<CaseRecord | null> {
-  const { tenant, caseId, memberId } = input
-  const current = await deps.cases.findById(tenant, caseId)
+  const { appRef, caseId, memberId } = input
+  const current = await deps.cases.findById(appRef, caseId)
   if (!current) throw new CaseWorkError('not_found')
   const now = deps.clock.now()
 
   if (current.state === 'claimed' && current.claim?.memberId === memberId) {
     const claim = { ...current.claim, lastActivityAt: now }
-    if (!(await deps.cases.change(tenant, caseId, { states: ['claimed'], claimedBy: memberId }, { claim }))) return null
+    if (!(await deps.cases.change(appRef, caseId, { states: ['claimed'], claimedBy: memberId }, { claim }))) return null
     return { ...current, claim }
   }
 
@@ -107,23 +107,23 @@ async function claimOnce(deps: CaseWorkDeps, input: CaseRef): Promise<CaseRecord
     const holder = current.claim?.memberId
     if (holder === undefined) {
       // Claimed without a claim record: take it as unclaimed.
-      if (!(await deps.cases.change(tenant, caseId, { states: ['claimed'], claimedBy: null }, { claim }))) return null
-      await deps.events.publish({ type: 'case.claimed', tenant, caseId, memberId, occurredAt: now })
+      if (!(await deps.cases.change(appRef, caseId, { states: ['claimed'], claimedBy: null }, { claim }))) return null
+      await deps.events.publish({ type: 'case.claimed', appRef, caseId, memberId, occurredAt: now })
       return { ...current, claim }
     }
     const idleFor = now.getTime() - current.claim!.lastActivityAt.getTime()
     if (idleFor < CLAIM_IDLE_MS) throw new CaseWorkError('claimed_by_other', { holder })
     const idleSince = new Date(now.getTime() - CLAIM_IDLE_MS)
-    if (!(await deps.cases.change(tenant, caseId, { states: ['claimed'], claimedBy: holder, claimIdleSince: idleSince }, { claim }))) return null
-    await deps.events.publish({ type: 'case.released', tenant, caseId, memberId: holder, reason: 'idle', occurredAt: now })
-    await deps.events.publish({ type: 'case.claimed', tenant, caseId, memberId, occurredAt: now })
+    if (!(await deps.cases.change(appRef, caseId, { states: ['claimed'], claimedBy: holder, claimIdleSince: idleSince }, { claim }))) return null
+    await deps.events.publish({ type: 'case.released', appRef, caseId, memberId: holder, reason: 'idle', occurredAt: now })
+    await deps.events.publish({ type: 'case.claimed', appRef, caseId, memberId, occurredAt: now })
     return { ...current, claim }
   }
 
   if (current.state !== 'open' && current.state !== 'untriaged') throw new CaseWorkError('invalid_state')
   const state = nextState(current.state, { type: 'claimed' })
-  if (!(await deps.cases.change(tenant, caseId, { states: [current.state], claimedBy: null }, { state, claim }))) return null
-  await deps.events.publish({ type: 'case.claimed', tenant, caseId, memberId, occurredAt: now })
+  if (!(await deps.cases.change(appRef, caseId, { states: [current.state], claimedBy: null }, { state, claim }))) return null
+  await deps.events.publish({ type: 'case.claimed', appRef, caseId, memberId, occurredAt: now })
   return { ...current, state, claim }
 }
 
@@ -143,8 +143,8 @@ export function releaseCase(deps: CaseWorkDeps, input: CaseRef & { readonly forc
 }
 
 async function releaseOnce(deps: CaseWorkDeps, input: CaseRef & { readonly force?: boolean }): Promise<CaseRecord | null> {
-  const { tenant, caseId, memberId } = input
-  const current = await deps.cases.findById(tenant, caseId)
+  const { appRef, caseId, memberId } = input
+  const current = await deps.cases.findById(appRef, caseId)
   if (!current) throw new CaseWorkError('not_found')
   if (current.state !== 'claimed' || !current.claim) throw new CaseWorkError('invalid_state')
 
@@ -154,8 +154,8 @@ async function releaseOnce(deps: CaseWorkDeps, input: CaseRef & { readonly force
 
   const now = deps.clock.now()
   const state = nextState(current.state, { type: 'released' })
-  if (!(await deps.cases.change(tenant, caseId, { states: ['claimed'], claimedBy: holder }, { state, claim: null }))) return null
-  await deps.events.publish({ type: 'case.released', tenant, caseId, memberId: holder, reason: foreign ? 'forced' : 'released', occurredAt: now })
+  if (!(await deps.cases.change(appRef, caseId, { states: ['claimed'], claimedBy: holder }, { state, claim: null }))) return null
+  await deps.events.publish({ type: 'case.released', appRef, caseId, memberId: holder, reason: foreign ? 'forced' : 'released', occurredAt: now })
   return { ...current, state, claim: null }
 }
 
@@ -184,8 +184,8 @@ export function decideCase(deps: CaseWorkDeps, input: DecideInput): Promise<Deci
 }
 
 async function decideOnce(deps: CaseWorkDeps, input: DecideInput): Promise<Decision | null> {
-  const { tenant, caseId, memberId, outcome, categoryId, severity, actionKeys } = input
-  const current = await deps.cases.findById(tenant, caseId)
+  const { appRef, caseId, memberId, outcome, categoryId, severity, actionKeys } = input
+  const current = await deps.cases.findById(appRef, caseId)
   if (!current) throw new CaseWorkError('not_found')
   if (current.decision) throw new CaseWorkError('already_decided', { decision: current.decision })
   if (current.state !== 'claimed') throw new CaseWorkError('not_claimed')
@@ -193,7 +193,7 @@ async function decideOnce(deps: CaseWorkDeps, input: DecideInput): Promise<Decis
     throw new CaseWorkError('claimed_by_other', current.claim ? { holder: current.claim.memberId } : {})
   }
 
-  const allowed = await deps.catalog.allowedActionKeys(tenant, categoryId)
+  const allowed = await deps.catalog.allowedActionKeys(appRef, categoryId)
   const invalid =
     (outcome === 'no_violation' && actionKeys.length > 0) ||
     new Set(actionKeys).size !== actionKeys.length ||
@@ -219,10 +219,10 @@ async function decideOnce(deps: CaseWorkDeps, input: DecideInput): Promise<Decis
     ...(input.internalNote !== undefined && { internalNote: input.internalNote }),
   }
   const state = nextState(current.state, { type: 'decided', actionCount: actionKeys.length })
-  if (!(await deps.cases.change(tenant, caseId, { states: ['claimed'], claimedBy: memberId }, { state, claim: null, decision }))) return null
+  if (!(await deps.cases.change(appRef, caseId, { states: ['claimed'], claimedBy: memberId }, { state, claim: null, decision }))) return null
   await deps.events.publish({
     type: 'case.decided',
-    tenant,
+    appRef,
     caseId,
     subjectExternalId: current.subjectExternalId,
     decisionId: decision.id,
@@ -261,8 +261,8 @@ export function correctCase(deps: ModerationDeps, input: CorrectInput): Promise<
 }
 
 async function correctOnce(deps: ModerationDeps, input: CorrectInput): Promise<CaseRecord | null> {
-  const { tenant, caseId, memberId } = input
-  const current = await deps.cases.findById(tenant, caseId)
+  const { appRef, caseId, memberId } = input
+  const current = await deps.cases.findById(appRef, caseId)
   if (!current) throw new CaseWorkError('not_found')
   if (current.state !== 'claimed') throw new CaseWorkError('not_claimed')
   if (current.claim?.memberId !== memberId) throw new CaseWorkError('claimed_by_other', current.claim ? { holder: current.claim.memberId } : {})
@@ -285,10 +285,10 @@ async function correctOnce(deps: ModerationDeps, input: CorrectInput): Promise<C
   const { customCategoryId: _custom, ...global } = current.classification
   const classification = moved ? { ...global, categoryId } : current.classification
   const triage = current.triage && severity !== null ? { ...current.triage, severity } : current.triage
-  if (!(await deps.cases.change(tenant, caseId, { states: ['claimed'], claimedBy: memberId }, { claim, classification, ...(triage && { triage }) }))) return null
+  if (!(await deps.cases.change(appRef, caseId, { states: ['claimed'], claimedBy: memberId }, { claim, classification, ...(triage && { triage }) }))) return null
   await deps.events.publish({
     type: 'case.corrected',
-    tenant,
+    appRef,
     caseId,
     before,
     after: { categoryId, severity: input.severity ?? null },
@@ -314,24 +314,24 @@ export function retryActions(deps: CaseWorkDeps, input: RetryActionsInput): Prom
 }
 
 async function retryOnce(deps: CaseWorkDeps, input: RetryActionsInput): Promise<CaseRecord | null> {
-  const { tenant, caseId, memberId, actionKeys } = input
-  const current = await deps.cases.findById(tenant, caseId)
+  const { appRef, caseId, memberId, actionKeys } = input
+  const current = await deps.cases.findById(appRef, caseId)
   if (!current) throw new CaseWorkError('not_found')
   const decision = current.decision
   if (current.state !== 'action_failed' || !decision) throw new CaseWorkError('invalid_state')
 
-  const allowed = await deps.catalog.allowedActionKeys(tenant, decision.categoryId)
+  const allowed = await deps.catalog.allowedActionKeys(appRef, decision.categoryId)
   const invalid = new Set(actionKeys).size !== actionKeys.length || (actionKeys.length > 0 && (allowed === null || actionKeys.some((k) => !allowed.includes(k))))
   if (invalid) throw new CaseWorkError('invalid_decision')
 
   const now = deps.clock.now()
   const state = nextState(current.state, { type: 'action_retried' })
-  if (!(await deps.cases.change(tenant, caseId, { states: ['action_failed'], decisionId: decision.id }, { state }))) return null
-  const replaces = await deps.cases.openActionFailures(tenant, caseId)
-  await deps.cases.answerActionFailures(tenant, caseId, replaces)
+  if (!(await deps.cases.change(appRef, caseId, { states: ['action_failed'], decisionId: decision.id }, { state }))) return null
+  const replaces = await deps.cases.openActionFailures(appRef, caseId)
+  await deps.cases.answerActionFailures(appRef, caseId, replaces)
   await deps.events.publish({
     type: 'case.actions_retried',
-    tenant,
+    appRef,
     caseId,
     decisionId: decision.id,
     subjectExternalId: current.subjectExternalId,

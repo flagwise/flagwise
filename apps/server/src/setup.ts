@@ -4,7 +4,7 @@
 
 import { mkdir } from 'node:fs/promises'
 import { newId, systemClock, type Clock } from '@flagwise/kernel'
-import { DEFAULT_ROLES, initDatabase, initSingleUser, migrate, runInRequest, s3Storage, withSystem, withTenant, type DbRoleNames, type TenantTx } from '@flagwise/platform'
+import { DEFAULT_ROLES, initDatabase, initSingleUser, migrate, runInRequest, s3Storage, withSystem, withApps, type DbRoleNames, type AppTx } from '@flagwise/platform'
 import {
   addEndpoint,
   keyringSealer,
@@ -17,7 +17,7 @@ import {
   type WebhookDeps,
   type WebhookEndpoint,
 } from '@flagwise/delivery'
-import type { TenantRef } from '@flagwise/kernel'
+import type { AppRef } from '@flagwise/kernel'
 import { busPolicyEvents, pgPolicy, PRESETS, type PresetName } from '@flagwise/policy'
 import { busTenancyEvents, createApp as createRegistryApp, issueApiKey, pgTenancyStore, type App } from '@flagwise/tenancy'
 import { envReader, type Env } from './config/env.ts'
@@ -135,12 +135,12 @@ async function bootstrapAsOperator(config: ServerConfig, input: BootstrapInput, 
     const appId = newId('app', { clock })
     const scopes = ['flagging', 'actions']
     // Each mode in its own transaction: a key's event is written in its own mode.
-    const live = await withTenant(server.db, { appIds: [appId], livemode: true }, async (tx) => {
+    const live = await withApps(server.db, { appIds: [appId], livemode: true }, async (tx) => {
       const deps = registryDeps(server, tx, clock)
       const app = await createRegistryApp(deps, { id: appId, name: input.appName })
       return { app, key: (await issueApiKey(deps, { appId, livemode: true, scopes })).key }
     })
-    const test = await withTenant(server.db, { appIds: [appId], livemode: false }, async (tx) => {
+    const test = await withApps(server.db, { appIds: [appId], livemode: false }, async (tx) => {
       return issueApiKey(registryDeps(server, tx, clock), { appId, livemode: false, scopes })
     })
     // The preset is the policy service's to apply, in its own transaction per mode.
@@ -183,7 +183,7 @@ async function createKeyAsOperator(
   const server = createServer({ ...config, mode: 'api' }, { clock })
   try {
     await server.prepare()
-    return await withTenant(server.db, { appIds: [input.appId], livemode: input.livemode }, async (tx) => {
+    return await withApps(server.db, { appIds: [input.appId], livemode: input.livemode }, async (tx) => {
       const issued = await issueApiKey(registryDeps(server, tx, clock), { appId: input.appId, livemode: input.livemode, scopes: input.scopes })
       return { key: issued.key, id: issued.record.id, scopes: issued.record.scopes, livemode: issued.record.livemode }
     })
@@ -199,7 +199,7 @@ const OPERATOR = { type: 'operator', id: 'cli' } as const
 const asOperator = <T>(fn: () => Promise<T>): Promise<T> => runInRequest({ actor: OPERATOR }, fn)
 
 /** The registry's deps on `tx`, publishing key changes in it. */
-function registryDeps(server: Server, tx: TenantTx, clock: Clock) {
+function registryDeps(server: Server, tx: AppTx, clock: Clock) {
   return {
     store: pgTenancyStore(tx),
     clock,
@@ -209,11 +209,11 @@ function registryDeps(server: Server, tx: TenantTx, clock: Clock) {
 }
 
 /** Runs `fn` with the webhook use cases' deps for one app and mode, on a prepared server (pending migrations throw). */
-async function withWebhooks<T>(config: ServerConfig, tenant: TenantRef, clock: Clock, fn: (deps: WebhookDeps) => Promise<T>): Promise<T> {
+async function withWebhooks<T>(config: ServerConfig, appRef: AppRef, clock: Clock, fn: (deps: WebhookDeps) => Promise<T>): Promise<T> {
   const server = createServer({ ...config, mode: 'api' }, { clock })
   try {
     await server.prepare()
-    return await withTenant(server.db, { appIds: [tenant.appId], livemode: tenant.livemode }, (tx) =>
+    return await withApps(server.db, { appIds: [appRef.appId], livemode: appRef.livemode }, (tx) =>
       fn({
         webhooks: pgWebhookStore(tx),
         // Listing and removing never seal; adding and rolling check for the keys first.
@@ -234,25 +234,25 @@ const noKeys = (): never => {
 }
 
 /** `flagwise webhooks:add`: adds an endpoint; the app's first one also makes its signing secret, returned once. Needs the master keys. */
-export async function addWebhookEndpoint(config: ServerConfig, tenant: TenantRef, input: { readonly url: string; readonly eventTypes?: readonly string[] }, clock: Clock = systemClock): Promise<AddedEndpoint> {
+export async function addWebhookEndpoint(config: ServerConfig, appRef: AppRef, input: { readonly url: string; readonly eventTypes?: readonly string[] }, clock: Clock = systemClock): Promise<AddedEndpoint> {
   if (!config.secrets) noKeys()
-  return withWebhooks(config, tenant, clock, (deps) => addEndpoint(deps, tenant, input))
+  return withWebhooks(config, appRef, clock, (deps) => addEndpoint(deps, appRef, input))
 }
 
 /** `flagwise webhooks:list`: the app's endpoints in the mode, oldest first. */
-export function listWebhookEndpoints(config: ServerConfig, tenant: TenantRef, clock: Clock = systemClock): Promise<readonly WebhookEndpoint[]> {
-  return withWebhooks(config, tenant, clock, (deps) => deps.webhooks.endpoints(tenant))
+export function listWebhookEndpoints(config: ServerConfig, appRef: AppRef, clock: Clock = systemClock): Promise<readonly WebhookEndpoint[]> {
+  return withWebhooks(config, appRef, clock, (deps) => deps.webhooks.endpoints(appRef))
 }
 
 /** `flagwise webhooks:remove`: removes an endpoint; its pending deliveries fail. */
-export function removeWebhookEndpoint(config: ServerConfig, tenant: TenantRef, id: string, clock: Clock = systemClock): Promise<void> {
-  return withWebhooks(config, tenant, clock, (deps) => removeEndpoint(deps, tenant, id))
+export function removeWebhookEndpoint(config: ServerConfig, appRef: AppRef, id: string, clock: Clock = systemClock): Promise<void> {
+  return withWebhooks(config, appRef, clock, (deps) => removeEndpoint(deps, appRef, id))
 }
 
 /** `flagwise webhooks:roll-secret`: a new signing secret, returned once; the old ones sign until the overlap ends. Needs the master keys. */
-export async function rollWebhookSecret(config: ServerConfig, tenant: TenantRef, overlapMs: number, clock: Clock = systemClock): Promise<RolledSecret> {
+export async function rollWebhookSecret(config: ServerConfig, appRef: AppRef, overlapMs: number, clock: Clock = systemClock): Promise<RolledSecret> {
   if (!config.secrets) noKeys()
-  return withWebhooks(config, tenant, clock, (deps) => rollSecret(deps, tenant, { overlapMs }))
+  return withWebhooks(config, appRef, clock, (deps) => rollSecret(deps, appRef, { overlapMs }))
 }
 
 /**

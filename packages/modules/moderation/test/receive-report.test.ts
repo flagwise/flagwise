@@ -1,11 +1,11 @@
-import { manualClock, type TenantRef } from '@flagwise/kernel'
+import { manualClock, type AppRef } from '@flagwise/kernel'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { CaseChangedError, type CaseRecord, type ModerationDeps } from '../src/app/ports.ts'
 import { receiveReport, type ReportReceived } from '../src/app/receive-report.ts'
 import type { CaseState } from '../src/domain/case-state.ts'
 import { InMemoryCaseRepository, RecordingPublisher } from './fakes.ts'
 
-const tenant: TenantRef = { appId: 'app_a', livemode: true }
+const appRef: AppRef = { appId: 'app_a', livemode: true }
 const NOW = '2026-11-03T09:00:00.000Z'
 
 let repo: InMemoryCaseRepository
@@ -21,7 +21,7 @@ beforeEach(() => {
 })
 
 const report = (o: Partial<ReportReceived> = {}): ReportReceived => ({
-  tenant,
+  appRef,
   reportId: 'rpt_1',
   subjectExternalId: 'u_5531',
   p0Signal: false,
@@ -30,7 +30,7 @@ const report = (o: Partial<ReportReceived> = {}): ReportReceived => ({
 
 const existing = (o: Partial<CaseRecord> = {}): CaseRecord => ({
   id: 'case_old',
-  tenant,
+  appRef,
   subjectExternalId: 'u_5531',
   band: 'standard',
   state: 'open',
@@ -46,7 +46,7 @@ describe('opening a case', () => {
     expect(repo.all()).toEqual([
       {
         id: 'case_new1',
-        tenant,
+        appRef,
         subjectExternalId: 'u_5531',
         band: 'standard',
         state: 'classifying',
@@ -61,7 +61,7 @@ describe('opening a case', () => {
     expect(publisher.events).toEqual([
       {
         type: 'case.opened',
-        tenant,
+        appRef,
         caseId: 'case_new1',
         reportId: 'rpt_1',
         subjectExternalId: 'u_5531',
@@ -86,14 +86,14 @@ describe('opening a case', () => {
     expect((await receiveReport(deps, report())).caseId).toBe('case_new1')
   })
 
-  it.each<[string, TenantRef]>([
-    ['another app', { ...tenant, appId: 'app_b' }],
-    ['test mode', { ...tenant, livemode: false }],
+  it.each<[string, AppRef]>([
+    ['another app', { ...appRef, appId: 'app_b' }],
+    ['test mode', { ...appRef, livemode: false }],
   ])('does not join a case in %s', async (_label, other) => {
-    repo.seed(existing({ tenant: other }))
+    repo.seed(existing({ appRef: other }))
     const result = await receiveReport(deps, report())
     expect(result.caseId).toBe('case_new1')
-    expect(repo.get('case_new1')?.tenant).toEqual(tenant)
+    expect(repo.get('case_new1')?.appRef).toEqual(appRef)
   })
 })
 
@@ -112,7 +112,7 @@ describe('joining a case', () => {
   it('publishes case.report_attached', async () => {
     repo.seed(existing())
     await receiveReport(deps, report())
-    expect(publisher.events).toEqual([{ type: 'case.report_attached', tenant, caseId: 'case_old', reportId: 'rpt_1', occurredAt: new Date(NOW) }])
+    expect(publisher.events).toEqual([{ type: 'case.report_attached', appRef, caseId: 'case_old', reportId: 'rpt_1', occurredAt: new Date(NOW) }])
   })
 
   it('keeps P0 reports apart from ordinary cases, and the other way round', async () => {
@@ -176,9 +176,9 @@ describe('duplicate delivery', () => {
     expect(publisher.events).toHaveLength(1)
   })
 
-  it('treats the same report id in another tenant as a different report', async () => {
+  it('treats the same report id in another appRef as a different report', async () => {
     await receiveReport(deps, report())
-    const other = await receiveReport(deps, report({ tenant: { ...tenant, appId: 'app_b' } }))
+    const other = await receiveReport(deps, report({ appRef: { ...appRef, appId: 'app_b' } }))
     expect(other).toEqual({ caseId: 'case_new2', joinedExistingCase: false, duplicate: false })
   })
 })

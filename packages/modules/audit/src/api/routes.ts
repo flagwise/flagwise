@@ -1,20 +1,20 @@
 // The audit routes: search an app's audit log and verify its hash chain. The edge authenticates
-// and sets the tenant context; these routes authorize from it and call the use cases.
+// and sets the caller; these routes authorize from it and call the use cases.
 
-import { can, FlagwiseError, type FieldError, type TenantContext, type TenantRef } from '@flagwise/kernel'
+import { can, FlagwiseError, type FieldError, type Caller, type AppRef } from '@flagwise/kernel'
 import { Hono } from 'hono'
 import type { AuditPage, AuditQuery, AuditVerification } from '../app/audit-log.ts'
 import type { AuditEntry } from '../domain/chain.ts'
 
 export interface AuditEnv {
-  Variables: { tenant: TenantContext }
+  Variables: { caller: Caller }
 }
 
 export interface AuditRoutesDeps {
-  /** Searches the caller's chain in a tenant transaction. */
-  search(tenant: TenantRef, query: AuditQuery): Promise<AuditPage>
-  /** verifyAuditLog in a tenant transaction. */
-  verify(tenant: TenantRef): Promise<AuditVerification>
+  /** Searches the caller's chain in an app transaction. */
+  search(appRef: AppRef, query: AuditQuery): Promise<AuditPage>
+  /** verifyAuditLog in an app transaction. */
+  verify(appRef: AppRef): Promise<AuditVerification>
 }
 
 const MAX_ID = 128
@@ -39,20 +39,20 @@ export function auditRoutes(deps: AuditRoutesDeps): Hono<AuditEnv> {
   const routes = new Hono<AuditEnv>().basePath('/audit')
 
   routes.get('/verify', async (c) => {
-    const result = await deps.verify(reader(c.get('tenant')))
+    const result = await deps.verify(reader(c.get('caller')))
     return c.json({ object: 'audit_verification', ...result })
   })
 
   routes.get('/entries', async (c) => {
-    const tenant = reader(c.get('tenant'))
-    const page = await deps.search(tenant, auditQuery(c.req.query()))
+    const appRef = reader(c.get('caller'))
+    const page = await deps.search(appRef, auditQuery(c.req.query()))
     return c.json({ object: 'list', data: page.data.map(entryBody), next_cursor: page.nextAfterSeq === null ? null : String(page.nextAfterSeq) })
   })
 
   return routes
 }
 
-function reader(ctx: TenantContext): TenantRef {
+function reader(ctx: Caller): AppRef {
   if (!ctx.appId || !can(ctx, { action: 'audit.read', appId: ctx.appId })) throw new FlagwiseError('forbidden', 'This API key does not have the admin scope')
   return { appId: ctx.appId, livemode: ctx.livemode }
 }

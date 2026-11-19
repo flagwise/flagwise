@@ -16,7 +16,7 @@ CREATE TABLE triage.policy_copies (
 );
 
 ALTER TABLE triage.policy_copies ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON triage.policy_copies TO {{app}}
+CREATE POLICY app ON triage.policy_copies TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 

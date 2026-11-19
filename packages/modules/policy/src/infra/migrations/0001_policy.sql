@@ -22,7 +22,7 @@ CREATE TABLE policy.heads (
 );
 
 ALTER TABLE policy.heads ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON policy.heads TO {{app}}
+CREATE POLICY app ON policy.heads TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 

@@ -1,7 +1,7 @@
 // Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
 import { DEFAULT_POLICY } from '@flagwise/contracts'
-import { manualClock, type ManualClock, type TenantRef } from '@flagwise/kernel'
-import { createDatabase, migrate, withSystem, withTenant, type Database } from '@flagwise/platform'
+import { manualClock, type ManualClock, type AppRef } from '@flagwise/kernel'
+import { createDatabase, migrate, withSystem, withApps, type Database } from '@flagwise/platform'
 import { createTestDatabase, schemaDrift, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { createApp, pgTenancyStore, tenancyMigrations } from '@flagwise/tenancy'
 import { sql } from 'drizzle-orm'
@@ -21,13 +21,13 @@ import {
   type PolicyEvent,
 } from '../src/index.ts'
 
-const A: TenantRef = { appId: 'app_a', livemode: true }
+const A: AppRef = { appId: 'app_a', livemode: true }
 
 /** Creates app A and app B. */
 async function seedApps(db: Database, clock: ManualClock) {
   let n = 0
   const asApp = (appId: string, fn: (d: Parameters<typeof createApp>[0]) => Promise<void>) =>
-    withTenant(db, { appIds: [appId], livemode: true }, (tx) => fn({ store: pgTenancyStore(tx), clock, newId: (p: string) => `${p}_${++n}` }))
+    withApps(db, { appIds: [appId], livemode: true }, (tx) => fn({ store: pgTenancyStore(tx), clock, newId: (p: string) => `${p}_${++n}` }))
   await asApp('app_a', async (d) => {
     await createApp(d, { id: 'app_a', name: 'Jane Doe Dating iOS' })
   })
@@ -51,9 +51,9 @@ describe.skipIf(!testDatabaseUrl)('the policy on Postgres', () => {
   let clock: ManualClock
   const published: PolicyEvent[] = []
   const events = { publish: async (e: PolicyEvent) => void published.push(e) }
-  /** The policy use cases' deps in a tenant transaction of app A in one mode. */
-  const inApp = <R>(livemode: boolean, fn: (tenant: TenantRef, deps: PolicyDeps) => Promise<R>, appIds = ['app_a']) =>
-    withTenant(db, { appIds, livemode }, (tx) => fn({ ...A, livemode }, { stores: pgPolicyStores(tx), clock, events }))
+  /** The policy use cases' deps in an app transaction of app A in one mode. */
+  const inApp = <R>(livemode: boolean, fn: (appRef: AppRef, deps: PolicyDeps) => Promise<R>, appIds = ['app_a']) =>
+    withApps(db, { appIds, livemode }, (tx) => fn({ ...A, livemode }, { stores: pgPolicyStores(tx), clock, events }))
 
   beforeAll(async () => {
     t = await createTestDatabase()
@@ -74,62 +74,62 @@ describe.skipIf(!testDatabaseUrl)('the policy on Postgres', () => {
   describe('action keys', () => {
     it('replaces the list in its order, keeps removed keys out of it, and brings a key back with its new definition', async () => {
       published.length = 0
-      const first = await inApp(true, (tenant, deps) => replaceActionKeys(deps, tenant, keysOf([suspend, unsuspend, warn])))
-      expect(published.filter((e) => e.type === 'config.action_keys_replaced')).toEqual([{ type: 'config.action_keys_replaced', tenant: A, appId: 'app_a', before: [], after: first, occurredAt: clock.now() }])
+      const first = await inApp(true, (appRef, deps) => replaceActionKeys(deps, appRef, keysOf([suspend, unsuspend, warn])))
+      expect(published.filter((e) => e.type === 'config.action_keys_replaced')).toEqual([{ type: 'config.action_keys_replaced', appRef: A, appId: 'app_a', before: [], after: first, occurredAt: clock.now() }])
       // The same list again changes nothing and publishes nothing.
-      await inApp(true, (tenant, deps) => replaceActionKeys(deps, tenant, keysOf([suspend, unsuspend, warn])))
+      await inApp(true, (appRef, deps) => replaceActionKeys(deps, appRef, keysOf([suspend, unsuspend, warn])))
       expect(published).toHaveLength(2)
       expect(first.map((k) => k.key)).toEqual(['suspend_7d', 'unsuspend', 'warn'])
       expect(first[0]).toEqual({ key: 'suspend_7d', label: { en: 'Suspend 7 days', id: 'Tangguhkan 7 hari' }, description: 'Blocks sign-in', reverseKey: 'unsuspend', autoAllowed: false, categories: ['scams_fraud'] })
 
       clock.advance(60_000)
-      await inApp(true, (tenant, deps) => replaceActionKeys(deps, tenant, keysOf([warn])))
-      expect((await inApp(true, (tenant, deps) => listActionKeys(deps.stores, tenant))).map((k) => k.key)).toEqual(['warn'])
+      await inApp(true, (appRef, deps) => replaceActionKeys(deps, appRef, keysOf([warn])))
+      expect((await inApp(true, (appRef, deps) => listActionKeys(deps.stores, appRef))).map((k) => k.key)).toEqual(['warn'])
       // The removed keys keep their rows.
-      const rows = await withTenant(db, { appIds: ['app_a'], livemode: true }, (tx) => tx.execute(sql`SELECT key, removed_at IS NOT NULL AS removed FROM policy.action_keys ORDER BY key`))
+      const rows = await withApps(db, { appIds: ['app_a'], livemode: true }, (tx) => tx.execute(sql`SELECT key, removed_at IS NOT NULL AS removed FROM policy.action_keys ORDER BY key`))
       expect(rows.rows).toEqual([
         { key: 'suspend_7d', removed: true },
         { key: 'unsuspend', removed: true },
         { key: 'warn', removed: false },
       ])
 
-      const back = await inApp(true, (tenant, deps) => replaceActionKeys(deps, tenant, keysOf([{ ...warn, label: { en: 'Send a warning' } }, { ...suspend, categories: ['*'] }, unsuspend])))
+      const back = await inApp(true, (appRef, deps) => replaceActionKeys(deps, appRef, keysOf([{ ...warn, label: { en: 'Send a warning' } }, { ...suspend, categories: ['*'] }, unsuspend])))
       expect(back.map((k) => [k.key, k.label.en, k.categories])).toEqual([
         ['warn', 'Send a warning', ['*']],
         ['suspend_7d', 'Suspend 7 days', ['*']],
         ['unsuspend', 'Lift suspension', ['*']],
       ])
-      expect(await inApp(true, (tenant, deps) => replaceActionKeys(deps, tenant, []))).toEqual([])
+      expect(await inApp(true, (appRef, deps) => replaceActionKeys(deps, appRef, []))).toEqual([])
     })
 
     it('keeps each mode and app apart', async () => {
-      await inApp(true, (tenant, deps) => replaceActionKeys(deps, tenant, keysOf([warn])))
-      await inApp(false, (tenant, deps) => replaceActionKeys(deps, tenant, keysOf([unsuspend])))
-      expect((await inApp(true, (tenant, deps) => listActionKeys(deps.stores, tenant))).map((k) => k.key)).toEqual(['warn'])
-      expect((await inApp(false, (tenant, deps) => listActionKeys(deps.stores, tenant))).map((k) => k.key)).toEqual(['unsuspend'])
+      await inApp(true, (appRef, deps) => replaceActionKeys(deps, appRef, keysOf([warn])))
+      await inApp(false, (appRef, deps) => replaceActionKeys(deps, appRef, keysOf([unsuspend])))
+      expect((await inApp(true, (appRef, deps) => listActionKeys(deps.stores, appRef))).map((k) => k.key)).toEqual(['warn'])
+      expect((await inApp(false, (appRef, deps) => listActionKeys(deps.stores, appRef))).map((k) => k.key)).toEqual(['unsuspend'])
       // A transaction scoped to another app sees none of them, even asking by id, and cannot write them.
-      expect(await inApp(true, (tenant, deps) => listActionKeys(deps.stores, tenant), ['app_other'])).toEqual([])
-      expect(await withTenant(db, { appIds: ['app_b'], livemode: true }, (tx) => pgActionKeyStore(tx).list(A))).toEqual([])
-      await expect(withTenant(db, { appIds: ['app_b'], livemode: true }, (tx) => pgActionKeyStore(tx).replace(A, keysOf([warn]), clock.now()))).rejects.toThrow()
+      expect(await inApp(true, (appRef, deps) => listActionKeys(deps.stores, appRef), ['app_other'])).toEqual([])
+      expect(await withApps(db, { appIds: ['app_b'], livemode: true }, (tx) => pgActionKeyStore(tx).list(A))).toEqual([])
+      await expect(withApps(db, { appIds: ['app_b'], livemode: true }, (tx) => pgActionKeyStore(tx).replace(A, keysOf([warn]), clock.now()))).rejects.toThrow()
     })
   })
 
   describe('versions', () => {
     it('counts each change of the policy, per mode, and stores the whole policy as the head', async () => {
       published.length = 0
-      const before = await inApp(true, (tenant, deps) => deps.stores.heads.lock(tenant))
-      await inApp(true, (tenant, deps) => replaceActionKeys(deps, tenant, keysOf([suspend, unsuspend])))
-      const head = await inApp(true, (tenant, deps) => deps.stores.heads.lock(tenant))
+      const before = await inApp(true, (appRef, deps) => deps.stores.heads.lock(appRef))
+      await inApp(true, (appRef, deps) => replaceActionKeys(deps, appRef, keysOf([suspend, unsuspend])))
+      const head = await inApp(true, (appRef, deps) => deps.stores.heads.lock(appRef))
       expect(head?.version).toBe(before!.version + 1)
-      expect(published.find((e) => e.type === 'policy.updated')).toEqual({ type: 'policy.updated', tenant: A, appId: 'app_a', version: head!.version, policy: head!.policy, occurredAt: clock.now() })
+      expect(published.find((e) => e.type === 'policy.updated')).toEqual({ type: 'policy.updated', appRef: A, appId: 'app_a', version: head!.version, policy: head!.policy, occurredAt: clock.now() })
       expect(head!.policy.actionKeys.map((k) => k.key)).toEqual(['suspend_7d', 'unsuspend'])
       // The test mode has its own count.
-      expect((await inApp(false, (tenant, deps) => deps.stores.heads.lock(tenant)))?.version).toBe(1)
+      expect((await inApp(false, (appRef, deps) => deps.stores.heads.lock(appRef)))?.version).toBe(1)
     })
 
     it('gives every one of several concurrent changes its own version, the last holding all of them', async () => {
       published.length = 0
-      const start = (await inApp(true, (tenant, deps) => deps.stores.heads.lock(tenant)))!.version
+      const start = (await inApp(true, (appRef, deps) => deps.stores.heads.lock(appRef)))!.version
       const policy = pgPolicy(db, { clock, events: () => events })
       await Promise.all([
         policy.replaceCategories(A, PRESETS.community),
@@ -138,7 +138,7 @@ describe.skipIf(!testDatabaseUrl)('the policy on Postgres', () => {
       ])
       const versions = published.flatMap((e) => (e.type === 'policy.updated' ? [e.version] : [])).sort((a, b) => a - b)
       expect(versions).toEqual([start + 1, start + 2, start + 3])
-      const head = await inApp(true, (tenant, deps) => deps.stores.heads.lock(tenant))
+      const head = await inApp(true, (appRef, deps) => deps.stores.heads.lock(appRef))
       expect(head).toEqual({ version: start + 3, policy: { categories: PRESETS.community, actionKeys: keysOf([warn]), llm: { rulesOnly: true, fallbackToRules: false } } })
     })
   })
@@ -161,7 +161,7 @@ describe.skipIf(!testDatabaseUrl)('upgrading to the policy service', () => {
     await migrate(t.ownerUrl, [tenancyMigrations], t.roles)
     await seedApps(db, manualClock('2026-11-18T09:00:00Z'))
     // What a release before the policy service stored, through the app role.
-    await withTenant(db, { appIds: ['app_a'], livemode: true }, async (tx) => {
+    await withApps(db, { appIds: ['app_a'], livemode: true }, async (tx) => {
       await tx.execute(sql`INSERT INTO tenancy.categories (app_id, livemode, key, position, label_en, label_id, maps_to, severity, sla_hours, enabled, updated_at, removed_at) VALUES
         ('app_a', true, 'scam', 1, 'Scam', 'Penipuan', '{scams_fraud}', NULL, NULL, true, now(), NULL),
         ('app_a', true, 'fake_sugar_daddy', 0, 'Fake sugar daddy', NULL, '{scams_fraud.romance_scam}', 'P1', 12, false, now(), NULL),
@@ -169,13 +169,13 @@ describe.skipIf(!testDatabaseUrl)('upgrading to the policy service', () => {
       await tx.execute(sql`INSERT INTO tenancy.action_keys (app_id, livemode, key, position, label_en, label_id, description, reverse_key, auto_allowed, categories, updated_at, removed_at) VALUES
         ('app_a', true, 'warn', 0, 'Warn', NULL, 'A warning', NULL, false, '{*}', now(), NULL)`)
     })
-    await withTenant(db, { appIds: ['app_b'], livemode: false }, (tx) =>
+    await withApps(db, { appIds: ['app_b'], livemode: false }, (tx) =>
       tx.execute(sql`INSERT INTO tenancy.llm_settings (app_id, livemode, rules_only, fallback_to_rules, updated_at) VALUES ('app_b', false, true, false, now())`),
     )
 
     expect(await migrate(t.ownerUrl, [tenancyMigrations, policyMigrations], t.roles)).toEqual(['policy/0001_policy'])
 
-    const headOf = (tenant: TenantRef) => withTenant(db, { appIds: [tenant.appId], livemode: tenant.livemode }, (tx) => pgPolicyStores(tx).heads.lock(tenant))
+    const headOf = (appRef: AppRef) => withApps(db, { appIds: [appRef.appId], livemode: appRef.livemode }, (tx) => pgPolicyStores(tx).heads.lock(appRef))
     expect(await headOf(A)).toEqual({
       version: 1,
       policy: {
@@ -191,7 +191,7 @@ describe.skipIf(!testDatabaseUrl)('upgrading to the policy service', () => {
     // An app that set nothing has no version yet.
     expect(await headOf({ appId: 'app_b', livemode: true })).toBeNull()
     // The moved config reads as before, through the policy's stores.
-    expect((await withTenant(db, { appIds: ['app_a'], livemode: true }, (tx) => pgActionKeyStore(tx).list(A))).map((k) => k.key)).toEqual(['warn'])
+    expect((await withApps(db, { appIds: ['app_a'], livemode: true }, (tx) => pgActionKeyStore(tx).list(A))).map((k) => k.key)).toEqual(['warn'])
 
     // Row-level security is forced again on every table.
     const { rows } = await withSystem(db, (tx) =>

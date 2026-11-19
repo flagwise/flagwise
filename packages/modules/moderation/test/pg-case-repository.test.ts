@@ -1,6 +1,6 @@
 // Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
-import { manualClock, type TenantRef } from '@flagwise/kernel'
-import { createDatabase, migrate, withTenant, type Database, type TenantScope } from '@flagwise/platform'
+import { manualClock, type AppRef } from '@flagwise/kernel'
+import { createDatabase, migrate, withApps, type Database, type AppScope } from '@flagwise/platform'
 import { createTestDatabase, schemaDrift, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
@@ -16,14 +16,14 @@ import {
 } from '../src/index.ts'
 import { RecordingPublisher } from './fakes.ts'
 
-const A: TenantRef = { appId: 'app_a', livemode: true }
-const B: TenantRef = { appId: 'app_b', livemode: true }
-const scope = (t: TenantRef): TenantScope => ({ appIds: [t.appId], livemode: t.livemode })
+const A: AppRef = { appId: 'app_a', livemode: true }
+const B: AppRef = { appId: 'app_b', livemode: true }
+const scope = (t: AppRef): AppScope => ({ appIds: [t.appId], livemode: t.livemode })
 const T0 = new Date('2026-11-03T09:00:00.000Z')
 
 const base = (over: Partial<CaseRecord> = {}): CaseRecord => ({
   id: 'case_1',
-  tenant: A,
+  appRef: A,
   subjectExternalId: 'u_jane_doe',
   band: 'standard',
   state: 'classifying',
@@ -54,7 +54,7 @@ const full = (): CaseRecord =>
 describe.skipIf(!testDatabaseUrl)('pgCaseRepository', () => {
   let t: TestDatabase
   let db: Database
-  const inTx = <R>(tenant: TenantRef, fn: (repo: CaseRepository) => Promise<R>) => withTenant(db, scope(tenant), (tx) => fn(pgCaseRepository(tx)))
+  const inTx = <R>(appRef: AppRef, fn: (repo: CaseRepository) => Promise<R>) => withApps(db, scope(appRef), (tx) => fn(pgCaseRepository(tx)))
 
   beforeAll(async () => {
     t = await createTestDatabase()
@@ -85,10 +85,10 @@ describe.skipIf(!testDatabaseUrl)('pgCaseRepository', () => {
     expect(await inTx(A, (r) => r.findByReportId(A, 'rpt_none'))).toBeNull()
   })
 
-  it('keeps tenants apart, through the filters and through row-level security alone', async () => {
+  it('keeps appRefs apart, through the filters and through row-level security alone', async () => {
     expect(await inTx(B, (r) => r.findById(B, 'case_1'))).toBeNull()
     expect(await inTx(B, (r) => r.findBySubject(B, 'u_jane_doe'))).toEqual([])
-    // Asking for tenant A inside a transaction scoped to B: row-level security still hides it.
+    // Asking for app A inside a transaction scoped to app B: row-level security still hides it.
     expect(await inTx(B, (r) => r.findById(A, 'case_1'))).toBeNull()
     await expect(inTx(B, (r) => r.insert(base({ id: 'case_x', reportIds: ['rpt_x'] })))).rejects.toThrow()
   })
@@ -174,7 +174,7 @@ describe.skipIf(!testDatabaseUrl)('pgCaseRepository', () => {
       },
     })
     const deps = (repo: CaseRepository) => ({ cases: racing(repo), events: new RecordingPublisher(), clock: manualClock('2026-11-04T09:00:00Z'), newCaseId: () => `case_p${++n}` })
-    const report = (reportId: string) => ({ tenant: A, reportId, subjectExternalId: 'u_jane_doe_2', p0Signal: false })
+    const report = (reportId: string) => ({ appRef: A, reportId, subjectExternalId: 'u_jane_doe_2', p0Signal: false })
     const results = await Promise.all(['rpt_p1', 'rpt_p2', 'rpt_p3'].map((id) => inTx(A, (r) => receiveReport(deps(r), report(id)))))
     expect(results.filter((r) => !r.joinedExistingCase)).toHaveLength(1)
     const opened = await inTx(A, (r) => r.findBySubject(A, 'u_jane_doe_2'))
@@ -194,7 +194,7 @@ describe.skipIf(!testDatabaseUrl)('pgCaseRepository', () => {
       newDecisionId: () => `dec_u${n}`,
       catalog: { allowedActionKeys: async () => ['warn', 'suspend_7d'] },
     })
-    const report = (reportId: string) => ({ tenant: A, reportId, subjectExternalId: 'u_john_doe', p0Signal: false })
+    const report = (reportId: string) => ({ appRef: A, reportId, subjectExternalId: 'u_john_doe', p0Signal: false })
 
     const first = await inTx(A, (r) => receiveReport(deps(r), report('rpt_u1')))
     expect(first).toEqual({ caseId: 'case_u1', joinedExistingCase: false, duplicate: false })
@@ -205,9 +205,9 @@ describe.skipIf(!testDatabaseUrl)('pgCaseRepository', () => {
     expect([...opened.reportIds].sort()).toEqual(['rpt_u1', 'rpt_u2', 'rpt_u3'])
 
     await inTx(A, (r) => r.change(A, 'case_u1', { states: ['classifying'] }, { state: 'open' }))
-    await inTx(A, (r) => claimCase(deps(r), { tenant: A, caseId: 'case_u1', memberId: 'mem_jane' }))
+    await inTx(A, (r) => claimCase(deps(r), { appRef: A, caseId: 'case_u1', memberId: 'mem_jane' }))
     const decision = await inTx(A, (r) =>
-      decideCase(deps(r), { tenant: A, caseId: 'case_u1', memberId: 'mem_jane', outcome: 'violation', categoryId: 'scams_fraud.romance_scam', severity: 'P1', actionKeys: ['warn'] }),
+      decideCase(deps(r), { appRef: A, caseId: 'case_u1', memberId: 'mem_jane', outcome: 'violation', categoryId: 'scams_fraud.romance_scam', severity: 'P1', actionKeys: ['warn'] }),
     )
     expect(await inTx(A, (r) => r.findById(A, 'case_u1'))).toMatchObject({ state: 'decided', claim: null, decision })
     expect(events.events.map((e) => e.type)).toEqual([
@@ -223,8 +223,8 @@ describe.skipIf(!testDatabaseUrl)('pgCaseRepository', () => {
 describe.skipIf(!testDatabaseUrl)('pgCaseRepository queue', () => {
   let t: TestDatabase
   let db: Database
-  const inTx = <R>(tenant: TenantRef, fn: (repo: ReturnType<typeof pgCaseRepository>) => Promise<R>) =>
-    withTenant(db, scope(tenant), (tx) => fn(pgCaseRepository(tx)))
+  const inTx = <R>(appRef: AppRef, fn: (repo: ReturnType<typeof pgCaseRepository>) => Promise<R>) =>
+    withApps(db, scope(appRef), (tx) => fn(pgCaseRepository(tx)))
   const NOW = new Date(T0.getTime() + 3 * 3_600_000)
   const triaged = (id: string, priority: number, dueInHours: number, over: Partial<CaseRecord> = {}): CaseRecord =>
     base({
@@ -250,7 +250,7 @@ describe.skipIf(!testDatabaseUrl)('pgCaseRepository queue', () => {
       await repo.insert(base({ id: 'case_classifying', state: 'classifying', reportIds: ['rpt_c'] }))
       await repo.insert(triaged('case_closed', 5000, 1, { state: 'closed' }))
     })
-    await inTx(B, (repo) => repo.insert(triaged('case_other_app', 9000, 1, { tenant: B })))
+    await inTx(B, (repo) => repo.insert(triaged('case_other_app', 9000, 1, { appRef: B })))
   })
   afterAll(async () => {
     await db?.close()
@@ -263,7 +263,7 @@ describe.skipIf(!testDatabaseUrl)('pgCaseRepository queue', () => {
     expect(await inTx(A, (repo) => repo.findById(A, 'case_untriaged'))).not.toHaveProperty('classification')
   })
 
-  it('lists the queue states by default, most urgent first, untriaged last, only for the tenant', async () => {
+  it('lists the queue states by default, most urgent first, untriaged last, only for the appRef', async () => {
     expect(ids(await inTx(A, (repo) => repo.list(A, { now: NOW })))).toEqual(['case_p0', 'case_p2_soon', 'case_claimed', 'case_p2_late', 'case_untriaged'])
   })
 
@@ -296,8 +296,8 @@ describe.skipIf(!testDatabaseUrl)('pgCaseRepository queue', () => {
 describe.skipIf(!testDatabaseUrl)('pgCaseRepository report facts and account history', () => {
   let t: TestDatabase
   let db: Database
-  const inTx = <R>(tenant: TenantRef, fn: (repo: ReturnType<typeof pgCaseRepository>) => Promise<R>) =>
-    withTenant(db, scope(tenant), (tx) => fn(pgCaseRepository(tx)))
+  const inTx = <R>(appRef: AppRef, fn: (repo: ReturnType<typeof pgCaseRepository>) => Promise<R>) =>
+    withApps(db, scope(appRef), (tx) => fn(pgCaseRepository(tx)))
   const at = (hours: number) => new Date(T0.getTime() + hours * 3_600_000)
   const john = (id: string, hours: number, state: CaseRecord['state']): CaseRecord =>
     base({ id, subjectExternalId: 'u_john_doe', state, reportIds: [`rpt_${id}`], openedAt: at(hours) })
@@ -313,7 +313,7 @@ describe.skipIf(!testDatabaseUrl)('pgCaseRepository report facts and account his
       await repo.insert(john('case_j3b', 2, 'decided'))
       await repo.insert(base({ id: 'case_jane', reportIds: ['rpt_jane'], openedAt: at(5), state: 'open' }))
     })
-    await inTx(B, (repo) => repo.insert({ ...john('case_j_other_app', 9, 'open'), tenant: B }))
+    await inTx(B, (repo) => repo.insert({ ...john('case_j_other_app', 9, 'open'), appRef: B }))
   })
   afterAll(async () => {
     await db?.close()
@@ -350,7 +350,7 @@ describe.skipIf(!testDatabaseUrl)('pgCaseRepository report facts and account his
 describe.skipIf(!testDatabaseUrl)('pgCaseRepository erasure', () => {
   let t: TestDatabase
   let db: Database
-  const inTx = <R>(tenant: TenantRef, fn: (repo: CaseRepository) => Promise<R>) => withTenant(db, scope(tenant), (tx) => fn(pgCaseRepository(tx)))
+  const inTx = <R>(appRef: AppRef, fn: (repo: CaseRepository) => Promise<R>) => withApps(db, scope(appRef), (tx) => fn(pgCaseRepository(tx)))
 
   beforeAll(async () => {
     t = await createTestDatabase()
@@ -367,7 +367,7 @@ describe.skipIf(!testDatabaseUrl)('pgCaseRepository erasure', () => {
       await repo.insert({ ...full(), subjectExternalId: 'u_john_doe' })
       await repo.insert(base({ id: 'case_other', subjectExternalId: 'u_jim_doe', reportIds: ['rpt_o1'] }))
     })
-    await inTx(B, (repo) => repo.insert(base({ id: 'case_b', tenant: B, subjectExternalId: 'u_john_doe', reportIds: ['rpt_b1'] })))
+    await inTx(B, (repo) => repo.insert(base({ id: 'case_b', appRef: B, subjectExternalId: 'u_john_doe', reportIds: ['rpt_b1'] })))
     expect(await inTx(A, (repo) => repo.eraseAccount(A, 'u_john_doe', 'erased_ers_1'))).toBe(1)
     const erased = await inTx(A, (repo) => repo.findById(A, 'case_full'))
     expect(erased).toMatchObject({ subjectExternalId: 'erased_ers_1', state: 'decided', decision: { id: 'dec_1', categoryId: 'scams_fraud.romance_scam', severity: 'P1' } })

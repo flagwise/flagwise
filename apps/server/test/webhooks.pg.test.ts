@@ -6,7 +6,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pgActionRequestStore, verify } from '@flagwise/delivery'
-import { newKeyringEntry, scopeOfRef, withTenant } from '@flagwise/platform'
+import { newKeyringEntry, scopeOfApp, withApps } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
@@ -64,7 +64,7 @@ describe.skipIf(!testDatabaseUrl)('webhooks on the server', () => {
   let secret: string
   let endpointId: string
   const json = async (res: Response) => (await res.json()) as Record<string, any>
-  const tenant = () => ({ appId: installed.app.id, livemode: true })
+  const appRef = () => ({ appId: installed.app.id, livemode: true })
   const call = (key: string, path: string, init: { method?: string; body?: unknown } = {}) =>
     server.app.http.request(`/v1${path}`, {
       method: init.method ?? 'GET',
@@ -83,7 +83,7 @@ describe.skipIf(!testDatabaseUrl)('webhooks on the server', () => {
     await migrateFromEnv({ DATABASE_OWNER_URL: t.ownerUrl, DATABASE_APP_URL: `postgres://${t.roles.app}@x/x`, DATABASE_SYSTEM_URL: `postgres://${t.roles.system}@x/x` })
     config = await serverConfigFromEnv(env)
     installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' })
-    const added = await addWebhookEndpoint(config, tenant(), { url: 'https://hooks.janedoe.example/flagwise' })
+    const added = await addWebhookEndpoint(config, appRef(), { url: 'https://hooks.janedoe.example/flagwise' })
     secret = added.secret!
     endpointId = added.endpoint.id
     received = []
@@ -115,11 +115,11 @@ describe.skipIf(!testDatabaseUrl)('webhooks on the server', () => {
     expect(hook.headers['webhook-id']).toBe(body.id)
   })
 
-  it('lets the tenant read, confirm and fail action requests with an actions key only', async () => {
-    const ref = tenant()
-    await withTenant(server.db, scopeOfRef(ref), async (tx) => {
+  it('lets the appRef read, confirm and fail action requests with an actions key only', async () => {
+    const ref = appRef()
+    await withApps(server.db, scopeOfApp(ref), async (tx) => {
       const store = pgActionRequestStore(tx)
-      for (const id of ['acr_a', 'acr_b']) await store.insert({ id, tenant: ref, caseId: 'case_x', decisionId: 'dec_x', actionKey: 'suspend_7d', status: 'pending', failReason: null, retryId: null, replacedBy: null })
+      for (const id of ['acr_a', 'acr_b']) await store.insert({ id, appRef: ref, caseId: 'case_x', decisionId: 'dec_x', actionKey: 'suspend_7d', status: 'pending', failReason: null, retryId: null, replacedBy: null })
     })
     const admin = await createKey(config, { ...ref, scopes: ['admin'] })
     expect((await call(admin.key, '/delivery/action-requests/acr_a')).status).toBe(403)
@@ -141,7 +141,7 @@ describe.skipIf(!testDatabaseUrl)('webhooks on the server', () => {
   })
 
   it('takes registered action keys through a decision to a signed action.requested, then to actioned once confirmed', async () => {
-    const admin = await createKey(config, { ...tenant(), scopes: ['admin'] })
+    const admin = await createKey(config, { ...appRef(), scopes: ['admin'] })
     const actions = {
       data: [
         { key: 'warn', label: { en: 'Warn' }, categories: ['*'] },
@@ -161,7 +161,7 @@ describe.skipIf(!testDatabaseUrl)('webhooks on the server', () => {
     expect(listed).toEqual(await json(put))
     expect(listed.data[1]).toEqual({ object: 'action_key', key: 'suspend_7d', label: { en: 'Suspend 7 days', id: 'Tangguhkan 7 hari' }, description: null, reverse_key: 'unsuspend', auto_allowed: false, categories: ['scams_fraud'] })
     // Test mode has its own list.
-    const testAdmin = await createKey(config, { ...tenant(), livemode: false, scopes: ['admin'] })
+    const testAdmin = await createKey(config, { ...appRef(), livemode: false, scopes: ['admin'] })
     expect((await json(await call(testAdmin.key, '/policy/action-keys'))).data).toEqual([])
 
     const report = await call(installed.liveKey, '/flagging/reports', {
@@ -234,17 +234,17 @@ describe.skipIf(!testDatabaseUrl)('webhooks on the server', () => {
   })
 
   it('lists and removes endpoints, rolls the signing secret, and rewraps under a new master key', async () => {
-    expect((await listWebhookEndpoints(config, tenant())).map((e) => e.id)).toEqual([endpointId])
-    const rolled = await rollWebhookSecret(config, tenant(), 0)
+    expect((await listWebhookEndpoints(config, appRef())).map((e) => e.id)).toEqual([endpointId])
+    const rolled = await rollWebhookSecret(config, appRef(), 0)
     expect(rolled.version).toBe(2)
 
     const rotated = await serverConfigFromEnv({ ...env, SECRETS_ENCRYPTION_KEY: `${K2},${K1}` })
     expect(await rewrapSecrets(rotated)).toBe(2)
     expect(await rewrapSecrets(rotated)).toBe(0)
-    await expect(addWebhookEndpoint({ ...config, secrets: null }, tenant(), { url: 'https://hooks.janedoe.example/b' })).rejects.toThrow('Set SECRETS_ENCRYPTION_KEY')
+    await expect(addWebhookEndpoint({ ...config, secrets: null }, appRef(), { url: 'https://hooks.janedoe.example/b' })).rejects.toThrow('Set SECRETS_ENCRYPTION_KEY')
 
-    await removeWebhookEndpoint(config, tenant(), endpointId)
-    expect(await listWebhookEndpoints(config, tenant())).toEqual([])
-    await expect(removeWebhookEndpoint(config, tenant(), endpointId)).rejects.toThrow(/No webhook endpoint/)
+    await removeWebhookEndpoint(config, appRef(), endpointId)
+    expect(await listWebhookEndpoints(config, appRef())).toEqual([])
+    await expect(removeWebhookEndpoint(config, appRef(), endpointId)).rejects.toThrow(/No webhook endpoint/)
   })
 })

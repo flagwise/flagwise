@@ -1,19 +1,19 @@
-// Sending webhook deliveries: lease the due ones across tenants, sign each with the app's current
+// Sending webhook deliveries: lease the due ones across appRefs, sign each with the app's current
 // secrets, post it, and record the attempt with the retry schedule (domain/retry.ts).
 
-import type { Clock, TenantRef } from '@flagwise/kernel'
+import type { Clock, AppRef } from '@flagwise/kernel'
 import { isDelivered, nextAttemptAt } from '../domain/retry.ts'
 import { signatureHeaders } from '../domain/webhook-signature.ts'
 import { signingSecrets, type SecretSealer, type WebhookStore } from './webhooks.ts'
 
-/** A delivery the sender has leased: which tenant, event and endpoint. */
+/** A delivery the sender has leased: which app, event and endpoint. */
 export interface DueDelivery {
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly eventId: string
   readonly endpointId: string
 }
 
-/** Across tenants: finds due deliveries and leases them, so two senders never send one at once. */
+/** Across appRefs: finds due deliveries and leases them, so two senders never send one at once. */
 export interface WebhookOutbox {
   /**
    * Leases up to `limit` pending deliveries due at `now` that no sender holds (or whose lease ran
@@ -22,16 +22,16 @@ export interface WebhookOutbox {
   leaseDue(now: Date, options: { readonly limit: number; readonly leaseMs: number; readonly perEndpoint: number }): Promise<readonly DueDelivery[]>
 }
 
-/** What sending one leased delivery reads and writes, in the delivery's tenant. */
+/** What sending one leased delivery reads and writes, in the delivery's app. */
 export interface SendStore extends Pick<WebhookStore, 'secrets'> {
   /** The delivery while still pending, with what sending it needs; null otherwise. */
-  pendingDelivery(tenant: TenantRef, eventId: string, endpointId: string): Promise<PendingDelivery | null>
+  pendingDelivery(appRef: AppRef, eventId: string, endpointId: string): Promise<PendingDelivery | null>
   /**
    * Records attempt number `attempt.number` and moves the delivery on, only while it still has
    * `attempt.number - 1` attempts (else another sender recorded it first, and nothing changes):
    * delivered, failed (no next attempt), or pending until `nextAt`. Clears the lease.
    */
-  recordAttempt(tenant: TenantRef, eventId: string, endpointId: string, attempt: RecordedAttempt): Promise<void>
+  recordAttempt(appRef: AppRef, eventId: string, endpointId: string, attempt: RecordedAttempt): Promise<void>
 }
 
 export interface PendingDelivery {
@@ -60,8 +60,8 @@ export interface PostResult {
 
 export interface SenderDeps {
   readonly outbox: WebhookOutbox
-  /** Runs `fn` in a transaction of the tenant. */
-  inTenant<T>(tenant: TenantRef, fn: (store: SendStore) => Promise<T>): Promise<T>
+  /** Runs `fn` in a transaction of the app. */
+  inApp<T>(appRef: AppRef, fn: (store: SendStore) => Promise<T>): Promise<T>
   readonly sealer: SecretSealer
   readonly clock: Clock
   /** Posts `body` with `headers`; must give up after `timeoutMs` and not follow redirects. */
@@ -98,18 +98,18 @@ export async function sendDueWebhooks(deps: SenderDeps, options: SendOptions = {
 }
 
 async function sendOne(deps: SenderDeps, due: DueDelivery, timeoutMs: number): Promise<boolean> {
-  const { tenant, eventId, endpointId } = due
+  const { appRef, eventId, endpointId } = due
   const start = deps.clock.now()
-  const prepared = await deps.inTenant(tenant, async (store) => {
-    const delivery = await store.pendingDelivery(tenant, eventId, endpointId)
+  const prepared = await deps.inApp(appRef, async (store) => {
+    const delivery = await store.pendingDelivery(appRef, eventId, endpointId)
     if (!delivery) return null
-    const secrets = delivery.url === null ? [] : await signingSecrets(store, deps.sealer, tenant, start)
+    const secrets = delivery.url === null ? [] : await signingSecrets(store, deps.sealer, appRef, start)
     return { delivery, secrets }
   })
   if (!prepared) return false
   const { delivery, secrets } = prepared
   const number = delivery.attempts + 1
-  const record = (attempt: Omit<RecordedAttempt, 'number'>) => deps.inTenant(tenant, (store) => store.recordAttempt(tenant, eventId, endpointId, { number, ...attempt }))
+  const record = (attempt: Omit<RecordedAttempt, 'number'>) => deps.inApp(appRef, (store) => store.recordAttempt(appRef, eventId, endpointId, { number, ...attempt }))
 
   if (delivery.url === null || secrets.length === 0) {
     const error = delivery.url === null ? 'endpoint_removed' : 'no_signing_secret'

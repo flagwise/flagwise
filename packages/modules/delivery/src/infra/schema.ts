@@ -18,14 +18,14 @@ export const actionRequestsTable = schema.table('action_requests', {
   replacedBy: text('replaced_by'),
 })
 
-const tenantColumns = () => ({
+const appColumns = () => ({
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
 })
 const at = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' })
 
 export const webhookSecretsTable = schema.table('webhook_secrets', {
-  ...tenantColumns(),
+  ...appColumns(),
   version: integer('version').notNull(),
   sealed: text('sealed').notNull(),
   createdAt: at('created_at').notNull(),
@@ -33,7 +33,7 @@ export const webhookSecretsTable = schema.table('webhook_secrets', {
 })
 
 export const webhookEndpointsTable = schema.table('webhook_endpoints', {
-  ...tenantColumns(),
+  ...appColumns(),
   id: text('id').notNull(),
   url: text('url').notNull(),
   eventTypes: text('event_types').array(),
@@ -41,7 +41,7 @@ export const webhookEndpointsTable = schema.table('webhook_endpoints', {
 })
 
 export const webhookEventsTable = schema.table('webhook_events', {
-  ...tenantColumns(),
+  ...appColumns(),
   id: text('id').notNull(),
   sourceId: text('source_id').notNull(),
   type: text('type').notNull(),
@@ -50,7 +50,7 @@ export const webhookEventsTable = schema.table('webhook_events', {
 })
 
 export const webhookDeliveriesTable = schema.table('webhook_deliveries', {
-  ...tenantColumns(),
+  ...appColumns(),
   eventId: text('event_id').notNull(),
   endpointId: text('endpoint_id').notNull(),
   status: text('status').notNull(),
@@ -62,7 +62,7 @@ export const webhookDeliveriesTable = schema.table('webhook_deliveries', {
 })
 
 export const webhookAttemptsTable = schema.table('webhook_attempts', {
-  ...tenantColumns(),
+  ...appColumns(),
   eventId: text('event_id').notNull(),
   endpointId: text('endpoint_id').notNull(),
   number: integer('number').notNull(),

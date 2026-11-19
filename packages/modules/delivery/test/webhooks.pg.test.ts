@@ -1,6 +1,6 @@
 // Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
-import { FlagwiseError, manualClock, type TenantRef } from '@flagwise/kernel'
-import { createDatabase, migrate, newKeyringEntry, parseKeyring, scopeOfRef, withSystem, withTenant, type Database } from '@flagwise/platform'
+import { FlagwiseError, manualClock, type AppRef } from '@flagwise/kernel'
+import { createDatabase, migrate, newKeyringEntry, parseKeyring, scopeOfApp, withSystem, withApps, type Database } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { sql, type SQL } from 'drizzle-orm'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -48,9 +48,9 @@ interface Posted {
 describe.skipIf(!testDatabaseUrl)('webhooks on Postgres', () => {
   let t: TestDatabase
   let db: Database
-  let tenantN = 0
+  let appN = 0
   let idN = 0
-  let tenant: TenantRef
+  let appRef: AppRef
   const clock = manualClock('2026-11-11T09:00:00Z')
   let sealer = keyringSealer(parseKeyring(K1))
   let posted: Posted[]
@@ -64,15 +64,15 @@ describe.skipIf(!testDatabaseUrl)('webhooks on Postgres', () => {
     newEndpointId: () => `whe_${++idN}`,
     newSecret: () => `whsec_${Buffer.alloc(32, ++idN).toString('base64')}`,
   })
-  const inTenant = <R>(fn: (d: WebhookDeps) => Promise<R>, ref = tenant) => withTenant(db, scopeOfRef(ref), (tx) => fn(deps(pgWebhookStore(tx))))
-  /** Posts of the current tenant, so deliveries left by other tests (the outbox spans tenants) do not count. */
-  const mine = (p: Posted) => (JSON.parse(p.body) as { app_id: string }).app_id === tenant.appId
-  /** One sender round; returns how many of the current tenant's deliveries it posted. */
+  const inApp = <R>(fn: (d: WebhookDeps) => Promise<R>, ref = appRef) => withApps(db, scopeOfApp(ref), (tx) => fn(deps(pgWebhookStore(tx))))
+  /** Posts of the current app, so deliveries left by other tests (the outbox spans apps) do not count. */
+  const mine = (p: Posted) => (JSON.parse(p.body) as { app_id: string }).app_id === appRef.appId
+  /** One sender round; returns how many of the current app's deliveries it posted. */
   const send = async () => {
     const before = posted.filter(mine).length
     await sendDueWebhooks({
       outbox: { leaseDue: (now, o) => withSystem(db, (tx) => pgWebhookOutbox(tx).leaseDue(now, o)) },
-      inTenant: (ref, fn) => withTenant(db, scopeOfRef(ref), (tx) => fn(pgWebhookStore(tx))),
+      inApp: (ref, fn) => withApps(db, scopeOfApp(ref), (tx) => fn(pgWebhookStore(tx))),
       sealer,
       clock,
       post: async (url, req) => {
@@ -83,8 +83,8 @@ describe.skipIf(!testDatabaseUrl)('webhooks on Postgres', () => {
     })
     return posted.filter(mine).length - before
   }
-  /** Rows of a query in the current tenant's transaction, so row-level security lets them through. */
-  const rows = async (query: SQL) => (await withTenant(db, scopeOfRef(tenant), (tx) => tx.execute(query))).rows as Record<string, unknown>[]
+  /** Rows of a query in the current app's transaction, so row-level security lets them through. */
+  const rows = async (query: SQL) => (await withApps(db, scopeOfApp(appRef), (tx) => tx.execute(query))).rows as Record<string, unknown>[]
   const deliveryRow = (eventId: string) => rows(sql`SELECT status, attempts, next_attempt_at FROM delivery.webhook_deliveries WHERE event_id = ${eventId}`)
 
   beforeAll(async () => {
@@ -97,7 +97,7 @@ describe.skipIf(!testDatabaseUrl)('webhooks on Postgres', () => {
     await t?.drop()
   })
   beforeEach(() => {
-    tenant = { appId: `app_${++tenantN}`, livemode: true }
+    appRef = { appId: `app_${++appN}`, livemode: true }
     sealer = keyringSealer(parseKeyring(K1))
     posted = []
     answer = () => ({ status: 200 })
@@ -106,12 +106,12 @@ describe.skipIf(!testDatabaseUrl)('webhooks on Postgres', () => {
 
   describe('endpoints and secrets', () => {
     it('makes the first secret with the first endpoint, once, and stores it sealed', async () => {
-      const first = await inTenant((d) => addEndpoint(d, tenant, { url: 'https://hooks.example.com/flagwise' }))
+      const first = await inApp((d) => addEndpoint(d, appRef, { url: 'https://hooks.example.com/flagwise' }))
       expect(first.secret).toMatch(/^whsec_/)
       expect(first.endpoint.eventTypes).toBeNull()
-      const second = await inTenant((d) => addEndpoint(d, tenant, { url: 'https://hooks.example.com/b', eventTypes: ['action.requested'] }))
+      const second = await inApp((d) => addEndpoint(d, appRef, { url: 'https://hooks.example.com/b', eventTypes: ['action.requested'] }))
       expect(second.secret).toBeUndefined()
-      const stored = await inTenant((d) => d.webhooks.secrets(tenant))
+      const stored = await inApp((d) => d.webhooks.secrets(appRef))
       expect(stored).toHaveLength(1)
       expect(stored[0]!.sealed).toMatch(/^v1\.k1\./)
       expect(stored[0]!.sealed).not.toContain(first.secret!.slice(6))
@@ -119,7 +119,7 @@ describe.skipIf(!testDatabaseUrl)('webhooks on Postgres', () => {
 
     it('refuses bad URLs and event types, and a fourth endpoint', async () => {
       const refused = async (input: Parameters<typeof addEndpoint>[2]) => {
-        const err = await inTenant((d) => addEndpoint(d, tenant, input)).catch((e) => e)
+        const err = await inApp((d) => addEndpoint(d, appRef, input)).catch((e) => e)
         expect(err).toBeInstanceOf(FlagwiseError)
         return (err as FlagwiseError).code
       }
@@ -128,24 +128,24 @@ describe.skipIf(!testDatabaseUrl)('webhooks on Postgres', () => {
       expect(await refused({ url: 'not a url' })).toBe('validation_failed')
       expect(await refused({ url: 'https://hooks.example.com', eventTypes: [] })).toBe('validation_failed')
       expect(await refused({ url: 'https://hooks.example.com', eventTypes: ['case.opened'] })).toBe('validation_failed')
-      for (let i = 0; i < 3; i++) await inTenant((d) => addEndpoint(d, tenant, { url: `https://hooks.example.com/${i}` }))
+      for (let i = 0; i < 3; i++) await inApp((d) => addEndpoint(d, appRef, { url: `https://hooks.example.com/${i}` }))
       expect(await refused({ url: 'https://hooks.example.com/4' })).toBe('conflict')
     })
 
     it('keeps the old secret signing during the overlap of a roll', async () => {
-      const { secret: old } = await inTenant((d) => addEndpoint(d, tenant, { url: 'https://hooks.example.com' }))
-      const rolled = await inTenant((d) => rollSecret(d, tenant, { overlapMs: 3_600_000 }))
+      const { secret: old } = await inApp((d) => addEndpoint(d, appRef, { url: 'https://hooks.example.com' }))
+      const rolled = await inApp((d) => rollSecret(d, appRef, { overlapMs: 3_600_000 }))
       expect(rolled.version).toBe(2)
       expect(rolled.previousExpireAt).toEqual(new Date('2026-11-11T10:00:00Z'))
 
-      await inTenant((d) => enqueueWebhook(d, tenant, { sourceId: 'case.triaged:case_1', event: TRIAGED }))
+      await inApp((d) => enqueueWebhook(d, appRef, { sourceId: 'case.triaged:case_1', event: TRIAGED }))
       expect(await send()).toBe(1)
       const p = posted[0]!
       expect(verify(old!, p.headers, p.body, { clock }).ok).toBe(true)
       expect(verify(rolled.secret, p.headers, p.body, { clock }).ok).toBe(true)
 
       clock.advance(3_600_000)
-      await inTenant((d) => enqueueWebhook(d, tenant, { sourceId: 'case.triaged:case_2', event: { ...TRIAGED, caseId: 'case_2' } }))
+      await inApp((d) => enqueueWebhook(d, appRef, { sourceId: 'case.triaged:case_2', event: { ...TRIAGED, caseId: 'case_2' } }))
       await send()
       const after = posted[1]!
       expect(verify(old!, after.headers, after.body, { clock }).ok).toBe(false)
@@ -153,50 +153,50 @@ describe.skipIf(!testDatabaseUrl)('webhooks on Postgres', () => {
     })
 
     it('refuses an overlap over 7 days', async () => {
-      const err = await inTenant((d) => rollSecret(d, tenant, { overlapMs: 8 * 86_400_000 })).catch((e) => e)
+      const err = await inApp((d) => rollSecret(d, appRef, { overlapMs: 8 * 86_400_000 })).catch((e) => e)
       expect((err as FlagwiseError).code).toBe('validation_failed')
     })
   })
 
   describe('fan-out', () => {
     it('stores one event per internal event and one delivery per endpoint whose filter takes it', async () => {
-      await inTenant((d) => addEndpoint(d, tenant, { url: 'https://hooks.example.com/all' }))
-      await inTenant((d) => addEndpoint(d, tenant, { url: 'https://hooks.example.com/actions', eventTypes: ['action.requested'] }))
+      await inApp((d) => addEndpoint(d, appRef, { url: 'https://hooks.example.com/all' }))
+      await inApp((d) => addEndpoint(d, appRef, { url: 'https://hooks.example.com/actions', eventTypes: ['action.requested'] }))
       const input = { sourceId: 'case.triaged:case_1', event: TRIAGED }
-      expect(await inTenant((d) => enqueueWebhook(d, tenant, input))).toBe(1)
-      expect(await inTenant((d) => enqueueWebhook(d, tenant, input))).toBe(1)
+      expect(await inApp((d) => enqueueWebhook(d, appRef, input))).toBe(1)
+      expect(await inApp((d) => enqueueWebhook(d, appRef, input))).toBe(1)
       expect(await send()).toBe(1)
       const body = JSON.parse(posted[0]!.body)
-      expect(body).toMatchObject({ type: 'report.triaged', app_id: tenant.appId, livemode: true, api_version: '2026-11-01' })
+      expect(body).toMatchObject({ type: 'report.triaged', app_id: appRef.appId, livemode: true, api_version: '2026-11-01' })
       expect(body.data.case_id).toBe('case_1')
       expect(posted[0]!.body).not.toContain('never sent')
       expect(posted[0]!.headers['webhook-id']).toBe(body.id)
     })
 
-    it('stores nothing for an event no endpoint takes, or tenants never see', async () => {
-      await inTenant((d) => addEndpoint(d, tenant, { url: 'https://hooks.example.com', eventTypes: ['action.requested'] }))
-      expect(await inTenant((d) => enqueueWebhook(d, tenant, { sourceId: 'x', event: TRIAGED }))).toBe(0)
-      expect(await inTenant((d) => enqueueWebhook(d, tenant, { sourceId: 'y', event: { type: 'case.opened', caseId: 'case_1' } }))).toBe(0)
+    it('stores nothing for an event no endpoint takes, or appRefs never see', async () => {
+      await inApp((d) => addEndpoint(d, appRef, { url: 'https://hooks.example.com', eventTypes: ['action.requested'] }))
+      expect(await inApp((d) => enqueueWebhook(d, appRef, { sourceId: 'x', event: TRIAGED }))).toBe(0)
+      expect(await inApp((d) => enqueueWebhook(d, appRef, { sourceId: 'y', event: { type: 'case.opened', caseId: 'case_1' } }))).toBe(0)
       expect(await send()).toBe(0)
     })
 
-    it('keeps tenants apart', async () => {
-      const other: TenantRef = { ...tenant, livemode: false }
-      await inTenant((d) => addEndpoint(d, other, { url: 'https://test-hooks.example.com' }), other)
-      expect(await inTenant((d) => enqueueWebhook(d, tenant, { sourceId: 's', event: TRIAGED }))).toBe(0)
-      expect(await inTenant((d) => d.webhooks.endpoints(tenant))).toEqual([])
+    it('keeps appRefs apart', async () => {
+      const other: AppRef = { ...appRef, livemode: false }
+      await inApp((d) => addEndpoint(d, other, { url: 'https://test-hooks.example.com' }), other)
+      expect(await inApp((d) => enqueueWebhook(d, appRef, { sourceId: 's', event: TRIAGED }))).toBe(0)
+      expect(await inApp((d) => d.webhooks.endpoints(appRef))).toEqual([])
     })
   })
 
   describe('sending', () => {
     const enqueue = async (sourceId = 'case.triaged:case_1') => {
-      await inTenant((d) => enqueueWebhook(d, tenant, { sourceId, event: TRIAGED }))
+      await inApp((d) => enqueueWebhook(d, appRef, { sourceId, event: TRIAGED }))
       const [row] = await rows(sql`SELECT id FROM delivery.webhook_events WHERE source_id = ${sourceId}`)
       return row!.id as string
     }
 
     it('retries on the schedule, then fails after the eighth attempt', async () => {
-      await inTenant((d) => addEndpoint(d, tenant, { url: 'https://hooks.example.com' }))
+      await inApp((d) => addEndpoint(d, appRef, { url: 'https://hooks.example.com' }))
       answer = () => ({ status: 500 })
       const eventId = await enqueue()
       expect(await send()).toBe(1)
@@ -211,7 +211,7 @@ describe.skipIf(!testDatabaseUrl)('webhooks on Postgres', () => {
     })
 
     it('counts a timeout or no response as a failed attempt', async () => {
-      await inTenant((d) => addEndpoint(d, tenant, { url: 'https://hooks.example.com' }))
+      await inApp((d) => addEndpoint(d, appRef, { url: 'https://hooks.example.com' }))
       answer = () => ({ status: null, error: 'timeout' })
       const eventId = await enqueue()
       await send()
@@ -219,19 +219,19 @@ describe.skipIf(!testDatabaseUrl)('webhooks on Postgres', () => {
     })
 
     it('fails the pending deliveries of a removed endpoint', async () => {
-      const { endpoint } = await inTenant((d) => addEndpoint(d, tenant, { url: 'https://hooks.example.com' }))
+      const { endpoint } = await inApp((d) => addEndpoint(d, appRef, { url: 'https://hooks.example.com' }))
       const eventId = await enqueue()
-      await inTenant((d) => removeEndpoint(d, tenant, endpoint.id))
+      await inApp((d) => removeEndpoint(d, appRef, endpoint.id))
       expect(await send()).toBe(0)
       expect(await deliveryRow(eventId)).toMatchObject([{ status: 'failed' }])
-      expect((await inTenant((d) => removeEndpoint(d, tenant, endpoint.id)).catch((e) => e)).code).toBe('not_found')
+      expect((await inApp((d) => removeEndpoint(d, appRef, endpoint.id)).catch((e) => e)).code).toBe('not_found')
     })
 
     it('holds at most five deliveries per endpoint at once, and never sends one twice in a round', async () => {
-      await inTenant((d) => addEndpoint(d, tenant, { url: 'https://hooks.example.com' }))
+      await inApp((d) => addEndpoint(d, appRef, { url: 'https://hooks.example.com' }))
       for (let i = 0; i < 7; i++) await enqueue(`case.triaged:case_${i}`)
       const lease = async () =>
-        (await withSystem(db, (tx) => pgWebhookOutbox(tx).leaseDue(clock.now(), { limit: 50, leaseMs: 60_000, perEndpoint: 5 }))).filter((d) => d.tenant.appId === tenant.appId)
+        (await withSystem(db, (tx) => pgWebhookOutbox(tx).leaseDue(clock.now(), { limit: 50, leaseMs: 60_000, perEndpoint: 5 }))).filter((d) => d.appRef.appId === appRef.appId)
       expect(await lease()).toHaveLength(5)
       expect(await lease()).toEqual([])
       clock.advance(60_000)
@@ -242,25 +242,25 @@ describe.skipIf(!testDatabaseUrl)('webhooks on Postgres', () => {
   })
 
   it('reseals every secret under a new master key, after which the old key can go', async () => {
-    const { secret } = await inTenant((d) => addEndpoint(d, tenant, { url: 'https://hooks.example.com' }))
+    const { secret } = await inApp((d) => addEndpoint(d, appRef, { url: 'https://hooks.example.com' }))
     sealer = keyringSealer(parseKeyring(`${K2},${K1}`))
     expect(await withSystem(db, (tx) => resealWebhookSecrets(tx, sealer))).toBeGreaterThanOrEqual(1)
     expect(await withSystem(db, (tx) => resealWebhookSecrets(tx, sealer))).toBe(0)
     sealer = keyringSealer(parseKeyring(K2))
-    await inTenant((d) => enqueueWebhook(d, tenant, { sourceId: 'case.triaged:case_1', event: TRIAGED }))
+    await inApp((d) => enqueueWebhook(d, appRef, { sourceId: 'case.triaged:case_1', event: TRIAGED }))
     await send()
     expect(verify(secret!, posted[0]!.headers, posted[0]!.body, { clock }).ok).toBe(true)
   })
 
   it("replaces an erased account's id in the webhook bodies that name it, and only there", async () => {
     const body = (subject: string) => JSON.stringify({ id: 'evt_x', type: 'action.requested', data: { action_key: 'ban', subject_external_id: subject } })
-    await withTenant(db, scopeOfRef(tenant), async (tx) => {
+    await withApps(db, scopeOfApp(appRef), async (tx) => {
       const store = pgWebhookStore(tx)
-      await store.insertEvent(tenant, { id: 'evt_john', sourceId: 'action.requested:acr_1', type: 'action.requested', body: body('u_john_doe'), createdAt: clock.now() })
-      await store.insertEvent(tenant, { id: 'evt_jim', sourceId: 'action.requested:acr_2', type: 'action.requested', body: body('u_jim_doe'), createdAt: clock.now() })
+      await store.insertEvent(appRef, { id: 'evt_john', sourceId: 'action.requested:acr_1', type: 'action.requested', body: body('u_john_doe'), createdAt: clock.now() })
+      await store.insertEvent(appRef, { id: 'evt_jim', sourceId: 'action.requested:acr_2', type: 'action.requested', body: body('u_jim_doe'), createdAt: clock.now() })
     })
-    expect(await withTenant(db, scopeOfRef(tenant), (tx) => pgWebhookStore(tx).eraseAccount(tenant, 'u_john_doe', 'erased_ers_1'))).toBe(1)
-    const bodies = await withTenant(db, scopeOfRef(tenant), (tx) =>
+    expect(await withApps(db, scopeOfApp(appRef), (tx) => pgWebhookStore(tx).eraseAccount(appRef, 'u_john_doe', 'erased_ers_1'))).toBe(1)
+    const bodies = await withApps(db, scopeOfApp(appRef), (tx) =>
       tx.execute<{ id: string; body: string }>(sql`SELECT id, body FROM delivery.webhook_events WHERE id IN ('evt_john', 'evt_jim') ORDER BY id`),
     )
     expect(bodies.rows.map((r) => [r.id, JSON.parse(r.body).data.subject_external_id])).toEqual([

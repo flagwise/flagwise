@@ -3,15 +3,15 @@
 // appended again.
 
 import { currentType, erasedId, erasureAnswer, EVENT_CATALOG, factOf, type EventData } from '@flagwise/contracts'
-import type { Clock, TenantRef } from '@flagwise/kernel'
-import { tenantOf, type EventBus } from '@flagwise/platform'
+import type { Clock, AppRef } from '@flagwise/kernel'
+import { appOf, type EventBus } from '@flagwise/platform'
 import type { AuditRoutesDeps } from '../api/routes.ts'
 import { AUDITED_EVENT_TYPES } from '../domain/events.ts'
 import { recordEvent, verifyAuditLog, type AuditStore } from './audit-log.ts'
 
 export interface AuditServiceDeps {
-  /** Runs `fn` in one transaction of the tenant. */
-  run<R>(tenant: TenantRef, fn: (store: AuditStore) => Promise<R>): Promise<R>
+  /** Runs `fn` in one transaction of the app. */
+  run<R>(appRef: AppRef, fn: (store: AuditStore) => Promise<R>): Promise<R>
   readonly clock: Clock
 }
 
@@ -27,23 +27,23 @@ export function subscribeAudit(bus: EventBus, deps: AuditServiceDeps): void {
     .filter(([, spec]) => AUDITED_EVENT_TYPES.includes(spec.name))
     .map(([type]) => type)
   bus.subscribe('audit.log', types, async (event) => {
-    const tenant = tenantOf(event)
+    const appRef = appOf(event)
     const recorded = { ...event, type: factOf(event.type)?.name ?? event.type }
-    await deps.run(tenant, (store) => recordEvent({ store, clock: deps.clock }, tenant, recorded))
+    await deps.run(appRef, (store) => recordEvent({ store, clock: deps.clock }, appRef, recorded))
   })
   bus.subscribe('audit.erasure', [currentType('subject.erasure_requested')], async (event) => {
-    const tenant = tenantOf(event)
+    const appRef = appOf(event)
     const request = event.data as EventData<'subject.erasure_requested.v1'>
-    const had = await deps.run(tenant, (store) => store.eraseAccount(tenant, request.subjectExternalId, erasedId(request.erasureId)))
+    const had = await deps.run(appRef, (store) => store.eraseAccount(appRef, request.subjectExternalId, erasedId(request.erasureId)))
     // Published after the erase commits; should it be lost, the redelivery finds nothing left and answers nothing_held.
-    await bus.publish({ ...erasureAnswer(request, 'audit.erasure', had > 0 ? 'erased' : 'nothing_held', deps.clock.now()), tenant })
+    await bus.publish({ ...erasureAnswer(request, 'audit.erasure', had > 0 ? 'erased' : 'nothing_held', deps.clock.now()), appRef })
   })
 }
 
-/** What the audit routes read, each in one transaction of the tenant. */
+/** What the audit routes read, each in one transaction of the app. */
 export function auditReads(deps: Pick<AuditServiceDeps, 'run'>): AuditRoutesDeps {
   return {
-    search: (tenant, query) => deps.run(tenant, (store) => store.search(tenant, query)),
-    verify: (tenant) => deps.run(tenant, (store) => verifyAuditLog({ store }, tenant)),
+    search: (appRef, query) => deps.run(appRef, (store) => store.search(appRef, query)),
+    verify: (appRef) => deps.run(appRef, (store) => verifyAuditLog({ store }, appRef)),
   }
 }

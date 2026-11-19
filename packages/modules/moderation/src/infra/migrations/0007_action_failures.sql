@@ -16,6 +16,6 @@ CREATE INDEX action_failures_by_case ON cases.action_failures (app_id, livemode,
 
 ALTER TABLE cases.action_failures ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cases.action_failures FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON cases.action_failures TO {{app}}
+CREATE POLICY app ON cases.action_failures TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());

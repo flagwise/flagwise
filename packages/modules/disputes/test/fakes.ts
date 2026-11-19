@@ -1,5 +1,5 @@
 // In-memory fakes for the appeals ports.
-import type { TenantRef } from '@flagwise/kernel'
+import type { AppRef } from '@flagwise/kernel'
 import {
   VersionConflictError,
   type AppealRecord,
@@ -9,13 +9,13 @@ import {
   type DecisionView,
 } from '../src/app/ports.ts'
 
-const same = (a: TenantRef, b: TenantRef) => a.appId === b.appId && a.livemode === b.livemode
+const same = (a: AppRef, b: AppRef) => a.appId === b.appId && a.livemode === b.livemode
 
 export class InMemoryDecisions implements DecisionRepository {
   readonly rows = new Map<string, DecisionView>()
-  async findById(tenant: TenantRef, decisionId: string) {
+  async findById(appRef: AppRef, decisionId: string) {
     const d = this.rows.get(decisionId)
-    return d && same(d.tenant, tenant) ? structuredClone(d) : null
+    return d && same(d.appRef, appRef) ? structuredClone(d) : null
   }
 }
 
@@ -35,14 +35,14 @@ export class InMemoryAppeals implements AppealRepository {
     const r = this.rows.get(id)
     return r && structuredClone(r)
   }
-  async findById(tenant: TenantRef, appealId: string) {
+  async findById(appRef: AppRef, appealId: string) {
     this.calls.push('findById')
     const r = this.rows.get(appealId)
-    return r && same(r.tenant, tenant) ? Object.freeze(structuredClone(r)) : null
+    return r && same(r.appRef, appRef) ? Object.freeze(structuredClone(r)) : null
   }
-  async findByDecision(tenant: TenantRef, decisionId: string) {
+  async findByDecision(appRef: AppRef, decisionId: string) {
     this.calls.push('findByDecision')
-    return [...this.rows.values()].filter((r) => same(r.tenant, tenant) && r.decisionId === decisionId).map((r) => Object.freeze(structuredClone(r)))
+    return [...this.rows.values()].filter((r) => same(r.appRef, appRef) && r.decisionId === decisionId).map((r) => Object.freeze(structuredClone(r)))
   }
   async insert(r: AppealRecord) {
     this.calls.push('insert')

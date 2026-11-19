@@ -1,9 +1,9 @@
-// The policy on Postgres: its stores inside a tenant transaction (row-level security limits them to
-// its apps and the mode), and the routes' use cases, each in its own tenant transaction.
+// The policy on Postgres: its stores inside an app transaction (row-level security limits them to
+// its apps and the mode), and the routes' use cases, each in its own app transaction.
 
 import type { Policy } from '@flagwise/contracts'
-import type { Clock, TenantRef } from '@flagwise/kernel'
-import { loadMigrations, scopeOfRef, withTenant, type Database, type MigrationSet, type TenantTx } from '@flagwise/platform'
+import type { Clock, AppRef } from '@flagwise/kernel'
+import { loadMigrations, scopeOfApp, withApps, type Database, type MigrationSet, type AppTx } from '@flagwise/platform'
 import { and, eq, sql } from 'drizzle-orm'
 import type { PolicyRoutesDeps } from '../api/routes.ts'
 import { getLlmSettings, listActionKeys, listCategories, replaceActionKeys, replaceCategories, reportScreenCategories, setLlmSettings } from '../app/policy.ts'
@@ -14,48 +14,48 @@ import { headsTable as h } from './schema.ts'
 
 export const policyMigrations: MigrationSet = loadMigrations('policy', new URL('./migrations/', import.meta.url))
 
-export function pgPolicyHeadStore(tx: TenantTx): PolicyHeadStore {
-  const ofApp = (tenant: TenantRef) => and(eq(h.appId, tenant.appId), eq(h.livemode, tenant.livemode))
+export function pgPolicyHeadStore(tx: AppTx): PolicyHeadStore {
+  const ofApp = (appRef: AppRef) => and(eq(h.appId, appRef.appId), eq(h.livemode, appRef.livemode))
   return {
-    async lock(tenant) {
+    async lock(appRef) {
       // A transaction-scoped advisory lock: the head may not exist yet, so there is no row to lock.
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`policy:${tenant.appId}:${tenant.livemode}`}, 0))`)
-      const [row] = await tx.select({ version: h.version, document: h.document }).from(h).where(ofApp(tenant))
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`policy:${appRef.appId}:${appRef.livemode}`}, 0))`)
+      const [row] = await tx.select({ version: h.version, document: h.document }).from(h).where(ofApp(appRef))
       return row ? { version: row.version, policy: row.document as Policy } : null
     },
 
-    async set(tenant, head, now) {
+    async set(appRef, head, now) {
       const row = { version: head.version, document: head.policy, updatedAt: now }
       await tx
         .insert(h)
-        .values({ appId: tenant.appId, livemode: tenant.livemode, ...row })
+        .values({ appId: appRef.appId, livemode: appRef.livemode, ...row })
         .onConflictDoUpdate({ target: [h.appId, h.livemode], set: row })
     },
   }
 }
 
-export function pgPolicyStores(tx: TenantTx): PolicyStores {
+export function pgPolicyStores(tx: AppTx): PolicyStores {
   return { categories: pgCategoryStore(tx), actionKeys: pgActionKeyStore(tx), llm: pgLlmSettingsStore(tx), heads: pgPolicyHeadStore(tx) }
 }
 
 export interface PgPolicyOptions {
   readonly clock: Clock
   /** Where the policy's events go, in the transaction of the change. */
-  readonly events: (tx: TenantTx) => PolicyEventPublisher
+  readonly events: (tx: AppTx) => PolicyEventPublisher
 }
 
-/** The policy's use cases on `db`, each in one tenant transaction: what the config routes need. */
+/** The policy's use cases on `db`, each in one app transaction: what the config routes need. */
 export function pgPolicy(db: Database, opts: PgPolicyOptions): PolicyRoutesDeps {
-  const read = <R>(tenant: TenantRef, fn: (stores: PolicyStores) => Promise<R>) => withTenant(db, scopeOfRef(tenant), (tx) => fn(pgPolicyStores(tx)))
-  const write = <R>(tenant: TenantRef, fn: (deps: { stores: PolicyStores; clock: Clock; events: PolicyEventPublisher }) => Promise<R>) =>
-    withTenant(db, scopeOfRef(tenant), (tx) => fn({ stores: pgPolicyStores(tx), clock: opts.clock, events: opts.events(tx) }))
+  const read = <R>(appRef: AppRef, fn: (stores: PolicyStores) => Promise<R>) => withApps(db, scopeOfApp(appRef), (tx) => fn(pgPolicyStores(tx)))
+  const write = <R>(appRef: AppRef, fn: (deps: { stores: PolicyStores; clock: Clock; events: PolicyEventPublisher }) => Promise<R>) =>
+    withApps(db, scopeOfApp(appRef), (tx) => fn({ stores: pgPolicyStores(tx), clock: opts.clock, events: opts.events(tx) }))
   return {
-    listActionKeys: (tenant) => read(tenant, (s) => listActionKeys(s, tenant)),
-    replaceActionKeys: (tenant, keys) => write(tenant, (d) => replaceActionKeys(d, tenant, keys)),
-    listCategories: (tenant) => read(tenant, (s) => listCategories(s, tenant)),
-    replaceCategories: (tenant, categories) => write(tenant, (d) => replaceCategories(d, tenant, categories)),
-    reportScreenCategories: (tenant, locale) => read(tenant, (s) => reportScreenCategories(s, tenant, locale)),
-    getLlmSettings: (tenant) => read(tenant, (s) => getLlmSettings(s, tenant)),
-    setLlmSettings: (tenant, settings) => write(tenant, (d) => setLlmSettings(d, tenant, settings)),
+    listActionKeys: (appRef) => read(appRef, (s) => listActionKeys(s, appRef)),
+    replaceActionKeys: (appRef, keys) => write(appRef, (d) => replaceActionKeys(d, appRef, keys)),
+    listCategories: (appRef) => read(appRef, (s) => listCategories(s, appRef)),
+    replaceCategories: (appRef, categories) => write(appRef, (d) => replaceCategories(d, appRef, categories)),
+    reportScreenCategories: (appRef, locale) => read(appRef, (s) => reportScreenCategories(s, appRef, locale)),
+    getLlmSettings: (appRef) => read(appRef, (s) => getLlmSettings(s, appRef)),
+    setLlmSettings: (appRef, settings) => write(appRef, (d) => setLlmSettings(d, appRef, settings)),
   }
 }

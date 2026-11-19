@@ -4,8 +4,8 @@
 import { pgModerationPolicyCopy, moderationTables } from '@flagwise/moderation'
 import { classifyTables, pgClassifyPolicyCopy } from '@flagwise/classify'
 import { DEFAULT_POLICY, eventContract, policyIn, type Policy } from '@flagwise/contracts'
-import { manualClock, type TenantRef } from '@flagwise/kernel'
-import { createDatabase, createPgBus, migrate, subscribeCopy, withTenant, type Database, type DocumentCopy, type PgBus } from '@flagwise/platform'
+import { manualClock, type AppRef } from '@flagwise/kernel'
+import { createDatabase, createPgBus, migrate, subscribeCopy, withApps, type Database, type DocumentCopy, type PgBus } from '@flagwise/platform'
 import { createTestDatabase, schemaDrift, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { busPolicyEvents, pgPolicy, PRESETS } from '@flagwise/policy'
 import { createApp, pgTenancyStore, tenancyMigrations } from '@flagwise/tenancy'
@@ -14,11 +14,11 @@ import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ALL_MIGRATIONS } from '../src/migrations.ts'
 
-const A: TenantRef = { appId: 'app_jane', livemode: true }
+const A: AppRef = { appId: 'app_jane', livemode: true }
 const clock = manualClock('2026-11-18T09:00:00Z')
 
 const seedApp = (db: Database) =>
-  withTenant(db, { appIds: [A.appId], livemode: true }, async (tx) => {
+  withApps(db, { appIds: [A.appId], livemode: true }, async (tx) => {
     const deps = { store: pgTenancyStore(tx), clock, newId: (p: string) => `${p}_1` }
     await createApp(deps, { id: A.appId, name: 'Jane Doe Dating iOS' })
   })
@@ -37,8 +37,8 @@ const subscribePolicyCopies = (bus: PgBus, copies: PolicyCopies) => {
   }
 }
 const copiesOf = (db: Database): PolicyCopies => ({ classify: pgClassifyPolicyCopy(db), triage: pgTriagePolicyCopy(db), cases: pgModerationPolicyCopy(db) })
-const versions = async (copies: PolicyCopies, tenant: TenantRef) =>
-  Object.fromEntries(await Promise.all(Object.entries(copies).map(async ([name, copy]) => [name, (await copy.get(tenant))?.version ?? null])))
+const versions = async (copies: PolicyCopies, appRef: AppRef) =>
+  Object.fromEntries(await Promise.all(Object.entries(copies).map(async ([name, copy]) => [name, (await copy.get(appRef))?.version ?? null])))
 
 describe.skipIf(!testDatabaseUrl)('policy copies on Postgres', () => {
   let t: TestDatabase
@@ -101,7 +101,7 @@ describe.skipIf(!testDatabaseUrl)('upgrading to policy copies', () => {
     // A release before the policy service: the config in tenancy's tables.
     await migrate(t.ownerUrl, [tenancyMigrations], t.roles)
     await seedApp(db)
-    await withTenant(db, { appIds: [A.appId], livemode: true }, (tx) =>
+    await withApps(db, { appIds: [A.appId], livemode: true }, (tx) =>
       tx.execute(sql`INSERT INTO tenancy.llm_settings (app_id, livemode, rules_only, fallback_to_rules, updated_at) VALUES (${A.appId}, true, false, false, now())`),
     )
     await migrate(t.ownerUrl, ALL_MIGRATIONS, t.roles)

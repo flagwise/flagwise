@@ -45,7 +45,7 @@ describe.skipIf(!testDatabaseUrl)('LLM retries on the server', () => {
     },
   }
   const json = async (res: Response) => (await res.json()) as Record<string, any>
-  const tenant = () => ({ appId: installed.app.id, livemode: true })
+  const appRef = () => ({ appId: installed.app.id, livemode: true })
   const call = (key: string, path: string, init: { method?: string; body?: unknown } = {}) =>
     server.app.http.request(`/v1${path}`, {
       method: init.method ?? 'GET',
@@ -76,10 +76,17 @@ describe.skipIf(!testDatabaseUrl)('LLM retries on the server', () => {
   beforeAll(async () => {
     t = await createTestDatabase()
     await migrateFromEnv({ DATABASE_OWNER_URL: t.ownerUrl, DATABASE_APP_URL: `postgres://${t.roles.app}@x/x`, DATABASE_SYSTEM_URL: `postgres://${t.roles.system}@x/x` })
-    const base = await serverConfigFromEnv({ DATABASE_APP_URL: t.appUrl, DATABASE_SYSTEM_URL: t.systemUrl, STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')) })
+    const base = await serverConfigFromEnv({
+      DATABASE_APP_URL: t.appUrl,
+      DATABASE_SYSTEM_URL: t.systemUrl,
+      STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')),
+      // These tests poll the API; the rate limit is tested in flagging-api.
+      API_RATE_PER_SECOND: '1000',
+      API_RATE_BURST: '1000',
+    })
     config = { ...base, llm: { ...base.llm, llm: { provider, model: 'small', escalationModel: 'strong', prompt: classifierPrompt('You classify user reports.') } } }
     installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' })
-    admin = await createKey(config, { ...tenant(), scopes: ['admin'] })
+    admin = await createKey(config, { ...appRef(), scopes: ['admin'] })
     server = createServer(config, { onError: () => {}, llmRetryDelaysMs: DELAYS })
     await server.start()
   })
@@ -91,7 +98,7 @@ describe.skipIf(!testDatabaseUrl)('LLM retries on the server', () => {
     down = true
   })
 
-  it('reclassifies a case triaged by rules once the LLM answers, and tells the tenant again', async () => {
+  it('reclassifies a case triaged by rules once the LLM answers, and tells the appRef again', async () => {
     await setLlm(true)
     const c = await caseFor('u_jack_doe')
     expect(c).toMatchObject({ state: 'open', classified_by: 'rules', category_id: 'other', triage: { severity: 'P2' } })

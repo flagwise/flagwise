@@ -2,8 +2,8 @@
 // events, and its reactions on the bus, reading and writing only its own tables.
 
 import { currentType, erasedId, erasureAnswer, type EventData } from '@flagwise/contracts'
-import type { Clock, TenantRef } from '@flagwise/kernel'
-import { tenantOf, type BusEvent, type EventBus, type UnitOfWork, type Work } from '@flagwise/platform'
+import type { Clock, AppRef } from '@flagwise/kernel'
+import { appOf, type BusEvent, type EventBus, type UnitOfWork, type Work } from '@flagwise/platform'
 import type { InternalEvent } from '../domain/webhooks.ts'
 import { requestActions, retryFailedActions, settleAction, type ActionRequestStore, type DeliveryDeps, type DeliveryEvent, type RequestedBy } from './action-requests.ts'
 import { enqueueWebhook, type WebhookStore } from './webhooks.ts'
@@ -22,8 +22,8 @@ export interface DeliveryServiceDeps {
 }
 
 export interface ActionSettlement {
-  confirm(tenant: TenantRef, actionRequestId: string): Promise<void>
-  fail(tenant: TenantRef, actionRequestId: string, reason: string): Promise<void>
+  confirm(appRef: AppRef, actionRequestId: string): Promise<void>
+  fail(appRef: AppRef, actionRequestId: string, reason: string): Promise<void>
 }
 
 const workOf = (deps: DeliveryServiceDeps, w: Work<DeliveryStores>): DeliveryDeps => ({
@@ -31,7 +31,7 @@ const workOf = (deps: DeliveryServiceDeps, w: Work<DeliveryStores>): DeliveryDep
   newActionRequestId: deps.newActionRequestId,
   events: {
     async publish(event: DeliveryEvent) {
-      const { type, tenant: _tenant, ...data } = event
+      const { type, appRef: _appRef, ...data } = event
       const id = type === 'decision.actions_confirmed' ? `${type}:${event.decisionId}` : `${type}:${event.actionRequestId}`
       await w.publish({ id, type: currentType(type), key: event.caseId, data })
     },
@@ -41,8 +41,8 @@ const workOf = (deps: DeliveryServiceDeps, w: Work<DeliveryStores>): DeliveryDep
 /** settleAction for the tenant's answers, each in one transaction with its events; an unknown id throws. */
 export function actionSettlement(deps: DeliveryServiceDeps): ActionSettlement {
   return {
-    confirm: (tenant, id) => deps.uow.run(tenant, (w) => settleAction(workOf(deps, w), { tenant, actionRequestId: id, status: 'confirmed' })),
-    fail: (tenant, id, reason) => deps.uow.run(tenant, (w) => settleAction(workOf(deps, w), { tenant, actionRequestId: id, status: 'failed', failReason: reason })),
+    confirm: (appRef, id) => deps.uow.run(appRef, (w) => settleAction(workOf(deps, w), { appRef, actionRequestId: id, status: 'confirmed' })),
+    fail: (appRef, id, reason) => deps.uow.run(appRef, (w) => settleAction(workOf(deps, w), { appRef, actionRequestId: id, status: 'failed', failReason: reason })),
   }
 }
 
@@ -65,12 +65,12 @@ export function actionSettlement(deps: DeliveryServiceDeps): ActionSettlement {
  */
 export function subscribeDelivery(bus: EventBus, deps: DeliveryServiceDeps): void {
   bus.subscribe('delivery', ['case.decided.v1', 'case.actions_retried.v1'], async (event) => {
-    const tenant = tenantOf(event)
+    const appRef = appOf(event)
     if (event.type === 'case.decided.v1') {
       const d = event.data as EventData<'case.decided.v1'>
-      await deps.uow.run(tenant, (w) =>
+      await deps.uow.run(appRef, (w) =>
         requestActions(workOf(deps, w), {
-          tenant,
+          appRef,
           caseId: d.caseId,
           decisionId: d.decisionId,
           actionKeys: d.actionKeys,
@@ -83,9 +83,9 @@ export function subscribeDelivery(bus: EventBus, deps: DeliveryServiceDeps): voi
       return
     }
     const r = event.data as EventData<'case.actions_retried.v1'>
-    await deps.uow.run(tenant, (w) =>
+    await deps.uow.run(appRef, (w) =>
       retryFailedActions(workOf(deps, w), {
-        tenant,
+        appRef,
         caseId: r.caseId,
         decisionId: r.decisionId,
         actionKeys: r.actionKeys,
@@ -100,10 +100,10 @@ export function subscribeDelivery(bus: EventBus, deps: DeliveryServiceDeps): voi
   })
 
   bus.subscribe('delivery.erasure', [currentType('subject.erasure_requested')], async (event) => {
-    const tenant = tenantOf(event)
+    const appRef = appOf(event)
     const request = event.data as EventData<'subject.erasure_requested.v1'>
-    await deps.uow.run(tenant, async (w) => {
-      const had = await w.stores.webhooks.eraseAccount(tenant, request.subjectExternalId, erasedId(request.erasureId))
+    await deps.uow.run(appRef, async (w) => {
+      const had = await w.stores.webhooks.eraseAccount(appRef, request.subjectExternalId, erasedId(request.erasureId))
       await w.publish(erasureAnswer(request, 'delivery.erasure', had > 0 ? 'erased' : 'nothing_held', deps.clock.now()))
     })
   })
@@ -111,8 +111,8 @@ export function subscribeDelivery(bus: EventBus, deps: DeliveryServiceDeps): voi
   bus.subscribe('delivery.webhooks', ['case.triaged.v1', 'case.retriaged.v1', 'case.untriaged.v1', 'action.requested.v1', 'erasure.completed.v1'], async (event) => {
     const cause = event.type === 'case.triaged.v1' ? (event.data as EventData<'case.triaged.v1'>).cause : undefined
     if (cause === 'correction' || cause === 'llm_retry') return
-    const tenant = tenantOf(event)
-    await deps.uow.run(tenant, (w) => enqueueWebhook({ webhooks: w.stores.webhooks, clock: deps.clock, newEventId: deps.newEventId }, tenant, { sourceId: event.id, event: webhookEventOf(event) }))
+    const appRef = appOf(event)
+    await deps.uow.run(appRef, (w) => enqueueWebhook({ webhooks: w.stores.webhooks, clock: deps.clock, newEventId: deps.newEventId }, appRef, { sourceId: event.id, event: webhookEventOf(event) }))
   })
 }
 

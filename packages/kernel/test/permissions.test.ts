@@ -7,13 +7,13 @@ import {
   type AppRole,
   type AdminAction,
   type AdminRole,
-  type TenantContext,
+  type Caller,
 } from '../src/index.ts'
 
 const A = 'app_a'
 const B = 'app_b'
 
-function member(adminRole: AdminRole | null, appRoles: Record<string, AppRole> = {}, livemode = true): TenantContext {
+function member(adminRole: AdminRole | null, appRoles: Record<string, AppRole> = {}, livemode = true): Caller {
   return {
     appId: undefined,
     appIds: adminRole ? [A, B] : Object.keys(appRoles),
@@ -24,7 +24,7 @@ function member(adminRole: AdminRole | null, appRoles: Record<string, AppRole> =
   }
 }
 
-function apiKey(scopes: ApiKeyScope[], appId = A): TenantContext {
+function apiKey(scopes: ApiKeyScope[], appId = A): Caller {
   return {
     appId,
     appIds: [appId],
@@ -35,7 +35,7 @@ function apiKey(scopes: ApiKeyScope[], appId = A): TenantContext {
   }
 }
 
-function embed(role: AppRole, appId = A): TenantContext {
+function embed(role: AppRole, appId = A): Caller {
   return {
     appId,
     appIds: [appId],
@@ -46,7 +46,7 @@ function embed(role: AppRole, appId = A): TenantContext {
   }
 }
 
-const system: TenantContext = {
+const system: Caller = {
   appId: A,
   appIds: [A],
   actor: { type: 'system' },
@@ -247,7 +247,7 @@ describe('API keys', () => {
   })
 })
 
-describe('tenant backend calls are API-key only', () => {
+describe('appRef backend calls are API-key only', () => {
   it.each(['report.create', 'identifiers.check', 'action_request.respond', 'appeal.file'] as const)(
     'denies %s to dashboard members',
     (action) => {

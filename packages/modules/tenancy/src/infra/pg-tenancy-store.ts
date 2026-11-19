@@ -1,8 +1,8 @@
-// The tenancy registry on Postgres: the store works inside a tenant transaction (row-level
+// The tenancy registry on Postgres: the store works inside an app transaction (row-level
 // security limits it to its apps); the key directory reads as the system role.
 
 import type { ApiKeyScope } from '@flagwise/kernel'
-import { loadMigrations, type MigrationSet, type SystemTx, type TenantTx } from '@flagwise/platform'
+import { loadMigrations, type MigrationSet, type SystemTx, type AppTx } from '@flagwise/platform'
 import { and, eq, gt, isNull, lt, or, sql } from 'drizzle-orm'
 import type { ApiKeyRecord, KeyDirectory, TenancyStore } from '../app/registry.ts'
 import { apiKeysTable as keys, appsTable as apps } from './schema.ts'
@@ -21,8 +21,8 @@ const toKey = (r: typeof keys.$inferSelect): ApiKeyRecord => ({
   revokedAt: r.revokedAt,
 })
 
-/** A TenancyStore on the given tenant transaction; reads and writes also filter by app. */
-export function pgTenancyStore(tx: TenantTx): TenancyStore {
+/** A TenancyStore on the given app transaction; reads and writes also filter by app. */
+export function pgTenancyStore(tx: AppTx): TenancyStore {
   const keyOf = (appId: string, keyId: string) => and(eq(keys.appId, appId), eq(keys.id, keyId))
   return {
     async insertApp(app) {

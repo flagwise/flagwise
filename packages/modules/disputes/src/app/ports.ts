@@ -1,12 +1,12 @@
 // What the appeals use cases need. Production code gets Postgres-backed implementations; tests get
 // the in-memory fakes in test/fakes.ts.
 
-import type { Clock, TenantRef } from '@flagwise/kernel'
+import type { Clock, AppRef } from '@flagwise/kernel'
 
 /** The appeals module's own copy of a decision, built from case.decided events. */
 export interface DecisionView {
   readonly decisionId: string
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly caseId: string
   readonly outcome: 'violation' | 'no_violation'
   readonly actionKeys: readonly string[]
@@ -20,7 +20,7 @@ export type Appellant = 'reported' | 'reporter'
 
 export interface AppealRecord {
   readonly id: string
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly decisionId: string
   readonly caseId: string
   readonly appellant: Appellant
@@ -42,13 +42,13 @@ export class VersionConflictError extends Error {
 }
 
 export interface DecisionRepository {
-  findById(tenant: TenantRef, decisionId: string): Promise<DecisionView | null>
+  findById(appRef: AppRef, decisionId: string): Promise<DecisionView | null>
 }
 
-/** Every method only sees appeals of the given tenant. */
+/** Every method only sees appeals of the given app. */
 export interface AppealRepository {
-  findById(tenant: TenantRef, appealId: string): Promise<AppealRecord | null>
-  findByDecision(tenant: TenantRef, decisionId: string): Promise<readonly AppealRecord[]>
+  findById(appRef: AppRef, appealId: string): Promise<AppealRecord | null>
+  findByDecision(appRef: AppRef, decisionId: string): Promise<readonly AppealRecord[]>
   insert(record: AppealRecord): Promise<void>
   /** Saves only if the stored version equals expectedVersion; else throws VersionConflictError. */
   update(record: AppealRecord, expectedVersion: number): Promise<void>
@@ -56,13 +56,13 @@ export interface AppealRepository {
 
 /** The reverse of each tenant action key (e.g. suspend_7d -> unsuspend), from tenancy config. */
 export interface ReverseKeys {
-  reverseOf(tenant: TenantRef, actionKey: string): Promise<string | null>
+  reverseOf(appRef: AppRef, actionKey: string): Promise<string | null>
 }
 
 export type AppealsEvent =
   | {
       readonly type: 'appeal.filed'
-      readonly tenant: TenantRef
+      readonly appRef: AppRef
       readonly appealId: string
       readonly decisionId: string
       readonly caseId: string
@@ -72,7 +72,7 @@ export type AppealsEvent =
     }
   | {
       readonly type: 'appeal.resolved'
-      readonly tenant: TenantRef
+      readonly appRef: AppRef
       readonly appealId: string
       readonly decisionId: string
       readonly caseId: string

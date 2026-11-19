@@ -1,6 +1,7 @@
-// Tenant identity carried by every request, job and outbox row.
+// Who a request is from and which apps and mode it may reach (Caller), and the one app
+// and mode of every job and event (AppRef).
 
-/** Admin roles cover every app the actor may read (TenantContext.appIds). */
+/** Admin roles cover every app the actor may read (Caller.appIds). */
 export type AdminRole = 'owner' | 'admin'
 /**
  * App-level roles are assigned per app; a member holds at most one per app.
@@ -13,22 +14,22 @@ export type Role = AdminRole | AppRole
 /** Server-to-server API key scopes. */
 export type ApiKeyScope = 'flagging' | 'actions' | 'admin'
 
-/** Carried by every job and outbox row; workers run handlers under withTenant(ref, fn). */
-export interface TenantRef {
+/** Carried by every job and outbox row; workers run handlers under withApps(ref, fn). */
+export interface AppRef {
   readonly appId: string
   readonly livemode: boolean
 }
 
 export type Actor =
   | { readonly type: 'member'; readonly id: string }
-  /** An API key is bound to one app (TenantContext.appId) and carries scopes, not roles. */
+  /** An API key is bound to one app (Caller.appId) and carries scopes, not roles. */
   | { readonly type: 'api_key'; readonly id: string; readonly scopes: readonly ApiKeyScope[] }
   /** Tenant staff in the iframe embed; their role (moderator or app_admin) comes from the signed embed token. */
   | { readonly type: 'embed'; readonly sub: string; readonly name: string }
   | { readonly type: 'system' }
 
-/** Built once by the edge; modules authorize locally from it. */
-export interface TenantContext {
+/** Who is calling and what they may reach: built once by the edge; modules authorize locally from it. */
+export interface Caller {
   /** The app of this request (API-key and embed calls); undefined for dashboard calls across apps. */
   readonly appId: string | undefined
   /** Apps this actor may read: one for API keys and embeds, the member's apps for the dashboard. */

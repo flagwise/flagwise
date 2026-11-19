@@ -3,12 +3,12 @@
 // Events of one app can arrive out of order, so a copy only moves forward: an older version than
 // the one kept is ignored.
 
-import type { TenantRef } from '@flagwise/kernel'
+import type { AppRef } from '@flagwise/kernel'
 import { and, eq, sql } from 'drizzle-orm'
 import { boolean, integer, jsonb, text, type PgSchema } from 'drizzle-orm/pg-core'
 import type { EventBus } from '../bus/memory-bus.ts'
-import { tenantOf } from '../bus/unit-of-work.ts'
-import { scopeOfRef, withTenant, type Database } from './tenant.ts'
+import { appOf } from '../bus/unit-of-work.ts'
+import { scopeOfApp, withApps, type Database } from './database.ts'
 
 /**
  * The copy table `name` in a service's schema. Its migration creates it with the primary key
@@ -33,29 +33,29 @@ export interface KeptCopy<T> {
 
 export interface DocumentCopy<T> {
   /** The copy kept for the app and mode, or null before its first event. */
-  get(tenant: TenantRef): Promise<KeptCopy<T> | null>
+  get(appRef: AppRef): Promise<KeptCopy<T> | null>
   /** Keeps `document` as of `version`; false, writing nothing, when the copy is already at it or later. */
-  keep(tenant: TenantRef, version: number, document: T): Promise<boolean>
+  keep(appRef: AppRef, version: number, document: T): Promise<boolean>
 }
 
-/** The copy in `table`, each call in its own tenant transaction. */
+/** The copy in `table`, each call in its own app transaction. */
 export function pgDocumentCopy<T>(db: Database, table: CopyTable): DocumentCopy<T> {
   return {
-    async get(tenant) {
-      const [row] = await withTenant(db, scopeOfRef(tenant), (tx) =>
+    async get(appRef) {
+      const [row] = await withApps(db, scopeOfApp(appRef), (tx) =>
         tx
           .select({ version: table.version, document: table.document })
           .from(table)
-          .where(and(eq(table.appId, tenant.appId), eq(table.livemode, tenant.livemode))),
+          .where(and(eq(table.appId, appRef.appId), eq(table.livemode, appRef.livemode))),
       )
       return row ? { version: row.version, document: row.document as T } : null
     },
 
-    async keep(tenant, version, document) {
-      const rows = await withTenant(db, scopeOfRef(tenant), (tx) =>
+    async keep(appRef, version, document) {
+      const rows = await withApps(db, scopeOfApp(appRef), (tx) =>
         tx
           .insert(table)
-          .values({ appId: tenant.appId, livemode: tenant.livemode, version, document })
+          .values({ appId: appRef.appId, livemode: appRef.livemode, version, document })
           .onConflictDoUpdate({
             target: [table.appId, table.livemode],
             set: { version, document },
@@ -71,16 +71,16 @@ export function pgDocumentCopy<T>(db: Database, table: CopyTable): DocumentCopy<
 /** A copy in memory, for tests and dev. */
 export function memoryDocumentCopy<T>(): DocumentCopy<T> & { readonly kept: Map<string, KeptCopy<T>> } {
   const kept = new Map<string, KeptCopy<T>>()
-  const k = (t: TenantRef) => `${t.appId}|${t.livemode}`
+  const k = (t: AppRef) => `${t.appId}|${t.livemode}`
   return {
     kept,
-    async get(tenant) {
-      return kept.get(k(tenant)) ?? null
+    async get(appRef) {
+      return kept.get(k(appRef)) ?? null
     },
-    async keep(tenant, version, document) {
-      const current = kept.get(k(tenant))
+    async keep(appRef, version, document) {
+      const current = kept.get(k(appRef))
       if (current && current.version >= version) return false
-      kept.set(k(tenant), { version, document: structuredClone(document) })
+      kept.set(k(appRef), { version, document: structuredClone(document) })
       return true
     },
   }
@@ -95,6 +95,6 @@ export function memoryDocumentCopy<T>(): DocumentCopy<T> & { readonly kept: Map<
 export function subscribeCopy<T>(bus: EventBus, group: string, type: string, copy: DocumentCopy<T>, of: (data: unknown) => KeptCopy<T>): void {
   bus.subscribe(group, [type], async (event) => {
     const { version, document } = of(event.data)
-    await copy.keep(tenantOf(event), version, document)
+    await copy.keep(appOf(event), version, document)
   })
 }

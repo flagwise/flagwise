@@ -1,5 +1,5 @@
 -- One classification per case: the LLM's answer (or the rules' result), with what it cost. The
--- summary is derived from evidence, so it lives here and never goes into events. Tenant-scoped:
+-- summary is derived from evidence, so it lives here and never goes into events. App-scoped:
 -- row-level security limits the app role to the apps and mode of the current transaction.
 
 CREATE SCHEMA classify;
@@ -38,6 +38,6 @@ CREATE INDEX classifications_month ON classify.classifications (app_id, livemode
 
 ALTER TABLE classify.classifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE classify.classifications FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON classify.classifications TO {{app}}
+CREATE POLICY app ON classify.classifications TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());

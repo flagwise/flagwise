@@ -1,21 +1,21 @@
 // The action request routes: the tenant's backend reads a request before carrying out its action,
-// then confirms it or reports a failure. The edge authenticates and sets the tenant context; these
+// then confirms it or reports a failure. The edge authenticates and sets the caller; these
 // routes authorize from it and call the use cases.
 
-import { can, FlagwiseError, type TenantContext, type TenantRef } from '@flagwise/kernel'
+import { can, FlagwiseError, type Caller, type AppRef } from '@flagwise/kernel'
 import { Hono, type Context } from 'hono'
 import type { ActionRequest, ActionRequestStore } from '../app/action-requests.ts'
 
 export interface ActionRequestsEnv {
-  Variables: { tenant: TenantContext }
+  Variables: { caller: Caller }
 }
 
 export interface ActionRequestRoutesDeps {
-  /** Runs `fn` in a tenant transaction. */
-  read<T>(tenant: TenantRef, fn: (requests: ActionRequestStore) => Promise<T>): Promise<T>
+  /** Runs `fn` in an app transaction. */
+  read<T>(appRef: AppRef, fn: (requests: ActionRequestStore) => Promise<T>): Promise<T>
   /** settleAction, with its events published in the same transaction. */
-  confirm(tenant: TenantRef, actionRequestId: string): Promise<void>
-  fail(tenant: TenantRef, actionRequestId: string, reason: string): Promise<void>
+  confirm(appRef: AppRef, actionRequestId: string): Promise<void>
+  fail(appRef: AppRef, actionRequestId: string, reason: string): Promise<void>
 }
 
 const MAX_REASON = 500
@@ -36,39 +36,39 @@ const MAX_REASON = 500
  */
 export function deliveryRoutes(deps: ActionRequestRoutesDeps): Hono<ActionRequestsEnv> {
   const routes = new Hono<ActionRequestsEnv>().basePath('/delivery')
-  const find = async (tenant: TenantRef, id: string) => {
-    const request = await deps.read(tenant, (requests) => requests.findById(tenant, id))
+  const find = async (appRef: AppRef, id: string) => {
+    const request = await deps.read(appRef, (requests) => requests.findById(appRef, id))
     if (!request) throw new FlagwiseError('not_found', 'No such action request')
     return request
   }
-  const settled = async (tenant: TenantRef, id: string, wanted: ActionRequest['status']) => {
-    const request = await find(tenant, id)
+  const settled = async (appRef: AppRef, id: string, wanted: ActionRequest['status']) => {
+    const request = await find(appRef, id)
     if (request.status !== wanted) throw new FlagwiseError('conflict', `The action request is already ${request.status}`)
     return request
   }
 
-  routes.get('/action-requests/:id', async (c) => c.json(body(await find(responder(c.get('tenant')), c.req.param('id')))))
+  routes.get('/action-requests/:id', async (c) => c.json(body(await find(responder(c.get('caller')), c.req.param('id')))))
 
   routes.post('/action-requests/:id/confirm', async (c) => {
-    const tenant = responder(c.get('tenant'))
+    const appRef = responder(c.get('caller'))
     const id = c.req.param('id')
-    await settling(() => deps.confirm(tenant, id))
-    return c.json(body(await settled(tenant, id, 'confirmed')))
+    await settling(() => deps.confirm(appRef, id))
+    return c.json(body(await settled(appRef, id, 'confirmed')))
   })
 
   routes.post('/action-requests/:id/fail', async (c) => {
-    const tenant = responder(c.get('tenant'))
+    const appRef = responder(c.get('caller'))
     const id = c.req.param('id')
     const reason = await failReason(c)
-    await settling(() => deps.fail(tenant, id, reason))
-    return c.json(body(await settled(tenant, id, 'failed')))
+    await settling(() => deps.fail(appRef, id, reason))
+    return c.json(body(await settled(appRef, id, 'failed')))
   })
 
   return routes
 }
 
 /** The app and mode of a caller allowed to answer action requests. */
-function responder(ctx: TenantContext): TenantRef {
+function responder(ctx: Caller): AppRef {
   if (!ctx.appId || !can(ctx, { action: 'action_request.respond', appId: ctx.appId })) {
     throw new FlagwiseError('forbidden', 'This API key does not have the actions scope')
   }

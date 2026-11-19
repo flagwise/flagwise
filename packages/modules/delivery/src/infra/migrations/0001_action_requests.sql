@@ -1,4 +1,4 @@
--- Action requests: one per action key of a decision, settled by the tenant. Tenant-scoped:
+-- Action requests: one per action key of a decision, settled by the tenant. App-scoped:
 -- row-level security limits the app role to the apps and mode of the current transaction.
 
 CREATE SCHEMA delivery;
@@ -22,6 +22,6 @@ CREATE TABLE delivery.action_requests (
 
 ALTER TABLE delivery.action_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE delivery.action_requests FORCE ROW LEVEL SECURITY;
-CREATE POLICY tenant ON delivery.action_requests TO {{app}}
+CREATE POLICY app ON delivery.action_requests TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());

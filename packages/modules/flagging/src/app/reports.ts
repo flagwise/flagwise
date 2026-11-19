@@ -1,9 +1,9 @@
 // Accepting reports: check the body, keep the evidence snapshot in object storage, store the report
-// and publish report.received in one tenant transaction. Which case a report belongs to is decided
+// and publish report.received in one app transaction. Which case a report belongs to is decided
 // later by the cases module; flagging only records the answer when the case event arrives.
 
 import { createHash } from 'node:crypto'
-import { FlagwiseError, type Clock, type TenantRef } from '@flagwise/kernel'
+import { FlagwiseError, type Clock, type AppRef } from '@flagwise/kernel'
 import type { ObjectStorage } from '@flagwise/platform'
 import { parseReportSnapshot, REPORT_SNAPSHOT_FORMAT, type P0Signal, type ReportSnapshot } from '@flagwise/contracts'
 import { preRules, reportTexts } from '../domain/pre-rules.ts'
@@ -11,7 +11,7 @@ import { MAX_REPORT_BYTES, validateReport, type ReportInput } from '../domain/va
 
 export interface Report {
   readonly id: string
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   readonly reporterExternalId: string
   readonly reportedExternalId: string
   readonly category: string
@@ -28,11 +28,11 @@ export interface Report {
   readonly erasedAt?: Date | null
 }
 
-/** Report access inside one tenant transaction. */
+/** Report access inside one app transaction. */
 export interface ReportStore {
-  findById(tenant: TenantRef, reportId: string): Promise<Report | null>
+  findById(appRef: AppRef, reportId: string): Promise<Report | null>
   /** The report that holds this idempotency key, if it was received at or after `since`. */
-  findByIdempotencyKey(tenant: TenantRef, key: string, since: Date): Promise<Report | null>
+  findByIdempotencyKey(appRef: AppRef, key: string, since: Date): Promise<Report | null>
   /**
    * Inserts the report. Its idempotency key is first taken from reports received before `since`,
    * whose keys have expired. False, writing nothing, when a report received at or after `since`
@@ -40,11 +40,11 @@ export interface ReportStore {
    */
   insert(report: Report, since: Date): Promise<boolean>
   /** Records the report's case, only while it has none; true when it changed. */
-  setCase(tenant: TenantRef, reportId: string, caseId: string, joinedExistingCase: boolean): Promise<boolean>
+  setCase(appRef: AppRef, reportId: string, caseId: string, joinedExistingCase: boolean): Promise<boolean>
   /** The reports the account filed or was reported in. */
-  reportsOf(tenant: TenantRef, externalId: string): Promise<readonly Report[]>
+  reportsOf(appRef: AppRef, externalId: string): Promise<readonly Report[]>
   /** Replaces the account's id with `erasedId` in its reports and marks them erased at `at`; how many it changed. */
-  eraseAccount(tenant: TenantRef, externalId: string, erasedId: string, at: Date): Promise<number>
+  eraseAccount(appRef: AppRef, externalId: string, erasedId: string, at: Date): Promise<number>
 }
 
 export interface ReportReceivedEvent {
@@ -76,8 +76,8 @@ export interface FlaggingTx {
 }
 
 export interface FlaggingDeps {
-  /** Runs `fn` in one transaction for the tenant; a run that throws writes nothing. */
-  run<R>(tenant: TenantRef, fn: (tx: FlaggingTx) => Promise<R>): Promise<R>
+  /** Runs `fn` in one transaction for the app; a run that throws writes nothing. */
+  run<R>(appRef: AppRef, fn: (tx: FlaggingTx) => Promise<R>): Promise<R>
   readonly storage: ObjectStorage
   readonly clock: Clock
   readonly newReportId: () => string
@@ -90,7 +90,7 @@ const IDEMPOTENCY_KEY = /^[\x21-\x7e]{1,255}$/
 export const SNAPSHOT_FORMAT = REPORT_SNAPSHOT_FORMAT
 
 export interface SubmitInput {
-  readonly tenant: TenantRef
+  readonly appRef: AppRef
   /** The raw request body. */
   readonly body: string
   readonly idempotencyKey?: string | undefined
@@ -121,7 +121,7 @@ export interface SubmitResult {
  *    instead.
  */
 export async function submitReport(deps: FlaggingDeps, input: SubmitInput): Promise<SubmitResult> {
-  const { tenant, idempotencyKey } = input
+  const { appRef, idempotencyKey } = input
   if (idempotencyKey !== undefined && !IDEMPOTENCY_KEY.test(idempotencyKey)) {
     throw new FlagwiseError('invalid_request', 'Idempotency-Key must be 1 to 255 visible ASCII characters')
   }
@@ -136,18 +136,18 @@ export async function submitReport(deps: FlaggingDeps, input: SubmitInput): Prom
   }
 
   if (idempotencyKey !== undefined) {
-    const earlier = await deps.run(tenant, (tx) => tx.reports.findByIdempotencyKey(tenant, idempotencyKey, since))
+    const earlier = await deps.run(appRef, (tx) => tx.reports.findByIdempotencyKey(appRef, idempotencyKey, since))
     if (earlier) return replay(earlier)
   }
 
   const id = deps.newReportId()
   const report: Report = {
     id,
-    tenant,
+    appRef,
     reporterExternalId: value.reporter.externalId,
     reportedExternalId: value.reported.externalId,
     category: value.category,
-    snapshotKey: `apps/${tenant.appId}/${id}`,
+    snapshotKey: `apps/${appRef.appId}/${id}`,
     idempotencyKey: idempotencyKey ?? null,
     requestHash,
     receivedAt: now,
@@ -158,9 +158,9 @@ export async function submitReport(deps: FlaggingDeps, input: SubmitInput): Prom
   const screened = preRules(reportTexts(value))
   await deps.storage.put(report.snapshotKey, new TextEncoder().encode(JSON.stringify(snapshot)), 'application/json')
 
-  return deps.run(tenant, async (tx) => {
+  return deps.run(appRef, async (tx) => {
     if (!(await tx.reports.insert(report, since))) {
-      const holder = await tx.reports.findByIdempotencyKey(tenant, idempotencyKey!, since)
+      const holder = await tx.reports.findByIdempotencyKey(appRef, idempotencyKey!, since)
       if (!holder) throw new Error(`Report ${id} was not stored and no report holds its idempotency key`)
       return replay(holder)
     }
@@ -202,20 +202,20 @@ function parseReport(body: string): ReportInput {
   throw new FlagwiseError('validation_failed', 'See errors for each invalid field', { errors: result.errors })
 }
 
-/** The report, or 'not_found' when the tenant has no report with this id. */
-export async function getReport(deps: Pick<FlaggingDeps, 'run'>, tenant: TenantRef, reportId: string): Promise<Report> {
-  const report = await deps.run(tenant, (tx) => tx.reports.findById(tenant, reportId))
+/** The report, or 'not_found' when the app has no report with this id. */
+export async function getReport(deps: Pick<FlaggingDeps, 'run'>, appRef: AppRef, reportId: string): Promise<Report> {
+  const report = await deps.run(appRef, (tx) => tx.reports.findById(appRef, reportId))
   if (!report) throw new FlagwiseError('not_found', `No report ${reportId}`)
   return report
 }
 
 /**
- * What the report says, from its evidence snapshot: 'not_found' when the tenant has no report with
+ * What the report says, from its evidence snapshot: 'not_found' when the app has no report with
  * this id; 'gone' once its reporter or reported account was erased; an Error when its snapshot is missing or unreadable, which is a broken install, not a
  * client mistake.
  */
-export async function getEvidence(deps: Pick<FlaggingDeps, 'run' | 'storage'>, tenant: TenantRef, reportId: string): Promise<ReportSnapshot> {
-  const report = await getReport(deps, tenant, reportId)
+export async function getEvidence(deps: Pick<FlaggingDeps, 'run' | 'storage'>, appRef: AppRef, reportId: string): Promise<ReportSnapshot> {
+  const report = await getReport(deps, appRef, reportId)
   if (report.erasedAt) throw new FlagwiseError('gone', `The evidence of report ${reportId} was erased with its account`)
   const bytes = await deps.storage.get(report.snapshotKey)
   if (!bytes) throw new Error(`The evidence snapshot of report ${reportId} is missing`)
@@ -229,9 +229,9 @@ export async function getEvidence(deps: Pick<FlaggingDeps, 'run' | 'storage'>, t
  */
 export async function recordReportCase(
   deps: Pick<FlaggingDeps, 'run'>,
-  input: { readonly tenant: TenantRef; readonly reportId: string; readonly caseId: string; readonly joinedExistingCase: boolean },
+  input: { readonly appRef: AppRef; readonly reportId: string; readonly caseId: string; readonly joinedExistingCase: boolean },
 ): Promise<boolean> {
-  return deps.run(input.tenant, (tx) => tx.reports.setCase(input.tenant, input.reportId, input.caseId, input.joinedExistingCase))
+  return deps.run(input.appRef, (tx) => tx.reports.setCase(input.appRef, input.reportId, input.caseId, input.joinedExistingCase))
 }
 
 /**
@@ -242,12 +242,12 @@ export async function recordReportCase(
 export async function eraseAccount(
   deps: Pick<FlaggingDeps, 'storage' | 'clock'>,
   tx: FlaggingTx,
-  tenant: TenantRef,
+  appRef: AppRef,
   externalId: string,
   erasedId: string,
 ): Promise<number> {
-  const reports = await tx.reports.reportsOf(tenant, externalId)
+  const reports = await tx.reports.reportsOf(appRef, externalId)
   for (const r of reports) await deps.storage.delete(r.snapshotKey)
-  await tx.reports.eraseAccount(tenant, externalId, erasedId, deps.clock.now())
+  await tx.reports.eraseAccount(appRef, externalId, erasedId, deps.clock.now())
   return reports.length
 }

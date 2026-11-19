@@ -1,24 +1,24 @@
 // Erasure on an in-memory bus: privacy waits for an answer from every consumer group the request
 // reached, as the bus reports them, and completes once all have answered.
 import { currentType, eventContract } from '@flagwise/contracts'
-import { manualClock, type TenantRef } from '@flagwise/kernel'
+import { manualClock, type AppRef } from '@flagwise/kernel'
 import { createMemoryBus, memoryUnitOfWork, type BusEvent, type MemoryBus } from '@flagwise/platform'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { ERASURE_DEADLINE_MS, erasureStatus, privacyService, subscribePrivacy, type ErasureRecord, type ErasureStore, type PrivacyService } from '../src/index.ts'
 
-const tenant: TenantRef = { appId: 'app_a', livemode: true }
+const appRef: AppRef = { appId: 'app_a', livemode: true }
 const T0 = new Date('2026-11-19T09:00:00.000Z')
 
 class Erasures implements ErasureStore {
   readonly rows = new Map<string, ErasureRecord>()
-  async find(_t: TenantRef, id: string) {
+  async find(_t: AppRef, id: string) {
     return this.rows.get(id) ?? null
   }
-  async findActive(_t: TenantRef, subject: string) {
+  async findActive(_t: AppRef, subject: string) {
     return [...this.rows.values()].find((r) => r.subjectExternalId === subject && !r.completedAt) ?? null
   }
   async insert(r: ErasureRecord) {
-    if (await this.findActive(tenant, r.subjectExternalId)) return false
+    if (await this.findActive(appRef, r.subjectExternalId)) return false
     this.rows.set(r.id, r)
     return true
   }
@@ -41,7 +41,7 @@ const holder = (group: string, status: 'erased' | 'nothing_held' | 'retained', d
       if (down()) throw new Error(`${group} is down`)
       const { erasureId } = e.data as { erasureId: string }
       const data = { erasureId, group, status, heldItems: status === 'retained' ? 2 : 0, reason: status === 'retained' ? 'legal_hold' : null, occurredAt: T0.toISOString() }
-      await bus.publish({ id: `subject.erased:${erasureId}:${group}`, type: currentType('subject.erased'), key: erasureId, data, tenant })
+      await bus.publish({ id: `subject.erased:${erasureId}:${group}`, type: currentType('subject.erased'), key: erasureId, data, appRef })
     },
     { maxAttempts: 2 },
   )
@@ -62,7 +62,7 @@ describe('erasure', () => {
     holder('intake.erasure', 'erased')
     holder('policy.erasure', 'nothing_held')
     holder('cases.erasure', 'retained')
-    const { erasure, created } = await privacy.erase(tenant, 'u_john_doe')
+    const { erasure, created } = await privacy.erase(appRef, 'u_john_doe')
     expect(created).toBe(true)
     expect(erasure).toMatchObject({ id: 'ers_1', deadlineAt: new Date(T0.getTime() + ERASURE_DEADLINE_MS), expected: null })
     await bus.drain()
@@ -81,16 +81,16 @@ describe('erasure', () => {
 
   it('answers with the erasure in progress instead of starting another, and starts anew once it completed', async () => {
     holder('intake.erasure', 'erased', () => true)
-    await privacy.erase(tenant, 'u_john_doe')
-    expect(await privacy.erase(tenant, 'u_john_doe')).toMatchObject({ erasure: { id: 'ers_1' }, created: false })
-    expect((await privacy.erase(tenant, 'u_jane_doe')).erasure.id).toBe('ers_2')
+    await privacy.erase(appRef, 'u_john_doe')
+    expect(await privacy.erase(appRef, 'u_john_doe')).toMatchObject({ erasure: { id: 'ers_1' }, created: false })
+    expect((await privacy.erase(appRef, 'u_jane_doe')).erasure.id).toBe('ers_2')
   })
 
   it('keeps a group that is down as failed and waits for it, completing once it answers after all', async () => {
     let down = true
     holder('intake.erasure', 'erased')
     holder('triage.erasure', 'erased', () => down)
-    await privacy.erase(tenant, 'u_john_doe')
+    await privacy.erase(appRef, 'u_john_doe')
     await bus.drain()
     expect(erasures.rows.get('ers_1')).toMatchObject({ completedAt: null, groups: { 'intake.erasure': { status: 'erased' }, 'triage.erasure': { status: 'failed', error: 'triage.erasure is down' } } })
     expect(erasureStatus(erasures.rows.get('ers_1')!, new Date(T0.getTime() + ERASURE_DEADLINE_MS))).toBe('overdue')
@@ -104,16 +104,16 @@ describe('erasure', () => {
   })
 
   it('completes at once when no group takes the request, and keeps only the first answer of a group', async () => {
-    await privacy.erase(tenant, 'u_john_doe')
+    await privacy.erase(appRef, 'u_john_doe')
     await bus.drain()
     expect(completed()).toHaveLength(1)
 
     holder('intake.erasure', 'erased')
     holder('cases.erasure', 'erased', () => true)
-    await privacy.erase(tenant, 'u_jane_doe')
+    await privacy.erase(appRef, 'u_jane_doe')
     await bus.drain()
     const answer = { erasureId: 'ers_2', group: 'intake.erasure', status: 'retained', heldItems: 5, reason: 'legal_hold', occurredAt: T0.toISOString() }
-    await bus.publish({ id: 'subject.erased:again', type: currentType('subject.erased'), key: 'ers_2', data: answer, tenant })
+    await bus.publish({ id: 'subject.erased:again', type: currentType('subject.erased'), key: 'ers_2', data: answer, appRef })
     await bus.drain()
     expect(erasures.rows.get('ers_2')!.groups['intake.erasure']).toMatchObject({ status: 'erased', heldItems: 0 })
   })

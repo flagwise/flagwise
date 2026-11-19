@@ -1,6 +1,6 @@
 -- Tenant webhooks: each app's signing secrets and endpoints per mode, the webhook events, one
--- delivery of each event per endpoint, and every attempt. Tenant-scoped like action_requests. The
--- system role finds and leases due deliveries across tenants (the sender) and reseals secrets when
+-- delivery of each event per endpoint, and every attempt. App-scoped like action_requests. The
+-- system role finds and leases due deliveries across apps (the sender) and reseals secrets when
 -- the master key rotates; it never sees an endpoint or an event body.
 
 CREATE TABLE delivery.webhook_secrets (
@@ -91,19 +91,19 @@ ALTER TABLE delivery.webhook_deliveries FORCE ROW LEVEL SECURITY;
 ALTER TABLE delivery.webhook_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE delivery.webhook_attempts FORCE ROW LEVEL SECURITY;
 
-CREATE POLICY tenant ON delivery.webhook_secrets TO {{app}}
+CREATE POLICY app ON delivery.webhook_secrets TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
-CREATE POLICY tenant ON delivery.webhook_endpoints TO {{app}}
+CREATE POLICY app ON delivery.webhook_endpoints TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
-CREATE POLICY tenant ON delivery.webhook_events TO {{app}}
+CREATE POLICY app ON delivery.webhook_events TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
-CREATE POLICY tenant ON delivery.webhook_deliveries TO {{app}}
+CREATE POLICY app ON delivery.webhook_deliveries TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
-CREATE POLICY tenant ON delivery.webhook_attempts TO {{app}}
+CREATE POLICY app ON delivery.webhook_attempts TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 

@@ -2,7 +2,7 @@
 // claims, "an appeal is reviewed by a different member", a legal hold blocking erasure) are checked
 // in the module that owns that data.
 
-import type { ApiKeyScope, AppRole, AdminRole, Role, TenantContext } from './tenant.ts'
+import type { ApiKeyScope, AppRole, AdminRole, Role, Caller } from './context.ts'
 
 /** Actions over every app; dashboard members with an admin role only. */
 export type AdminAction =
@@ -122,7 +122,7 @@ const ADMIN_ROLES: ReadonlySet<Role> = new Set<Role>(['owner', 'admin'])
  *   destinations.
  * - The system actor is always denied: background jobs do not authorize through can().
  */
-export function can(ctx: TenantContext, permission: Permission): boolean {
+export function can(ctx: Caller, permission: Permission): boolean {
   const { actor } = ctx
   if (actor.type === 'system') return false
 
@@ -163,7 +163,7 @@ function isAppAction(p: Permission): p is Extract<Permission, { action: AppActio
   return Object.hasOwn(APP_ACTIONS, p.action)
 }
 
-function hasEvidenceAccess(ctx: TenantContext, appId: string): boolean {
+function hasEvidenceAccess(ctx: Caller, appId: string): boolean {
   if (ctx.adminRole !== null) return true
   const role = ctx.appRoles[appId]
   return role !== undefined && EVIDENCE_ROLES.has(role)
@@ -173,7 +173,7 @@ function hasEvidenceAccess(ctx: TenantContext, appId: string): boolean {
  * Owner is never granted (ownership only moves by transfer); Owner and Admin grant any other
  * role; an App Admin grants Moderator or Developer in their own app.
  */
-function canGrant(ctx: TenantContext, role: Role, appId: string | undefined): boolean {
+function canGrant(ctx: Caller, role: Role, appId: string | undefined): boolean {
   if (role === 'owner') return false
   const isAdminRole = ADMIN_ROLES.has(role)
   if (isAdminRole === (appId !== undefined)) return false
