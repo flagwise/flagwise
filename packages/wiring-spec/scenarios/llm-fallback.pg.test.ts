@@ -40,19 +40,19 @@ describe.skipIf(!testDatabaseUrl)('the LLM failing and coming back', () => {
 
     await reclassified(held.id)
     const kept = (await i.call(i.jane.key, PATHS.case(held.id))).body
-    expect(kept).toMatchObject({ state: 'claimed', classified_by: 'rules', category_id: held.category_id, severity: held.severity })
+    expect(kept).toMatchObject({ state: 'claimed', classified_by: 'rules', category_id: held.category_id, triage: { severity: held.triage.severity } })
   })
 
   it('leaves the case untriaged without the fallback, and triages it once the LLM answers', async () => {
     expect((await i.call(i.jane.key, PATHS.llmSettings(), { method: 'PUT', body: { rules_only: false, fallback_to_rules: false } })).status).toBe(200)
     i.net.llm = () => 'down'
     const waiting = await triagedCase(i, { reported: 'u_joe_doe' })
-    expect(waiting).toMatchObject({ state: 'untriaged', severity: null, priority: null })
+    expect(waiting).toMatchObject({ state: 'untriaged', triage: null })
 
     i.net.llm = () => ({ category_id: 'scams_fraud.investment_scam' })
     i.clock.advance(PAST_FIRST_RETRY)
     const triaged = await caseWhen(i, waiting.id, (c) => c.state === 'open', 'open')
     expect(triaged).toMatchObject({ classified_by: 'llm', category_id: 'scams_fraud.investment_scam' })
-    expect(triaged.severity).toMatch(/^P[012]$/)
+    expect(triaged.triage.severity).toMatch(/^P[012]$/)
   })
 })

@@ -144,13 +144,13 @@ describe.skipIf(!testDatabaseUrl)('app categories and LLM settings on the server
     const before = llmCalls
     const c = await caseFor('u_jack_doe', 'asking_for_money')
     expect(llmCalls).toBeGreaterThan(before)
-    expect(c).toMatchObject({ state: 'open', classified_by: 'rules', category_id: 'scams_fraud.romance_scam', custom_category_id: 'asking_for_money', severity: 'P2' })
-    expect(Date.parse(c.sla_due_at) - Date.parse(c.opened_at)).toBe(6 * HOUR)
+    expect(c).toMatchObject({ state: 'open', classified_by: 'rules', category_id: 'scams_fraud.romance_scam', custom_category_id: 'asking_for_money', triage: { severity: 'P2' } })
+    expect(Date.parse(c.triage.sla_due_at) - Date.parse(c.opened_at)).toBe(6 * HOUR)
 
     // A label for several categories: other, at the least severe of them.
-    expect(await caseFor('u_jim_doe', 'rude_or_harassing')).toMatchObject({ category_id: 'other', custom_category_id: 'rude_or_harassing', severity: 'P1' })
+    expect(await caseFor('u_jim_doe', 'rude_or_harassing')).toMatchObject({ category_id: 'other', custom_category_id: 'rude_or_harassing', triage: { severity: 'P1' } })
     // A pick the app does not have.
-    expect(await caseFor('u_joe_doe', 'made_up')).toMatchObject({ category_id: 'other', custom_category_id: null, severity: 'P2', flags: ['other_category', 'reported_age_unknown'] })
+    expect(await caseFor('u_joe_doe', 'made_up')).toMatchObject({ category_id: 'other', custom_category_id: null, triage: { severity: 'P2', flags: ['other_category', 'reported_age_unknown'] } })
   })
 
   it('never calls the LLM for a rules-only app', async () => {
@@ -161,26 +161,26 @@ describe.skipIf(!testDatabaseUrl)('app categories and LLM settings on the server
       fallback_to_rules: false,
     })
     const before = llmCalls
-    expect(await caseFor('u_jeff_doe', 'asking_for_money')).toMatchObject({ state: 'open', classified_by: 'rules', severity: 'P2' })
+    expect(await caseFor('u_jeff_doe', 'asking_for_money')).toMatchObject({ state: 'open', classified_by: 'rules', triage: { severity: 'P2' } })
     expect(llmCalls).toBe(before)
   })
 
   it('leaves the case untriaged when the LLM fails and the fallback is off, for a moderator to triage', async () => {
     await call(admin.key, '/policy/llm-settings', { method: 'PUT', body: { rules_only: false, fallback_to_rules: false } })
     const c = await caseFor('u_jay_doe', 'asking_for_money')
-    expect(c).toMatchObject({ state: 'untriaged', severity: null, priority: null, category_id: 'scams_fraud.romance_scam', custom_category_id: 'asking_for_money' })
+    expect(c).toMatchObject({ state: 'untriaged', triage: null, category_id: 'scams_fraud.romance_scam', custom_category_id: 'asking_for_money' })
     const queue = await json(await call(admin.key, '/moderation/cases'))
     expect(queue.data.at(-1)).toMatchObject({ id: c.id, state: 'untriaged' })
 
     expect((await call(admin.key, `/moderation/cases/${c.id}/claim`, { method: 'POST' })).status).toBe(200)
     const asked = await json(await call(admin.key, `/moderation/cases/${c.id}`, { method: 'PATCH', body: { category_id: 'scams_fraud.romance_scam' } }))
-    expect(asked).toMatchObject({ state: 'claimed', severity: null, custom_category_id: 'asking_for_money' })
+    expect(asked).toMatchObject({ state: 'claimed', triage: null, custom_category_id: 'asking_for_money' })
     // Triage triages it from the correction, with the app's category's own severity.
     const triaged = await eventually(async () => {
       const now = await got(admin.key, `/moderation/cases/${c.id}`)
-      return now?.severity ? now : undefined
+      return now?.triage ? now : undefined
     })
-    expect(triaged).toMatchObject({ state: 'claimed', severity: 'P2', custom_category_id: 'asking_for_money' })
+    expect(triaged).toMatchObject({ state: 'claimed', triage: { severity: 'P2' }, custom_category_id: 'asking_for_money' })
 
     const timeline = await eventually(async () => {
       const page = await got(admin.key, `/audit/entries?case_id=${c.id}`)

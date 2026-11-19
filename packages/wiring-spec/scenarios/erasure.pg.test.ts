@@ -43,7 +43,7 @@ describe.skipIf(!testDatabaseUrl)('erasure', () => {
 
     expect((await i.call(i.jane.key, PATHS.evidence(c.reportId))).status).toBe(410)
     const kept = (await i.call(i.jane.key, PATHS.case(c.id))).body
-    expect(kept).toMatchObject({ id: c.id, category_id: c.category_id, severity: c.severity })
+    expect(kept).toMatchObject({ id: c.id, category_id: c.category_id, triage: { severity: c.triage.severity } })
     expect(kept.subject_external_id).not.toBe('u_john_doe')
     const [hook] = await webhooksOf(i, WEBHOOKS.subjectErased)
     expect(hook!.data).toMatchObject({ erasure_id: started.body.id, subject_external_id: 'u_john_doe', held_items: 0 })

@@ -27,8 +27,8 @@ describe.skipIf(!testDatabaseUrl)('policy changes', () => {
     })
     expect(replaced.status).toBe(200)
     const c = await triagedCase(i, { reported: 'u_jack_doe', category: 'asking_for_money' })
-    expect(c).toMatchObject({ category_id: 'scams_fraud.romance_scam', custom_category_id: 'asking_for_money', severity: 'P2' })
-    expect(Date.parse(c.sla_due_at) - Date.parse(c.opened_at)).toBe(6 * HOUR)
+    expect(c).toMatchObject({ category_id: 'scams_fraud.romance_scam', custom_category_id: 'asking_for_money', triage: { severity: 'P2' } })
+    expect(Date.parse(c.triage.sla_due_at) - Date.parse(c.opened_at)).toBe(6 * HOUR)
   })
 
   it('lets a decision use only the action keys the category allows', async () => {
@@ -39,7 +39,7 @@ describe.skipIf(!testDatabaseUrl)('policy changes', () => {
     const c = await triagedCase(i, { reported: 'u_jim_doe', category: 'asking_for_money' })
     await claim(i, i.jane, c.id)
     const decide = (keys: string[]) =>
-      i.call(i.jane.key, PATHS.decision(c.id), { method: 'POST', body: { outcome: 'violation', category_id: c.category_id, severity: c.severity, action_keys: keys, report_ids: [c.reportId] } })
+      i.call(i.jane.key, PATHS.decision(c.id), { method: 'POST', body: { outcome: 'violation', category_id: c.category_id, severity: c.triage.severity, action_keys: keys, report_ids: [c.reportId] } })
     expect((await decide(['mute_chat'])).status).toBe(422)
     expect((await decide(['warn'])).status).toBe(201)
   })
@@ -47,7 +47,7 @@ describe.skipIf(!testDatabaseUrl)('policy changes', () => {
   it('never calls the LLM for a rules-only app', async () => {
     expect((await i.call(i.jane.key, PATHS.llmSettings(), { method: 'PUT', body: { rules_only: true, fallback_to_rules: false } })).status).toBe(200)
     const calls = i.net.llmCalls()
-    expect(await triagedCase(i, { reported: 'u_joe_doe', category: 'asking_for_money' })).toMatchObject({ state: 'open', classified_by: 'rules', severity: 'P2' })
+    expect(await triagedCase(i, { reported: 'u_joe_doe', category: 'asking_for_money' })).toMatchObject({ state: 'open', classified_by: 'rules', triage: { severity: 'P2' } })
     expect(i.net.llmCalls()).toBe(calls)
   })
 })

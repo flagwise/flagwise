@@ -22,11 +22,11 @@ describe.skipIf(!testDatabaseUrl)('from report to action', () => {
   it('classifies and triages a report, then carries a decision to a confirmed action', async () => {
     const c = await triagedCase(i, { reported: 'u_jack_doe' })
     expect(c).toMatchObject({ state: 'open', classified_by: 'llm', category_id: 'scams_fraud.investment_scam', report_ids: [c.reportId], subject_external_id: 'u_jack_doe' })
-    expect(c.severity).toMatch(/^P[012]$/)
-    expect(c.sla_due_at).not.toBeNull()
+    expect(c.triage.severity).toMatch(/^P[012]$/)
+    expect(c.triage.sla_due_at).not.toBeNull()
 
     const [triaged] = await webhooksOf(i, WEBHOOKS.reportTriaged, (w) => w.data.case_id === c.id)
-    expect(triaged!.data).toMatchObject({ case_id: c.id, category_id: 'scams_fraud.investment_scam', severity: c.severity, classified_by: 'llm' })
+    expect(triaged!.data).toMatchObject({ case_id: c.id, category_id: 'scams_fraud.investment_scam', severity: c.triage.severity, classified_by: 'llm' })
 
     // The summary stays behind the classification route.
     const classification = await i.call(i.jane.key, PATHS.classification(c.id))
@@ -36,7 +36,7 @@ describe.skipIf(!testDatabaseUrl)('from report to action', () => {
     await claim(i, i.jane, c.id)
     const decided = await i.call(i.jane.key, PATHS.decision(c.id), {
       method: 'POST',
-      body: { outcome: 'violation', category_id: 'scams_fraud.investment_scam', severity: c.severity, action_keys: ['suspend_7d'], report_ids: [c.reportId] },
+      body: { outcome: 'violation', category_id: 'scams_fraud.investment_scam', severity: c.triage.severity, action_keys: ['suspend_7d'], report_ids: [c.reportId] },
     })
     expect(decided.status, JSON.stringify(decided.body)).toBe(201)
 
@@ -59,7 +59,7 @@ describe.skipIf(!testDatabaseUrl)('from report to action', () => {
     await claim(i, i.jane, c.id)
     const decided = await i.call(i.jane.key, PATHS.decision(c.id), {
       method: 'POST',
-      body: { outcome: 'violation', category_id: 'scams_fraud.investment_scam', severity: c.severity, action_keys: ['suspend_7d'], report_ids: [c.reportId] },
+      body: { outcome: 'violation', category_id: 'scams_fraud.investment_scam', severity: c.triage.severity, action_keys: ['suspend_7d'], report_ids: [c.reportId] },
     })
     expect(decided.status, JSON.stringify(decided.body)).toBe(201)
     const [first] = await webhooksOf(i, WEBHOOKS.actionRequested, (w) => w.data.case_id === c.id)

@@ -6,7 +6,7 @@
 import { can, FlagwiseError, type Clock, type FieldError, type TenantContext, type TenantRef } from '@flagwise/kernel'
 import { Hono, type Context } from 'hono'
 import { CASE_STATES, type CaseState } from '../domain/case-state.ts'
-import { CaseChangedError, type CaseOrder, type CaseQuery, type CaseReader, type CaseRecord, type Decision, type Severity } from '../app/ports.ts'
+import { CaseChangedError, type CaseOrder, type CaseQuery, type CaseReader, type CaseRecord, type CaseTriage, type Decision, type Severity } from '../app/ports.ts'
 import { CaseWorkError, type CaseRef, type CorrectInput, type DecideInput, type RetryActionsInput } from '../app/work-case.ts'
 
 export interface ModerationEnv {
@@ -39,9 +39,10 @@ const MAX_REASON = 2_000
  *   `order` (`urgency`, the default, or `recent`: latest opened first); `limit` 1 to 100
  *   (default 50) and `cursor` (from a page of the same order). Answers
  *   `{ object: 'list', data, next_cursor }`.
- * - `GET /moderation/cases/:id`: the case, or 'not_found'. A triaged case lists the triage rules that
- *   applied (`applied_rules`, such as `reported_new_account`) and its `flags` (such as
- *   `reported_age_unknown`); both are empty before triage.
+ * - `GET /moderation/cases/:id`: the case, or 'not_found'. Triage's result is under `triage`
+ *   (null before triage): `severity`, `priority`, `sla_due_at`, `suggested_action_keys`, the
+ *   triage rules that applied (`applied_rules`, such as `reported_new_account`) and triage's
+ *   `flags` (such as `reported_age_unknown`).
  * - `POST /moderation/cases/:id/claim`, `POST /moderation/cases/:id/release` (body `{ "force": true }` to release
  *   someone else's claim, App Admins only): the case after the change.
  * - `PATCH /moderation/cases/:id`: correct a claimed case before deciding it, or triage one claimed from
@@ -272,12 +273,7 @@ export function caseBody(r: CaseRecord) {
     opened_at: r.openedAt.toISOString(),
     report_ids: r.reportIds,
     report_count: r.reportIds.length,
-    severity: r.triage?.severity ?? null,
-    priority: r.triage?.priority ?? null,
-    sla_due_at: r.triage?.slaDueAt.toISOString() ?? null,
-    suggested_action_keys: r.triage?.suggestedActionKeys ?? [],
-    applied_rules: r.triage?.applied ?? [],
-    flags: r.triage?.flags ?? [],
+    triage: r.triage ? triageBody(r.triage) : null,
     category_id: r.classification?.categoryId ?? null,
     custom_category_id: r.classification?.customCategoryId ?? null,
     signals: r.classification?.signals ?? [],
@@ -286,6 +282,18 @@ export function caseBody(r: CaseRecord) {
     claim: r.claim ? { holder: r.claim.memberId, claimed_at: r.claim.claimedAt.toISOString(), last_activity_at: r.claim.lastActivityAt.toISOString() } : null,
     decision: r.decision ? decisionBody(r.decision) : null,
     livemode: r.tenant.livemode,
+  }
+}
+
+/** Triage's result as moderation keeps it: its own fields, under the name of the service that gave them. */
+function triageBody(t: CaseTriage) {
+  return {
+    severity: t.severity,
+    priority: t.priority,
+    sla_due_at: t.slaDueAt.toISOString(),
+    suggested_action_keys: t.suggestedActionKeys,
+    applied_rules: t.applied ?? [],
+    flags: t.flags ?? [],
   }
 }
 

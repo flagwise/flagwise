@@ -20,7 +20,7 @@ describe.skipIf(!testDatabaseUrl)('correcting a case', () => {
 
   it('re-triages a claimed case after a correction and keeps P0 from being lowered', async () => {
     const c = await triagedCase(i, { reported: 'u_jack_doe' })
-    expect(c.severity).not.toBe('P0')
+    expect(c.triage.severity).not.toBe('P0')
 
     // Only the moderator holding the claim may correct.
     expect((await i.call(i.jane.key, PATHS.case(c.id), { method: 'PATCH', body: { severity: 'P0' } })).status).toBe(409)
@@ -29,10 +29,10 @@ describe.skipIf(!testDatabaseUrl)('correcting a case', () => {
 
     const corrected = await i.call(i.jane.key, PATHS.case(c.id), { method: 'PATCH', body: { category_id: 'scams_fraud.romance_scam', severity: 'P0' } })
     expect(corrected.status).toBe(200)
-    expect(corrected.body).toMatchObject({ state: 'claimed', category_id: 'scams_fraud.romance_scam', severity: 'P0' })
+    expect(corrected.body).toMatchObject({ state: 'claimed', category_id: 'scams_fraud.romance_scam', triage: { severity: 'P0' } })
     await eventually(async () => {
       const now = (await i.call(i.jane.key, PATHS.case(c.id))).body
-      return Date.parse(now?.sla_due_at) < Date.parse(c.sla_due_at) ? now : undefined
+      return Date.parse(now?.triage?.sla_due_at) < Date.parse(c.triage.sla_due_at) ? now : undefined
     }, 'the SLA of the corrected severity')
 
     expect((await i.call(i.jane.key, PATHS.case(c.id), { method: 'PATCH', body: { severity: 'P2' } })).status).toBe(422)
@@ -42,6 +42,6 @@ describe.skipIf(!testDatabaseUrl)('correcting a case', () => {
       const page = (await i.call(i.jane.key, PATHS.audit(c.id))).body
       return page?.data?.some((e: { action: string }) => e.action === 'case.corrected') ? page.data : undefined
     }, 'the correction on the audit trail')
-    expect(trail.find((e: { action: string }) => e.action === 'case.corrected')).toMatchObject({ facts: { before: { severity: c.severity } } })
+    expect(trail.find((e: { action: string }) => e.action === 'case.corrected')).toMatchObject({ facts: { before: { severity: c.triage.severity } } })
   })
 })

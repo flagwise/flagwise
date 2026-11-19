@@ -215,7 +215,7 @@ describe.skipIf(!testDatabaseUrl)('the case API', () => {
       id: caseId,
       object: 'case',
       state: 'open',
-      severity: 'P2',
+      triage: { severity: 'P2' },
       category_id: 'other',
       signals: [],
       classified_by: 'rules',
@@ -294,12 +294,12 @@ describe.skipIf(!testDatabaseUrl)('the case API', () => {
     await send({ external_id: 'u_jane_doe', account_created_at: '2025-04-11T08:00:00Z' }, { external_id: 'u_jill_doe', account_created_at: dayAgo })
     await server.bus.drain()
     const [first] = (await json(await call(admin.key, '/moderation/cases?subject_external_id=u_jill_doe'))).data
-    expect(first).toMatchObject({ state: 'open', applied_rules: ['reported_new_account'], flags: [] })
-    expect((await json(await call(admin.key, `/moderation/cases/${first.id}`))).priority).toBe(first.priority)
+    expect(first).toMatchObject({ state: 'open', triage: { applied_rules: ['reported_new_account'], flags: [] } })
+    expect((await json(await call(admin.key, `/moderation/cases/${first.id}`))).triage.priority).toBe(first.triage.priority)
 
     // Once decided it stays in the account's history, and the next report opens another case.
     await call(admin.key, `/moderation/cases/${first.id}/claim`, { method: 'POST' })
-    const decided = await call(admin.key, `/moderation/cases/${first.id}/decision`, { method: 'POST', body: { outcome: 'no_violation', category_id: first.category_id, severity: first.severity } })
+    const decided = await call(admin.key, `/moderation/cases/${first.id}/decision`, { method: 'POST', body: { outcome: 'no_violation', category_id: first.category_id, severity: first.triage.severity } })
     expect(decided.status).toBe(201)
     await send({ external_id: 'u_jim_doe' }, { external_id: 'u_jill_doe' })
     await server.bus.drain()
@@ -308,7 +308,7 @@ describe.skipIf(!testDatabaseUrl)('the case API', () => {
     const second = await json(await call(admin.key, `/moderation/cases?subject_external_id=u_jill_doe&state=${states}&order=recent&cursor=${history.next_cursor}`))
     expect([...history.data, ...second.data].map((c: { id: string }) => c.id)).toHaveLength(2)
     expect(second.data[0].id).toBe(first.id)
-    expect(history.data[0]).toMatchObject({ applied_rules: [], flags: ['reported_age_unknown'] })
+    expect(history.data[0]).toMatchObject({ triage: { applied_rules: [], flags: ['reported_age_unknown'] } })
     expect((await call(admin.key, '/moderation/cases?order=newest')).status).toBe(422)
     expect((await call(admin.key, `/moderation/cases?order=urgency&cursor=${history.next_cursor}`)).status).toBe(422)
   })

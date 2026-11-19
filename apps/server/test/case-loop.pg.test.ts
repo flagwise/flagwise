@@ -91,7 +91,7 @@ describe.skipIf(!testDatabaseUrl)('the case loop on the server', () => {
     expect((await call(admin.key, `/moderation/cases/${caseId}`, { method: 'PATCH', body: {} })).status).toBe(422)
 
     const corrected = await json(await call(admin.key, `/moderation/cases/${caseId}`, { method: 'PATCH', body: { category_id: 'scams_fraud.romance_scam', severity: 'P0' } }))
-    expect(corrected).toMatchObject({ state: 'claimed', category_id: 'scams_fraud.romance_scam', severity: 'P0', claim: { holder: admin.id } })
+    expect(corrected).toMatchObject({ state: 'claimed', category_id: 'scams_fraud.romance_scam', triage: { severity: 'P0' }, claim: { holder: admin.id } })
     // P0 is never lowered, and an unknown category is refused.
     expect((await call(admin.key, `/moderation/cases/${caseId}`, { method: 'PATCH', body: { severity: 'P2' } })).status).toBe(422)
     expect((await call(admin.key, `/moderation/cases/${caseId}`, { method: 'PATCH', body: { category_id: 'made_up' } })).status).toBe(422)

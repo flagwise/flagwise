@@ -28,7 +28,7 @@ export const ENFORCED: readonly string[] = [
   'composition-only', // items 5+6
   'own-tables-only', // items 5+6
   'erasure-acks', // item 9
-  'service-routes', // renames and routes, in progress
+  'service-routes', // renames and routes
 ]
 
 export const ROOT = fileURLToPath(new URL('../../../', import.meta.url))

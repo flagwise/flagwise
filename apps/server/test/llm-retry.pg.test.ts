@@ -94,13 +94,13 @@ describe.skipIf(!testDatabaseUrl)('LLM retries on the server', () => {
   it('reclassifies a case triaged by rules once the LLM answers, and tells the tenant again', async () => {
     await setLlm(true)
     const c = await caseFor('u_jack_doe')
-    expect(c).toMatchObject({ state: 'open', classified_by: 'rules', category_id: 'other', severity: 'P2' })
+    expect(c).toMatchObject({ state: 'open', classified_by: 'rules', category_id: 'other', triage: { severity: 'P2' } })
     const before = calls
     await eventually(async () => (calls >= before + 1 ? true : undefined))
     down = false
 
     const after = await caseIn(c.id, (x) => x.classified_by === 'llm')
-    expect(after).toMatchObject({ state: 'open', category_id: 'scams_fraud.investment_scam', severity: 'P1' })
+    expect(after).toMatchObject({ state: 'open', category_id: 'scams_fraud.investment_scam', triage: { severity: 'P1' } })
     expect(await json(await call(admin.key, `/classify/classifications/${c.id}`))).toMatchObject({ classified_by: 'llm', summary: 'The reported account pushed a crypto scheme.' })
     const timeline = await eventually(async () => {
       const page = await got(admin.key, `/audit/entries?case_id=${c.id}`)
@@ -113,9 +113,9 @@ describe.skipIf(!testDatabaseUrl)('LLM retries on the server', () => {
   it('moves an untriaged case to open once the LLM answers', async () => {
     await setLlm(false)
     const c = await caseFor('u_jim_doe')
-    expect(c).toMatchObject({ state: 'untriaged', severity: null })
+    expect(c).toMatchObject({ state: 'untriaged', triage: null })
     down = false
-    expect(await caseIn(c.id, (x) => x.state === 'open')).toMatchObject({ classified_by: 'llm', category_id: 'scams_fraud.investment_scam', severity: 'P1' })
+    expect(await caseIn(c.id, (x) => x.state === 'open')).toMatchObject({ classified_by: 'llm', category_id: 'scams_fraud.investment_scam', triage: { severity: 'P1' } })
   })
 
   it("leaves a case a moderator has taken alone, keeping the LLM's answer in classify", async () => {
