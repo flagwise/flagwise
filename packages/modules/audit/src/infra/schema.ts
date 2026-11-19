@@ -6,7 +6,6 @@ const schema = pgSchema('audit')
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' })
 
 export const entriesTable = schema.table('entries', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   seq: bigint('seq', { mode: 'number' }).notNull(),
@@ -28,7 +27,6 @@ export const entriesTable = schema.table('entries', {
 })
 
 export const checkpointsTable = schema.table('checkpoints', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   seq: bigint('seq', { mode: 'number' }).notNull(),

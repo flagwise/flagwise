@@ -31,7 +31,7 @@ async function reportToCase(server: Server, installed: Bootstrapped) {
   const get = await server.app.http.request(`/v1/flagging/reports/${id}`, { headers: { authorization: `Bearer ${installed.liveKey}` } })
   const report = (await get.json()) as { status: string; case_id: string }
   expect(report.status).toBe('assigned')
-  const tenant = { orgId: installed.org.id, appId: installed.app.id, livemode: true }
+  const tenant = { appId: installed.app.id, livemode: true }
   return withTenant(server.db, scopeOfRef(tenant), (tx) => pgCaseRepository(tx).findById(tenant, report.case_id))
 }
 
@@ -55,7 +55,7 @@ describe.skipIf(!testDatabaseUrl)('the install path on Postgres', () => {
     expect((await migrateFromEnv(env)).length).toBeGreaterThan(0)
     expect(await migrateFromEnv(env)).toEqual([])
     const config = await serverConfigFromEnv(env)
-    installed = await bootstrap(config, { orgName: 'Jane Doe Dating', appName: 'Jane Doe Dating iOS' })
+    installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' })
     server = createServer(config)
     expect((await server.app.http.request('/readyz')).status).toBe(503)
     await server.prepare()
@@ -71,7 +71,7 @@ describe.skipIf(!testDatabaseUrl)('the install path on Postgres', () => {
   })
 
   it('is ready, and takes a report from a bootstrapped key to a triaged case, by rules without an LLM', async () => {
-    expect(installed).toMatchObject({ org: { name: 'Jane Doe Dating' }, app: { name: 'Jane Doe Dating iOS' } })
+    expect(installed).toMatchObject({ app: { name: 'Jane Doe Dating iOS' } })
     expect(installed.liveKey).toMatch(/^fw_live_/)
     expect(installed.testKey).toMatch(/^fw_test_/)
     expect((await server.app.http.request('/readyz')).status).toBe(200)
@@ -149,7 +149,7 @@ describe.skipIf(!testDatabaseUrl)('the install path with one DATABASE_URL', () =
     const config = await serverConfigFromEnv({ DATABASE_URL: url.toString(), STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')) })
     expect(config.database.setup).toBe('single')
 
-    const installed = await bootstrap(config, { orgName: 'Jane Doe Dating', appName: 'Jane Doe Dating iOS' })
+    const installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' })
     server = createServer(config)
     // prepare, not start: a polling loop would race the drain below.
     await server.prepare()
@@ -184,8 +184,8 @@ describe.skipIf(!testDatabaseUrl)('the case API', () => {
     const roleNames = { DATABASE_APP_URL: `postgres://${t.roles.app}@x/x`, DATABASE_SYSTEM_URL: `postgres://${t.roles.system}@x/x` }
     await migrateFromEnv({ DATABASE_OWNER_URL: t.ownerUrl, ...roleNames })
     const config = await serverConfigFromEnv(env)
-    installed = await bootstrap(config, { orgName: 'Jane Doe Dating', appName: 'Jane Doe Dating iOS' })
-    const ids = { orgId: installed.org.id, appId: installed.app.id, livemode: true }
+    installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' })
+    const ids = { appId: installed.app.id, livemode: true }
     admin = await createKey(config, { ...ids, scopes: ['admin'] })
     otherAdmin = await createKey(config, { ...ids, scopes: ['admin'] })
     server = createServer(config)

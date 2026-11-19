@@ -72,7 +72,7 @@ function responder(ctx: TenantContext): TenantRef {
   if (!ctx.appId || !can(ctx, { action: 'action_request.respond', appId: ctx.appId })) {
     throw new FlagwiseError('forbidden', 'This API key does not have the actions scope')
   }
-  return { orgId: ctx.orgId, appId: ctx.appId, livemode: ctx.livemode }
+  return { appId: ctx.appId, livemode: ctx.livemode }
 }
 
 /** settleAction's unknown id becomes the API's not_found. */

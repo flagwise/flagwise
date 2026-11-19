@@ -2,10 +2,10 @@
 // claims, "an appeal is reviewed by a different member", a legal hold blocking erasure) are checked
 // in the module that owns that data.
 
-import type { ApiKeyScope, AppRole, OrgRole, Role, TenantContext } from './tenant.ts'
+import type { ApiKeyScope, AppRole, AdminRole, Role, TenantContext } from './tenant.ts'
 
-/** Org-wide actions; dashboard members only. */
-export type OrgAction =
+/** Actions over every app; dashboard members with an admin role only. */
+export type AdminAction =
   | 'billing.manage' // plan, credits, top-up, payment portal
   | 'app.create'
   | 'app.delete'
@@ -39,17 +39,17 @@ export type AppAction =
 export type GrantAction = 'member.invite' | 'role.assign'
 
 export type Permission =
-  | { readonly action: OrgAction }
+  | { readonly action: AdminAction }
   | { readonly action: AppAction; readonly appId: string }
   | { readonly action: GrantAction; readonly role: Role; readonly appId?: string }
   /** Full evidence of another app's history on a cross-app identifier match. */
   | { readonly action: 'evidence.cross_app_full'; readonly appId: string; readonly otherAppId: string }
 
-const ORG_ACTIONS: Readonly<Record<OrgAction, readonly OrgRole[]>> = {
+const ADMIN_ACTIONS: Readonly<Record<AdminAction, readonly AdminRole[]>> = {
   'billing.manage': ['owner'],
-  'app.create': ['owner', 'org_admin'],
-  'app.delete': ['owner', 'org_admin'],
-  'member.remove': ['owner', 'org_admin'],
+  'app.create': ['owner', 'admin'],
+  'app.delete': ['owner', 'admin'],
+  'member.remove': ['owner', 'admin'],
   'ownership.transfer': ['owner'],
 }
 
@@ -57,7 +57,7 @@ const ORG_ACTIONS: Readonly<Record<OrgAction, readonly OrgRole[]>> = {
 type Access = 'always' | 'test'
 
 interface AppRule {
-  /** App roles allowed; Owner and Org Admin hold every app action that members may use. */
+  /** App roles allowed; Owner and Admin hold every app action that members may use. */
   readonly roles: Readonly<Partial<Record<AppRole, Access>>>
   /** API key scope that allows it; null means dashboard only. */
   readonly scope: ApiKeyScope | null
@@ -106,16 +106,16 @@ const EMBED_DENIED: ReadonlySet<AppAction> = new Set(['api_key.manage', 'integra
 /** App roles that see live evidence, which cross-app evidence access requires. */
 const EVIDENCE_ROLES: ReadonlySet<AppRole> = new Set(['app_admin', 'moderator'])
 
-const ORG_ROLES: ReadonlySet<Role> = new Set<Role>(['owner', 'org_admin'])
+const ADMIN_ROLES: ReadonlySet<Role> = new Set<Role>(['owner', 'admin'])
 
 /**
  * Whether the actor in `ctx` may perform `permission`.
  *
- * - Owner and Org Admin may do every org action listed for them and every app action members may
- *   use, in every app of the org.
+ * - Owner and Admin may do every admin action listed for them and every app action members may
+ *   use, in every app they may read.
  * - App Admin, Moderator and Developer act per app, by the matrix above; a Developer reaches cases,
  *   accounts, evidence and the audit log only in test mode.
- * - API keys act by scope, on their own app only, and never manage keys, roles or org settings.
+ * - API keys act by scope, on their own app only, and never manage keys, roles or settings across apps.
  *   Tenant backend calls (report.create, identifiers.check, action_request.respond, appeal.file)
  *   are API-key only.
  * - Embedded staff get their token's role in the embedded app only, never keys or webhook
@@ -142,7 +142,7 @@ export function can(ctx: TenantContext, permission: Permission): boolean {
 
     default: {
       if (!isAppAction(permission)) {
-        return actor.type === 'member' && ctx.orgRole !== null && ORG_ACTIONS[permission.action].includes(ctx.orgRole)
+        return actor.type === 'member' && ctx.adminRole !== null && ADMIN_ACTIONS[permission.action].includes(ctx.adminRole)
       }
       const rule = APP_ACTIONS[permission.action]
       if (rule.apiOnly) return false
@@ -151,7 +151,7 @@ export function can(ctx: TenantContext, permission: Permission): boolean {
         if (permission.appId !== ctx.appId || role === undefined || !EMBED_ROLES.has(role)) return false
         if (EMBED_DENIED.has(permission.action)) return false
       }
-      if (ctx.orgRole !== null) return true
+      if (ctx.adminRole !== null) return true
       if (role === undefined) return false
       const access = rule.roles[role]
       return access === 'always' || (access === 'test' && !ctx.livemode)
@@ -164,19 +164,19 @@ function isAppAction(p: Permission): p is Extract<Permission, { action: AppActio
 }
 
 function hasEvidenceAccess(ctx: TenantContext, appId: string): boolean {
-  if (ctx.orgRole !== null) return true
+  if (ctx.adminRole !== null) return true
   const role = ctx.appRoles[appId]
   return role !== undefined && EVIDENCE_ROLES.has(role)
 }
 
 /**
- * Owner is never granted (ownership only moves by transfer); Owner and Org Admin grant any other
+ * Owner is never granted (ownership only moves by transfer); Owner and Admin grant any other
  * role; an App Admin grants Moderator or Developer in their own app.
  */
 function canGrant(ctx: TenantContext, role: Role, appId: string | undefined): boolean {
   if (role === 'owner') return false
-  const isOrgRole = ORG_ROLES.has(role)
-  if (isOrgRole === (appId !== undefined)) return false
-  if (ctx.orgRole !== null) return true
+  const isAdminRole = ADMIN_ROLES.has(role)
+  if (isAdminRole === (appId !== undefined)) return false
+  if (ctx.adminRole !== null) return true
   return (role === 'moderator' || role === 'developer') && appId !== undefined && ctx.appRoles[appId] === 'app_admin'
 }

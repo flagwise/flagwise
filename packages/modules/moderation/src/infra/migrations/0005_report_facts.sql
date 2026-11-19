@@ -14,4 +14,4 @@ ALTER TABLE cases.cases
 
 -- An account's cases, latest first; it also serves every lookup the old subject index did.
 DROP INDEX cases.cases_by_subject;
-CREATE INDEX cases_by_subject_recent ON cases.cases (org_id, app_id, livemode, subject_external_id, opened_at DESC, id DESC);
+CREATE INDEX cases_by_subject_recent ON cases.cases (app_id, livemode, subject_external_id, opened_at DESC, id DESC);

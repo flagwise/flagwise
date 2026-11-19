@@ -17,7 +17,7 @@ export interface ActionRequest {
   readonly replacedBy: string | null
 }
 
-/** Every method only sees requests of the given tenant (org, app and livemode). */
+/** Every method only sees requests of the given tenant (app and livemode). */
 export interface ActionRequestStore {
   findById(tenant: TenantRef, id: string): Promise<ActionRequest | null>
   /** The decision's requests, in the order they were inserted. */

@@ -9,7 +9,7 @@ import {
   type DecisionView,
 } from '../src/app/ports.ts'
 
-const same = (a: TenantRef, b: TenantRef) => a.orgId === b.orgId && a.appId === b.appId && a.livemode === b.livemode
+const same = (a: TenantRef, b: TenantRef) => a.appId === b.appId && a.livemode === b.livemode
 
 export class InMemoryDecisions implements DecisionRepository {
   readonly rows = new Map<string, DecisionView>()

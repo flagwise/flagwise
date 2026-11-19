@@ -9,4 +9,4 @@ ALTER TABLE cases.cases
   ADD CHECK ((category_id IS NULL) = (signals IS NULL) AND (signals IS NULL) = (injection_suspected IS NULL)
      AND (injection_suspected IS NULL) = (classified_by IS NULL));
 
-CREATE INDEX cases_queue ON cases.cases (org_id, app_id, livemode, state);
+CREATE INDEX cases_queue ON cases.cases (app_id, livemode, state);

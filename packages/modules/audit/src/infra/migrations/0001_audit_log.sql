@@ -6,7 +6,6 @@ CREATE SCHEMA audit;
 GRANT USAGE ON SCHEMA audit TO {{app}};
 
 CREATE TABLE audit.entries (
-  org_id text NOT NULL,
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   seq bigint NOT NULL CHECK (seq >= 1),
@@ -27,23 +26,22 @@ CREATE TABLE audit.entries (
   source_event_id text NOT NULL,
   case_id text,
   subject_external_id text,
-  PRIMARY KEY (org_id, app_id, livemode, seq),
-  UNIQUE (org_id, app_id, livemode, source_event_id)
+  PRIMARY KEY (app_id, livemode, seq),
+  UNIQUE (app_id, livemode, source_event_id)
 );
-CREATE INDEX entries_by_case ON audit.entries (org_id, app_id, livemode, case_id, seq) WHERE case_id IS NOT NULL;
-CREATE INDEX entries_by_subject ON audit.entries (org_id, app_id, livemode, subject_external_id, seq) WHERE subject_external_id IS NOT NULL;
-CREATE INDEX entries_by_actor ON audit.entries (org_id, app_id, livemode, actor_id, seq);
-CREATE INDEX entries_by_time ON audit.entries (org_id, app_id, livemode, at);
+CREATE INDEX entries_by_case ON audit.entries (app_id, livemode, case_id, seq) WHERE case_id IS NOT NULL;
+CREATE INDEX entries_by_subject ON audit.entries (app_id, livemode, subject_external_id, seq) WHERE subject_external_id IS NOT NULL;
+CREATE INDEX entries_by_actor ON audit.entries (app_id, livemode, actor_id, seq);
+CREATE INDEX entries_by_time ON audit.entries (app_id, livemode, at);
 
 -- The last purged entry of each chain, once retention purges any: verification starts after it.
 CREATE TABLE audit.checkpoints (
-  org_id text NOT NULL,
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   seq bigint NOT NULL CHECK (seq >= 1),
   hash text NOT NULL CHECK (hash ~ '^[0-9a-f]{64}$'),
   purged_at timestamptz NOT NULL,
-  PRIMARY KEY (org_id, app_id, livemode)
+  PRIMARY KEY (app_id, livemode)
 );
 
 REVOKE UPDATE, DELETE ON audit.entries FROM {{app}};
@@ -53,9 +51,9 @@ REVOKE INSERT, UPDATE, DELETE ON audit.checkpoints FROM {{app}};
 ALTER TABLE audit.entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit.entries FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant ON audit.entries TO {{app}}
-  USING (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
-  WITH CHECK (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 ALTER TABLE audit.checkpoints ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit.checkpoints FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant ON audit.checkpoints TO {{app}}
-  USING (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());

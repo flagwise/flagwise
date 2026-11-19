@@ -1,5 +1,5 @@
 // Categories and LLM settings on Postgres, inside a tenant transaction (row-level security limits it
-// to that org, its apps and the mode).
+// to its apps and the mode).
 
 import type { GlobalSeverity } from '@flagwise/contracts'
 import type { TenantRef } from '@flagwise/kernel'
@@ -19,7 +19,7 @@ const toCategory = (r: typeof t.$inferSelect): AppCategory => ({
 })
 
 export function pgCategoryStore(tx: TenantTx): CategoryStore {
-  const ofApp = (tenant: TenantRef) => and(eq(t.orgId, tenant.orgId), eq(t.appId, tenant.appId), eq(t.livemode, tenant.livemode))
+  const ofApp = (tenant: TenantRef) => and(eq(t.appId, tenant.appId), eq(t.livemode, tenant.livemode))
   const store: CategoryStore = {
     async list(tenant) {
       const rows = await tx.select().from(t).where(and(ofApp(tenant), isNull(t.removedAt))).orderBy(asc(t.position))
@@ -28,7 +28,7 @@ export function pgCategoryStore(tx: TenantTx): CategoryStore {
 
     async replace(tenant, categories, now) {
       // A transaction-scoped advisory lock, so two replaces of one app and mode never mix their lists.
-      const lock = `policy.categories:${tenant.orgId}:${tenant.appId}:${tenant.livemode}`
+      const lock = `policy.categories:${tenant.appId}:${tenant.livemode}`
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lock}, 0))`)
       const before = await store.list(tenant)
       for (const [position, c] of categories.entries()) {
@@ -45,8 +45,8 @@ export function pgCategoryStore(tx: TenantTx): CategoryStore {
         }
         await tx
           .insert(t)
-          .values({ orgId: tenant.orgId, appId: tenant.appId, livemode: tenant.livemode, key: c.key, ...row })
-          .onConflictDoUpdate({ target: [t.orgId, t.appId, t.livemode, t.key], set: row })
+          .values({ appId: tenant.appId, livemode: tenant.livemode, key: c.key, ...row })
+          .onConflictDoUpdate({ target: [t.appId, t.livemode, t.key], set: row })
       }
       const kept = categories.map((c) => c.key)
       await tx
@@ -60,7 +60,7 @@ export function pgCategoryStore(tx: TenantTx): CategoryStore {
 }
 
 export function pgLlmSettingsStore(tx: TenantTx): LlmSettingsStore {
-  const ofApp = (tenant: TenantRef) => and(eq(s.orgId, tenant.orgId), eq(s.appId, tenant.appId), eq(s.livemode, tenant.livemode))
+  const ofApp = (tenant: TenantRef) => and(eq(s.appId, tenant.appId), eq(s.livemode, tenant.livemode))
   const store: LlmSettingsStore = {
     async get(tenant) {
       const [row] = await tx.select().from(s).where(ofApp(tenant))
@@ -68,14 +68,14 @@ export function pgLlmSettingsStore(tx: TenantTx): LlmSettingsStore {
     },
 
     async set(tenant, settings, now) {
-      const lock = `policy.llm_settings:${tenant.orgId}:${tenant.appId}:${tenant.livemode}`
+      const lock = `policy.llm_settings:${tenant.appId}:${tenant.livemode}`
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lock}, 0))`)
       const before = await store.get(tenant)
       const row = { rulesOnly: settings.rulesOnly, fallbackToRules: settings.fallbackToRules, updatedAt: now }
       await tx
         .insert(s)
-        .values({ orgId: tenant.orgId, appId: tenant.appId, livemode: tenant.livemode, ...row })
-        .onConflictDoUpdate({ target: [s.orgId, s.appId, s.livemode], set: row })
+        .values({ appId: tenant.appId, livemode: tenant.livemode, ...row })
+        .onConflictDoUpdate({ target: [s.appId, s.livemode], set: row })
       return before
     },
   }

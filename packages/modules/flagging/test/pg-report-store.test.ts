@@ -5,7 +5,7 @@ import { createTestDatabase, schemaDrift, testDatabaseUrl, type TestDatabase } f
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { flaggingMigrations, flaggingTables, pgReportStore, type Report, type ReportStore } from '../src/index.ts'
 
-const A: TenantRef = { orgId: 'org_1', appId: 'app_a', livemode: true }
+const A: TenantRef = { appId: 'app_a', livemode: true }
 const T0 = new Date('2026-11-06T09:00:00.000Z')
 const H = 3_600_000
 

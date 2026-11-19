@@ -97,7 +97,7 @@ describe.skipIf(!testDatabaseUrl)('webhooks on Postgres', () => {
     await t?.drop()
   })
   beforeEach(() => {
-    tenant = { orgId: 'org_jane', appId: `app_${++tenantN}`, livemode: true }
+    tenant = { appId: `app_${++tenantN}`, livemode: true }
     sealer = keyringSealer(parseKeyring(K1))
     posted = []
     answer = () => ({ status: 200 })

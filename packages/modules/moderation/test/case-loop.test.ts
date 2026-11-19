@@ -4,7 +4,7 @@ import type { CaseRecord, CaseTriage, CaseWorkDeps, Decision, Severity } from '.
 import { CaseWorkError, correctCase, decideCase, retryActions, type DecideInput } from '../src/app/work-case.ts'
 import { InMemoryCaseRepository, RecordingPublisher } from './fakes.ts'
 
-const tenant: TenantRef = { orgId: 'org_1', appId: 'app_a', livemode: true }
+const tenant: TenantRef = { appId: 'app_a', livemode: true }
 const T0 = new Date('2026-11-03T09:00:00.000Z')
 const OPENED = new Date('2026-11-02T00:00:00.000Z')
 const HOUR = 3_600_000

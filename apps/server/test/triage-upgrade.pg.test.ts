@@ -9,7 +9,7 @@ import { pgTriageCaseStore, triageMigrations } from '@flagwise/triage'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-const A: TenantRef = { orgId: 'org_jane', appId: 'app_jane', livemode: true }
+const A: TenantRef = { appId: 'app_jane', livemode: true }
 const T0 = new Date('2026-11-19T09:00:00.000Z')
 const triage = { severity: 'P1' as const, priority: 2000, slaDueAt: T0, suggestedActionKeys: [] }
 
@@ -71,8 +71,8 @@ describe.skipIf(!testDatabaseUrl)('upgrading to triage records', () => {
       const event = (id: string, type: string, fannedOut: boolean) =>
         withTenant(udb, scopeOfRef(A), (tx) =>
           tx.execute<{ seq: string }>(sql`
-            INSERT INTO platform.events (id, type, key, data, org_id, app_id, livemode, fanned_out)
-            VALUES (${id}, ${type}, 'case_1', '{}', ${A.orgId}, ${A.appId}, true, ${fannedOut}) RETURNING seq`),
+            INSERT INTO platform.events (id, type, key, data, app_id, livemode, fanned_out)
+            VALUES (${id}, ${type}, 'case_1', '{}', ${A.appId}, true, ${fannedOut}) RETURNING seq`),
         )
       await udb.system.execute(sql`
         INSERT INTO platform.consumer_groups (name, types, max_attempts, since_seq)

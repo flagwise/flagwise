@@ -6,16 +6,16 @@ import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { auditMigrations, auditTables, pgAuditStore, recordEvent, verifyAuditLog, type AuditQuery, type RecordedEvent } from '../src/index.ts'
 
-const A: TenantRef = { orgId: 'org_a', appId: 'app_a', livemode: true }
+const A: TenantRef = { appId: 'app_a', livemode: true }
 const A_TEST: TenantRef = { ...A, livemode: false }
-const B: TenantRef = { orgId: 'org_b', appId: 'app_b', livemode: true }
+const B: TenantRef = { appId: 'app_b', livemode: true }
 
 describe.skipIf(!testDatabaseUrl)('the audit log on Postgres', () => {
   let t: TestDatabase
   let db: Database
   let clock: ManualClock
   let n = 0
-  const scope = (tenant: TenantRef) => ({ orgId: tenant.orgId, appIds: [tenant.appId], livemode: tenant.livemode })
+  const scope = (tenant: TenantRef) => ({ appIds: [tenant.appId], livemode: tenant.livemode })
   const record = (tenant: TenantRef, event: RecordedEvent) => withTenant(db, scope(tenant), (tx) => recordEvent({ store: pgAuditStore(tx), clock }, tenant, event))
   const search = (tenant: TenantRef, query: Partial<AuditQuery> = {}) => withTenant(db, scope(tenant), (tx) => pgAuditStore(tx).search(tenant, { limit: 50, ...query }))
   const verify = (tenant: TenantRef) => withTenant(db, scope(tenant), (tx) => verifyAuditLog({ store: pgAuditStore(tx) }, tenant))
@@ -74,14 +74,14 @@ describe.skipIf(!testDatabaseUrl)('the audit log on Postgres', () => {
   })
 
   it('appends concurrent events without gaps or forks', async () => {
-    const tenant: TenantRef = { orgId: 'org_c', appId: 'app_c', livemode: true }
+    const tenant: TenantRef = { appId: 'app_c', livemode: true }
     await Promise.all(Array.from({ length: 12 }, (_, i) => record(tenant, claimed(tenant, `case_${i}`))))
     expect((await search(tenant)).data.map((e) => e.seq)).toEqual(Array.from({ length: 12 }, (_, i) => i + 1))
     expect(await verify(tenant)).toEqual({ ok: true, checked: 12 })
   })
 
   it('searches by actor, case, subject and time, a page at a time', async () => {
-    const tenant: TenantRef = { orgId: 'org_d', appId: 'app_d', livemode: true }
+    const tenant: TenantRef = { appId: 'app_d', livemode: true }
     const decided = (caseId: string, subject: string) => ({
       id: `evt_${++n}`,
       type: 'case.decided',
@@ -108,30 +108,30 @@ describe.skipIf(!testDatabaseUrl)('the audit log on Postgres', () => {
   })
 
   it('lets the app role neither change nor delete an entry, but reports one changed behind its back', async () => {
-    const tenant: TenantRef = { orgId: 'org_e', appId: 'app_e', livemode: true }
+    const tenant: TenantRef = { appId: 'app_e', livemode: true }
     for (let i = 0; i < 3; i++) await record(tenant, claimed(tenant, `case_${i}`))
     await expect(withTenant(db, scope(tenant), (tx) => tx.execute(sql`UPDATE audit.entries SET facts = '{}'`))).rejects.toThrow()
     await expect(withTenant(db, scope(tenant), (tx) => tx.execute(sql`DELETE FROM audit.entries`))).rejects.toThrow()
-    await expect(withTenant(db, scope(tenant), (tx) => tx.execute(sql`INSERT INTO audit.checkpoints VALUES ('org_e', 'app_e', true, 1, ${'0'.repeat(64)}, now())`))).rejects.toThrow()
+    await expect(withTenant(db, scope(tenant), (tx) => tx.execute(sql`INSERT INTO audit.checkpoints VALUES ('app_e', true, 1, ${'0'.repeat(64)}, now())`))).rejects.toThrow()
 
-    await asSuperuser(`UPDATE audit.entries SET facts = '{"holder":"key_mallory"}' WHERE org_id = 'org_e' AND seq = 2`)
+    await asSuperuser(`UPDATE audit.entries SET facts = '{"holder":"key_mallory"}' WHERE app_id = 'app_e' AND seq = 2`)
     expect(await verify(tenant)).toEqual({ ok: false, checked: 1, seq: 2, reason: 'hash_mismatch' })
-    await asSuperuser(`DELETE FROM audit.entries WHERE org_id = 'org_e' AND seq = 2`)
+    await asSuperuser(`DELETE FROM audit.entries WHERE app_id = 'app_e' AND seq = 2`)
     expect(await verify(tenant)).toEqual({ ok: false, checked: 1, seq: 3, reason: 'seq_gap' })
   })
 
   it('verifies from the checkpoint once old entries are purged', async () => {
-    const tenant: TenantRef = { orgId: 'org_f', appId: 'app_f', livemode: true }
+    const tenant: TenantRef = { appId: 'app_f', livemode: true }
     const entries = []
     for (let i = 0; i < 3; i++) entries.push((await record(tenant, claimed(tenant, `case_${i}`)))!)
-    await asSuperuser(`DELETE FROM audit.entries WHERE org_id = 'org_f' AND seq = 1`)
+    await asSuperuser(`DELETE FROM audit.entries WHERE app_id = 'app_f' AND seq = 1`)
     expect(await verify(tenant)).toMatchObject({ ok: false, seq: 2, reason: 'seq_gap' })
-    await asSuperuser(`INSERT INTO audit.checkpoints VALUES ('org_f', 'app_f', true, 1, '${entries[0]!.hash}', now())`)
+    await asSuperuser(`INSERT INTO audit.checkpoints VALUES ('app_f', true, 1, '${entries[0]!.hash}', now())`)
     expect(await verify(tenant)).toEqual({ ok: true, checked: 2 })
   })
 
   it("erases an account from the entries found by it, and the chain still verifies", async () => {
-    const tenant: TenantRef = { orgId: 'org_x', appId: 'app_x', livemode: true }
+    const tenant: TenantRef = { appId: 'app_x', livemode: true }
     const opened = (caseId: string, subject: string) => ({ id: `evt_${++n}`, type: 'case.opened', data: { caseId, reportId: `rpt_${caseId}`, subjectExternalId: subject, band: 'standard', occurredAt: clock.now().toISOString() } })
     await record(tenant, opened('case_x1', 'u_john_doe'))
     await record(tenant, opened('case_x2', 'u_jim_doe'))
@@ -143,7 +143,7 @@ describe.skipIf(!testDatabaseUrl)('the audit log on Postgres', () => {
   })
 
   it('keeps tenants apart', async () => {
-    const other = { orgId: 'org_b', appIds: ['app_b', 'app_a'], livemode: true }
+    const other = { appIds: ['app_b'], livemode: true }
     expect(await withTenant(db, other, (tx) => pgAuditStore(tx).search(A, { limit: 50 }))).toEqual({ data: [], nextAfterSeq: null })
   })
 })

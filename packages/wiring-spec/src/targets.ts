@@ -29,6 +29,7 @@ export const ENFORCED: readonly string[] = [
   'own-tables-only', // items 5+6
   'erasure-acks', // item 9
   'service-routes', // renames and routes
+  'no-org', // no org in the core
 ]
 
 export const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
@@ -37,10 +38,10 @@ const SERVER_SRC = join(ROOT, 'apps/server/src')
 
 const services = () => readdirSync(MODULES_DIR).filter((d) => statSync(join(MODULES_DIR, d)).isDirectory() && existsSync(join(MODULES_DIR, d, 'package.json'))).sort()
 
-function sourceFiles(dir: string): string[] {
+function sourceFiles(dir: string, ext = '.ts'): string[] {
   if (!existsSync(dir)) return []
   return readdirSync(dir, { recursive: true, withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith('.ts'))
+    .filter((e) => e.isFile() && e.name.endsWith(ext))
     .map((e) => join(e.parentPath, e.name))
 }
 
@@ -298,6 +299,31 @@ function serviceRoutes(): CheckResult {
   }
 }
 
+/**
+ * 10. The core has no org: apps are its top level. No code names an org (orgId, org_id, OrgRole and
+ * the like) and no migration makes an org column or table; an install that groups apps into orgs
+ * (cloud) does so in its own services, through the core's seams.
+ */
+function noOrg(): CheckResult {
+  const roots = [join(ROOT, 'packages'), join(ROOT, 'apps')]
+  const pattern = /\b(?:orgId|org_id|orgRole|OrgRole|createOrg|orgsTable)\b|\bOrg[A-Z]\w*|\btenancy\.orgs\b/
+  const found: string[] = []
+  for (const root of roots) {
+    for (const file of [...sourceFiles(root), ...sourceFiles(root, '.sql')]) {
+      if (file.includes('node_modules') || file.includes('/wiring-spec/src/targets.ts')) continue
+      const hit = read(file).split('\n').findIndex((line) => pattern.test(line))
+      if (hit >= 0) found.push(`${rel(file)}:${hit + 1}`)
+    }
+  }
+  return {
+    id: 'no-org',
+    title: 'The core has no org: apps are its top level (no org in code, columns or tables)',
+    items: 'no-org',
+    green: found.length === 0,
+    detail: found.length === 0 ? 'none' : `${found.length} files: ${list(found)}`,
+  }
+}
+
 /** The services that read the policy: classify (categories, LLM settings), triage (category rules, fallback to rules), moderation (action keys). */
 const POLICY_READERS = ['classify', 'triage', 'moderation']
 
@@ -305,5 +331,5 @@ const POLICY_READERS = ['classify', 'triage', 'moderation']
 const GROUP_PREFIX: Readonly<Record<string, string>> = { moderation: 'cases', flagging: 'intake' }
 
 export async function runChecks(): Promise<readonly CheckResult[]> {
-  return [noServiceImports(), bootsAlone(), ownTablesOnly(), compositionOnly(), await eventCatalog(), erasureAcks(), await notificationClears(), policyCopies(), serviceRoutes()]
+  return [noServiceImports(), bootsAlone(), ownTablesOnly(), compositionOnly(), await eventCatalog(), erasureAcks(), await notificationClears(), policyCopies(), serviceRoutes(), noOrg()]
 }

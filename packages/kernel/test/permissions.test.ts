@@ -5,21 +5,20 @@ import {
   type ApiKeyScope,
   type AppAction,
   type AppRole,
-  type OrgAction,
-  type OrgRole,
+  type AdminAction,
+  type AdminRole,
   type TenantContext,
 } from '../src/index.ts'
 
 const A = 'app_a'
 const B = 'app_b'
 
-function member(orgRole: OrgRole | null, appRoles: Record<string, AppRole> = {}, livemode = true): TenantContext {
+function member(adminRole: AdminRole | null, appRoles: Record<string, AppRole> = {}, livemode = true): TenantContext {
   return {
-    orgId: 'org_1',
     appId: undefined,
-    appIds: orgRole ? [A, B] : Object.keys(appRoles),
+    appIds: adminRole ? [A, B] : Object.keys(appRoles),
     actor: { type: 'member', id: 'mem_1' },
-    orgRole,
+    adminRole,
     appRoles,
     livemode,
   }
@@ -27,11 +26,10 @@ function member(orgRole: OrgRole | null, appRoles: Record<string, AppRole> = {},
 
 function apiKey(scopes: ApiKeyScope[], appId = A): TenantContext {
   return {
-    orgId: 'org_1',
     appId,
     appIds: [appId],
     actor: { type: 'api_key', id: 'key_1', scopes },
-    orgRole: null,
+    adminRole: null,
     appRoles: {},
     livemode: true,
   }
@@ -39,28 +37,26 @@ function apiKey(scopes: ApiKeyScope[], appId = A): TenantContext {
 
 function embed(role: AppRole, appId = A): TenantContext {
   return {
-    orgId: 'org_1',
     appId,
     appIds: [appId],
     actor: { type: 'embed', sub: 'staff_9', name: 'Staff' },
-    orgRole: null,
+    adminRole: null,
     appRoles: { [appId]: role },
     livemode: true,
   }
 }
 
 const system: TenantContext = {
-  orgId: 'org_1',
   appId: A,
   appIds: [A],
   actor: { type: 'system' },
-  orgRole: null,
+  adminRole: null,
   appRoles: {},
   livemode: true,
 }
 
 const owner = member('owner')
-const orgAdmin = member('org_admin')
+const admin = member('admin')
 const appAdminA = member(null, { [A]: 'app_admin' })
 const moderatorA = member(null, { [A]: 'moderator' })
 const noRole = member(null)
@@ -69,7 +65,7 @@ const developerTest = member(null, { [A]: 'developer' }, false)
 
 describe('app actions', () => {
   // [action, App Admin, Moderator, Developer in live mode, Developer in test mode]
-  // Owner and Org Admin hold every app action members may use.
+  // Owner and Admin hold every app action members may use.
   const matrix: [AppAction, boolean, boolean, boolean, boolean][] = [
     ['config.read', true, true, true, true],
     ['integration.configure', true, false, true, true],
@@ -91,7 +87,7 @@ describe('app actions', () => {
   describe.each(matrix)('%s', (action, appAdminOk, moderatorOk, devLiveOk, devTestOk) => {
     it('follows the role matrix on an app the member belongs to', () => {
       expect(can(owner, { action, appId: A })).toBe(true)
-      expect(can(orgAdmin, { action, appId: A })).toBe(true)
+      expect(can(admin, { action, appId: A })).toBe(true)
       expect(can(appAdminA, { action, appId: A })).toBe(appAdminOk)
       expect(can(moderatorA, { action, appId: A })).toBe(moderatorOk)
     })
@@ -108,9 +104,9 @@ describe('app actions', () => {
       expect(can(noRole, { action, appId: A })).toBe(false)
     })
 
-    it('is allowed on every app for org-level roles', () => {
+    it('is allowed on every app for admin roles', () => {
       expect(can(owner, { action, appId: B })).toBe(true)
-      expect(can(orgAdmin, { action, appId: B })).toBe(true)
+      expect(can(admin, { action, appId: B })).toBe(true)
     })
   })
 
@@ -127,9 +123,9 @@ describe('app actions', () => {
   })
 })
 
-describe('org actions', () => {
-  // [action, Owner, Org Admin]; App Admins and Moderators never
-  const matrix: [OrgAction, boolean, boolean][] = [
+describe('admin actions', () => {
+  // [action, Owner, Admin]; App Admins and Moderators never
+  const matrix: [AdminAction, boolean, boolean][] = [
     ['billing.manage', true, false],
     ['app.create', true, true],
     ['app.delete', true, true],
@@ -137,9 +133,9 @@ describe('org actions', () => {
     ['ownership.transfer', true, false],
   ]
 
-  it.each(matrix)('%s', (action, ownerOk, orgAdminOk) => {
+  it.each(matrix)('%s', (action, ownerOk, adminOk) => {
     expect(can(owner, { action })).toBe(ownerOk)
-    expect(can(orgAdmin, { action })).toBe(orgAdminOk)
+    expect(can(admin, { action })).toBe(adminOk)
     expect(can(appAdminA, { action })).toBe(false)
     expect(can(moderatorA, { action })).toBe(false)
     expect(can(developerTest, { action })).toBe(false)
@@ -149,19 +145,19 @@ describe('org actions', () => {
 describe.each(['member.invite', 'role.assign'] as const)('%s', (action) => {
   it('never grants Owner; ownership only moves by transfer', () => {
     expect(can(owner, { action, role: 'owner' })).toBe(false)
-    expect(can(orgAdmin, { action, role: 'owner' })).toBe(false)
+    expect(can(admin, { action, role: 'owner' })).toBe(false)
   })
 
-  it('lets Owner and Org Admin grant Org Admin', () => {
-    expect(can(owner, { action, role: 'org_admin' })).toBe(true)
-    expect(can(orgAdmin, { action, role: 'org_admin' })).toBe(true)
-    expect(can(appAdminA, { action, role: 'org_admin' })).toBe(false)
+  it('lets Owner and Admin grant Admin', () => {
+    expect(can(owner, { action, role: 'admin' })).toBe(true)
+    expect(can(admin, { action, role: 'admin' })).toBe(true)
+    expect(can(appAdminA, { action, role: 'admin' })).toBe(false)
   })
 
-  it('lets Owner and Org Admin grant app roles in any app', () => {
+  it('lets Owner and Admin grant app roles in any app', () => {
     for (const role of ['app_admin', 'moderator', 'developer'] as const) {
       expect(can(owner, { action, role, appId: B })).toBe(true)
-      expect(can(orgAdmin, { action, role, appId: B })).toBe(true)
+      expect(can(admin, { action, role, appId: B })).toBe(true)
     }
   })
 
@@ -177,18 +173,18 @@ describe.each(['member.invite', 'role.assign'] as const)('%s', (action) => {
     expect(can(developerTest, { action, role: 'developer', appId: A })).toBe(false)
   })
 
-  it('rejects an app role without an app, and an org role with one', () => {
+  it('rejects an app role without an app, and an admin role with one', () => {
     expect(can(owner, { action, role: 'moderator' })).toBe(false)
-    expect(can(owner, { action, role: 'org_admin', appId: A })).toBe(false)
+    expect(can(owner, { action, role: 'admin', appId: A })).toBe(false)
   })
 })
 
 describe('evidence.cross_app_full', () => {
   const crossAB = { action: 'evidence.cross_app_full', appId: A, otherAppId: B } as const
 
-  it('is allowed for Owner and Org Admin', () => {
+  it('is allowed for Owner and Admin', () => {
     expect(can(owner, crossAB)).toBe(true)
-    expect(can(orgAdmin, crossAB)).toBe(true)
+    expect(can(admin, crossAB)).toBe(true)
   })
 
   it('needs access to both apps, with any app role', () => {
@@ -240,7 +236,7 @@ describe('API keys', () => {
     })
   })
 
-  it('never manages API keys, sends support bundles, or touches org settings or roles', () => {
+  it('never manages API keys, sends support bundles, or touches settings across apps or roles', () => {
     const all = apiKey(['flagging', 'actions', 'admin'])
     expect(can(all, { action: 'api_key.manage', appId: A })).toBe(false)
     expect(can(all, { action: 'support_bundle.send', appId: A })).toBe(false)
@@ -272,7 +268,7 @@ describe('embedded staff', () => {
     expect(can(embed('developer'), { action: 'config.read', appId: A })).toBe(false)
   })
 
-  it('never manage API keys, webhook destinations, org settings or members', () => {
+  it('never manage API keys, webhook destinations, settings across apps or members', () => {
     expect(can(embed('app_admin'), { action: 'api_key.manage', appId: A })).toBe(false)
     expect(can(embed('app_admin'), { action: 'integration.configure', appId: A })).toBe(false)
     expect(can(embed('app_admin'), { action: 'app.create' })).toBe(false)

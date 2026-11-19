@@ -1,5 +1,5 @@
 // The policy on Postgres: its stores inside a tenant transaction (row-level security limits them to
-// that org, its apps and the mode), and the routes' use cases, each in its own tenant transaction.
+// its apps and the mode), and the routes' use cases, each in its own tenant transaction.
 
 import type { Policy } from '@flagwise/contracts'
 import type { Clock, TenantRef } from '@flagwise/kernel'
@@ -15,11 +15,11 @@ import { headsTable as h } from './schema.ts'
 export const policyMigrations: MigrationSet = loadMigrations('policy', new URL('./migrations/', import.meta.url))
 
 export function pgPolicyHeadStore(tx: TenantTx): PolicyHeadStore {
-  const ofApp = (tenant: TenantRef) => and(eq(h.orgId, tenant.orgId), eq(h.appId, tenant.appId), eq(h.livemode, tenant.livemode))
+  const ofApp = (tenant: TenantRef) => and(eq(h.appId, tenant.appId), eq(h.livemode, tenant.livemode))
   return {
     async lock(tenant) {
       // A transaction-scoped advisory lock: the head may not exist yet, so there is no row to lock.
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`policy:${tenant.orgId}:${tenant.appId}:${tenant.livemode}`}, 0))`)
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`policy:${tenant.appId}:${tenant.livemode}`}, 0))`)
       const [row] = await tx.select({ version: h.version, document: h.document }).from(h).where(ofApp(tenant))
       return row ? { version: row.version, policy: row.document as Policy } : null
     },
@@ -28,8 +28,8 @@ export function pgPolicyHeadStore(tx: TenantTx): PolicyHeadStore {
       const row = { version: head.version, document: head.policy, updatedAt: now }
       await tx
         .insert(h)
-        .values({ orgId: tenant.orgId, appId: tenant.appId, livemode: tenant.livemode, ...row })
-        .onConflictDoUpdate({ target: [h.orgId, h.appId, h.livemode], set: row })
+        .values({ appId: tenant.appId, livemode: tenant.livemode, ...row })
+        .onConflictDoUpdate({ target: [h.appId, h.livemode], set: row })
     },
   }
 }

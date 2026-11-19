@@ -26,7 +26,7 @@ describe.skipIf(!testDatabaseUrl)('the case loop on the server', () => {
   let server: Server
   let installed: Bootstrapped
   const json = async (res: Response) => (await res.json()) as Record<string, any>
-  const tenant = () => ({ orgId: installed.org.id, appId: installed.app.id, livemode: true })
+  const tenant = () => ({ appId: installed.app.id, livemode: true })
   const call = (key: string, path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}) =>
     server.app.http.request(`/v1${path}`, {
       method: init.method ?? 'GET',
@@ -61,7 +61,7 @@ describe.skipIf(!testDatabaseUrl)('the case loop on the server', () => {
     t = await createTestDatabase()
     await migrateFromEnv({ DATABASE_OWNER_URL: t.ownerUrl, DATABASE_APP_URL: `postgres://${t.roles.app}@x/x`, DATABASE_SYSTEM_URL: `postgres://${t.roles.system}@x/x` })
     config = await serverConfigFromEnv({ DATABASE_APP_URL: t.appUrl, DATABASE_SYSTEM_URL: t.systemUrl, STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')) })
-    installed = await bootstrap(config, { orgName: 'Jane Doe Dating', appName: 'Jane Doe Dating iOS' })
+    installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' })
     server = createServer(config, { onError: () => {} })
     await server.start()
   })

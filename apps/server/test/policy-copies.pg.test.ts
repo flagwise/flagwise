@@ -8,20 +8,19 @@ import { manualClock, type TenantRef } from '@flagwise/kernel'
 import { createDatabase, createPgBus, migrate, subscribeCopy, withTenant, type Database, type DocumentCopy, type PgBus } from '@flagwise/platform'
 import { createTestDatabase, schemaDrift, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { busPolicyEvents, pgPolicy, PRESETS } from '@flagwise/policy'
-import { createApp, createOrg, pgTenancyStore, tenancyMigrations } from '@flagwise/tenancy'
+import { createApp, pgTenancyStore, tenancyMigrations } from '@flagwise/tenancy'
 import { pgTriagePolicyCopy, triageTables } from '@flagwise/triage'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ALL_MIGRATIONS } from '../src/migrations.ts'
 
-const A: TenantRef = { orgId: 'org_jane', appId: 'app_jane', livemode: true }
+const A: TenantRef = { appId: 'app_jane', livemode: true }
 const clock = manualClock('2026-11-18T09:00:00Z')
 
-const seedOrg = (db: Database) =>
-  withTenant(db, { orgId: A.orgId, appIds: [A.appId], livemode: true }, async (tx) => {
+const seedApp = (db: Database) =>
+  withTenant(db, { appIds: [A.appId], livemode: true }, async (tx) => {
     const deps = { store: pgTenancyStore(tx), clock, newId: (p: string) => `${p}_1` }
-    await createOrg(deps, { id: A.orgId, name: 'Jane Doe Dating' })
-    await createApp(deps, { orgId: A.orgId, id: A.appId, name: 'Jane Doe Dating iOS' })
+    await createApp(deps, { id: A.appId, name: 'Jane Doe Dating iOS' })
   })
 interface PolicyCopies {
   readonly classify: DocumentCopy<Policy>
@@ -55,7 +54,7 @@ describe.skipIf(!testDatabaseUrl)('policy copies on Postgres', () => {
     copies = copiesOf(db)
     subscribePolicyCopies(bus, copies)
     await bus.drain()
-    await seedOrg(db)
+    await seedApp(db)
   })
   afterAll(async () => {
     await bus?.stop()
@@ -101,9 +100,9 @@ describe.skipIf(!testDatabaseUrl)('upgrading to policy copies', () => {
   it('starts every copy from the config the app had set, at version 1', async () => {
     // A release before the policy service: the config in tenancy's tables.
     await migrate(t.ownerUrl, [tenancyMigrations], t.roles)
-    await seedOrg(db)
-    await withTenant(db, { orgId: A.orgId, appIds: [A.appId], livemode: true }, (tx) =>
-      tx.execute(sql`INSERT INTO tenancy.llm_settings (org_id, app_id, livemode, rules_only, fallback_to_rules, updated_at) VALUES (${A.orgId}, ${A.appId}, true, false, false, now())`),
+    await seedApp(db)
+    await withTenant(db, { appIds: [A.appId], livemode: true }, (tx) =>
+      tx.execute(sql`INSERT INTO tenancy.llm_settings (app_id, livemode, rules_only, fallback_to_rules, updated_at) VALUES (${A.appId}, true, false, false, now())`),
     )
     await migrate(t.ownerUrl, ALL_MIGRATIONS, t.roles)
     const copies = copiesOf(db)

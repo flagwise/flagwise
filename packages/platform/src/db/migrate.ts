@@ -40,8 +40,6 @@ export const platformMigrations: MigrationSet = {
 ALTER DEFAULT PRIVILEGES GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {{app}};
 ALTER DEFAULT PRIVILEGES GRANT USAGE, SELECT ON SEQUENCES TO {{app}};
 GRANT USAGE ON SCHEMA platform TO {{app}}, {{system}};
-CREATE FUNCTION platform.org_id() RETURNS text LANGUAGE sql STABLE
-  AS $$ SELECT NULLIF(current_setting('app.org_id', true), '') $$;
 CREATE FUNCTION platform.app_ids() RETURNS text[] LANGUAGE sql STABLE
   AS $$ SELECT string_to_array(NULLIF(current_setting('app.app_ids', true), ''), ',') $$;
 CREATE FUNCTION platform.livemode() RETURNS boolean LANGUAGE sql STABLE
@@ -60,7 +58,6 @@ CREATE TABLE platform.events (
   type text NOT NULL CHECK (type <> ''),
   key text NOT NULL CHECK (key <> ''),
   data jsonb NOT NULL,
-  org_id text NOT NULL,
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -71,9 +68,9 @@ ALTER TABLE platform.events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.events FORCE ROW LEVEL SECURITY;
 REVOKE UPDATE, DELETE ON platform.events FROM {{app}};
 CREATE POLICY tenant_read ON platform.events FOR SELECT TO {{app}}
-  USING (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 CREATE POLICY tenant_write ON platform.events FOR INSERT TO {{app}}
-  WITH CHECK (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 GRANT SELECT, UPDATE ON platform.events TO {{system}};
 CREATE POLICY relay ON platform.events FOR ALL TO {{system}} USING (true) WITH CHECK (true);
 
@@ -129,7 +126,6 @@ ALTER TABLE platform.events ADD CHECK ((actor_type IS NULL) = (actor_id IS NULL)
 -- The first response to each API request's Idempotency-Key, per app and mode; status is NULL
 -- while the request runs.
 CREATE TABLE platform.idempotency_keys (
-  org_id text NOT NULL,
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   key text NOT NULL CHECK (key <> ''),
@@ -138,14 +134,14 @@ CREATE TABLE platform.idempotency_keys (
   status integer,
   content_type text,
   body text,
-  PRIMARY KEY (org_id, app_id, livemode, key),
+  PRIMARY KEY (app_id, livemode, key),
   CHECK ((status IS NULL) = (body IS NULL) AND (body IS NULL) = (content_type IS NULL))
 );
 ALTER TABLE platform.idempotency_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.idempotency_keys FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant ON platform.idempotency_keys TO {{app}}
-  USING (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
-  WITH CHECK (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 `,
     },
     {

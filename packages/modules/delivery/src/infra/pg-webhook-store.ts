@@ -17,19 +17,18 @@ import {
 } from './schema.ts'
 
 interface TenantColumns {
-  readonly orgId: AnyPgColumn
   readonly appId: AnyPgColumn
   readonly livemode: AnyPgColumn
 }
-const columnsOf = (tenant: TenantRef) => ({ orgId: tenant.orgId, appId: tenant.appId, livemode: tenant.livemode })
+const columnsOf = (tenant: TenantRef) => ({ appId: tenant.appId, livemode: tenant.livemode })
 
 /** A WebhookStore and SendStore on a tenant transaction; every query also filters by the tenant it is given. */
 export function pgWebhookStore(tx: TenantTx): WebhookStore & SendStore {
-  const tenantOf = (t: TenantColumns, tenant: TenantRef) => and(eq(t.orgId, tenant.orgId), eq(t.appId, tenant.appId), eq(t.livemode, tenant.livemode))
+  const tenantOf = (t: TenantColumns, tenant: TenantRef) => and(eq(t.appId, tenant.appId), eq(t.livemode, tenant.livemode))
 
   return {
     async lockApp(tenant) {
-      const key = JSON.stringify([tenant.orgId, tenant.appId, tenant.livemode])
+      const key = JSON.stringify([tenant.appId, tenant.livemode])
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`delivery.webhooks:${key}`}, 0))`)
     },
 
@@ -54,7 +53,7 @@ export function pgWebhookStore(tx: TenantTx): WebhookStore & SendStore {
       return rows.map(
         (r): WebhookEndpoint => ({
           id: r.id,
-          tenant: { orgId: r.orgId, appId: r.appId, livemode: r.livemode },
+          tenant: { appId: r.appId, livemode: r.livemode },
           url: r.url,
           eventTypes: (r.eventTypes as WebhookEventType[] | null) ?? null,
           createdAt: r.createdAt,
@@ -89,7 +88,7 @@ export function pgWebhookStore(tx: TenantTx): WebhookStore & SendStore {
       await tx
         .insert(events)
         .values({ ...columnsOf(tenant), id: e.id, sourceId: e.sourceId, type: e.type, body: e.body, createdAt: e.createdAt })
-        .onConflictDoNothing({ target: [events.orgId, events.appId, events.livemode, events.sourceId] })
+        .onConflictDoNothing({ target: [events.appId, events.livemode, events.sourceId] })
       const [row] = await tx.select().from(events).where(and(tenantOf(events, tenant), eq(events.sourceId, e.sourceId)))
       return { id: row!.id, sourceId: row!.sourceId, type: row!.type, body: row!.body, createdAt: row!.createdAt }
     },
@@ -105,8 +104,8 @@ export function pgWebhookStore(tx: TenantTx): WebhookStore & SendStore {
       const [row] = await tx
         .select({ attempts: deliveries.attempts, body: events.body, url: endpoints.url })
         .from(deliveries)
-        .innerJoin(events, and(eq(events.orgId, deliveries.orgId), eq(events.appId, deliveries.appId), eq(events.id, deliveries.eventId)))
-        .leftJoin(endpoints, and(eq(endpoints.orgId, deliveries.orgId), eq(endpoints.appId, deliveries.appId), eq(endpoints.livemode, deliveries.livemode), eq(endpoints.id, deliveries.endpointId)))
+        .innerJoin(events, and(eq(events.appId, deliveries.appId), eq(events.id, deliveries.eventId)))
+        .leftJoin(endpoints, and(eq(endpoints.appId, deliveries.appId), eq(endpoints.livemode, deliveries.livemode), eq(endpoints.id, deliveries.endpointId)))
         .where(and(tenantOf(deliveries, tenant), eq(deliveries.eventId, eventId), eq(deliveries.endpointId, endpointId), eq(deliveries.status, 'pending')))
       return row ? { attempts: row.attempts, body: row.body, url: row.url ?? null } : null
     },
@@ -143,34 +142,34 @@ export function pgWebhookOutbox(tx: SystemTx): WebhookOutbox {
       // rows another sender is leasing right now are skipped.
       const result = await tx.execute(sql`
         WITH held AS (
-          SELECT org_id, app_id, endpoint_id, count(*) AS n FROM delivery.webhook_deliveries
+          SELECT app_id, endpoint_id, count(*) AS n FROM delivery.webhook_deliveries
           WHERE status = 'pending' AND leased_until > ${now}
-          GROUP BY org_id, app_id, endpoint_id
+          GROUP BY app_id, endpoint_id
         ),
         free AS (
-          SELECT d.org_id, d.app_id, d.livemode, d.event_id, d.endpoint_id, d.next_attempt_at FROM delivery.webhook_deliveries d
+          SELECT d.app_id, d.livemode, d.event_id, d.endpoint_id, d.next_attempt_at FROM delivery.webhook_deliveries d
           WHERE d.status = 'pending' AND d.next_attempt_at <= ${now} AND (d.leased_until IS NULL OR d.leased_until <= ${now})
           ORDER BY d.next_attempt_at
           LIMIT ${limit * 4}
           FOR UPDATE SKIP LOCKED
         ),
         ranked AS (
-          SELECT f.*, row_number() OVER (PARTITION BY f.org_id, f.app_id, f.endpoint_id ORDER BY f.next_attempt_at, f.event_id) AS rank,
+          SELECT f.*, row_number() OVER (PARTITION BY f.app_id, f.endpoint_id ORDER BY f.next_attempt_at, f.event_id) AS rank,
                  coalesce(h.n, 0) AS held
-          FROM free f LEFT JOIN held h USING (org_id, app_id, endpoint_id)
+          FROM free f LEFT JOIN held h USING (app_id, endpoint_id)
         ),
         picked AS (
-          SELECT org_id, app_id, event_id, endpoint_id FROM ranked WHERE rank + held <= ${perEndpoint}
+          SELECT app_id, event_id, endpoint_id FROM ranked WHERE rank + held <= ${perEndpoint}
           ORDER BY next_attempt_at LIMIT ${limit}
         )
         UPDATE delivery.webhook_deliveries d SET leased_until = ${until}
         FROM picked p
-        WHERE d.org_id = p.org_id AND d.app_id = p.app_id AND d.event_id = p.event_id AND d.endpoint_id = p.endpoint_id
-        RETURNING d.org_id, d.app_id, d.livemode, d.event_id, d.endpoint_id, d.next_attempt_at`)
-      const rows = result.rows as { org_id: string; app_id: string; livemode: boolean; event_id: string; endpoint_id: string; next_attempt_at: Date | string }[]
+        WHERE d.app_id = p.app_id AND d.event_id = p.event_id AND d.endpoint_id = p.endpoint_id
+        RETURNING d.app_id, d.livemode, d.event_id, d.endpoint_id, d.next_attempt_at`)
+      const rows = result.rows as { app_id: string; livemode: boolean; event_id: string; endpoint_id: string; next_attempt_at: Date | string }[]
       return rows
         .sort((a, b) => new Date(a.next_attempt_at).getTime() - new Date(b.next_attempt_at).getTime())
-        .map((r): DueDelivery => ({ tenant: { orgId: r.org_id, appId: r.app_id, livemode: r.livemode }, eventId: r.event_id, endpointId: r.endpoint_id }))
+        .map((r): DueDelivery => ({ tenant: { appId: r.app_id, livemode: r.livemode }, eventId: r.event_id, endpointId: r.endpoint_id }))
     },
   }
 }
@@ -185,12 +184,12 @@ export async function resealWebhookSecrets(tx: SystemTx, sealer: SecretSealer & 
   let n = 0
   for (const r of rows) {
     if (sealer.keyIdOf(r.sealed) === sealer.currentKeyId) continue
-    const context = secretContext({ orgId: r.orgId, appId: r.appId, livemode: r.livemode }, r.version)
+    const context = secretContext({ appId: r.appId, livemode: r.livemode }, r.version)
     const resealed = sealer.seal(sealer.open(r.sealed, context), context)
     await tx
       .update(secrets)
       .set({ sealed: resealed })
-      .where(and(eq(secrets.orgId, r.orgId), eq(secrets.appId, r.appId), eq(secrets.livemode, r.livemode), eq(secrets.version, r.version)))
+      .where(and(eq(secrets.appId, r.appId), eq(secrets.livemode, r.livemode), eq(secrets.version, r.version)))
     n++
   }
   return n

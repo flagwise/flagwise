@@ -22,7 +22,7 @@ export function classifyRoutes(deps: Pick<ClassifyDeps, 'run'>): Hono<ClassifyEn
     if (!ctx.appId || !can(ctx, { action: 'case.work', appId: ctx.appId })) {
       throw new FlagwiseError('forbidden', 'This API key does not have the admin scope')
     }
-    const tenant = { orgId: ctx.orgId, appId: ctx.appId, livemode: ctx.livemode }
+    const tenant = { appId: ctx.appId, livemode: ctx.livemode }
     const record = await findClassification(deps, tenant, c.req.param('caseId'))
     if (!record) throw new FlagwiseError('not_found', 'This case has no classification yet')
     return c.json(classificationBody(record))

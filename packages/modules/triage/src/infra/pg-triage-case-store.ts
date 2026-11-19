@@ -24,7 +24,7 @@ const stored = (r: ReportAccounts): StoredAccounts => ({
 const time = (v: string | null) => (v === null ? null : new Date(v))
 
 export function pgTriageCaseStore(tx: TenantTx): TriageCaseStore {
-  const one = (tenant: TenantRef, caseId: string) => and(eq(t.orgId, tenant.orgId), eq(t.appId, tenant.appId), eq(t.livemode, tenant.livemode), eq(t.caseId, caseId))
+  const one = (tenant: TenantRef, caseId: string) => and(eq(t.appId, tenant.appId), eq(t.livemode, tenant.livemode), eq(t.caseId, caseId))
   return {
     async find(tenant, caseId) {
       const [row] = await tx.select().from(t).where(one(tenant, caseId))
@@ -49,7 +49,6 @@ export function pgTriageCaseStore(tx: TenantTx): TriageCaseStore {
       await tx
         .insert(t)
         .values({
-          orgId: r.tenant.orgId,
           appId: r.tenant.appId,
           livemode: r.tenant.livemode,
           caseId: r.caseId,
@@ -73,7 +72,7 @@ export function pgTriageCaseStore(tx: TenantTx): TriageCaseStore {
         .from(t)
         .where(
           and(
-            eq(t.orgId, tenant.orgId),
+            
             eq(t.appId, tenant.appId),
             eq(t.livemode, tenant.livemode),
             or(eq(t.subjectExternalId, externalId), sql`${t.reports} @> ${JSON.stringify([{ reporterExternalId: externalId }])}::jsonb`),

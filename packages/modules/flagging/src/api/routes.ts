@@ -55,7 +55,7 @@ export function flaggingRoutes(deps: FlaggingDeps): Hono<FlaggingEnv> {
     if (!ctx.appId || !can(ctx, { action: 'case.work', appId: ctx.appId })) {
       throw new FlagwiseError('forbidden', 'This API key does not have the admin scope')
     }
-    const tenant = { orgId: ctx.orgId, appId: ctx.appId, livemode: ctx.livemode }
+    const tenant = { appId: ctx.appId, livemode: ctx.livemode }
     return c.json(evidenceBody(await getEvidence(deps, tenant, c.req.param('id'))))
   })
 
@@ -88,7 +88,7 @@ function flaggingTenant(ctx: TenantContext): TenantRef {
   if (!ctx.appId || !can(ctx, { action: 'report.create', appId: ctx.appId })) {
     throw new FlagwiseError('forbidden', 'This API key does not have the flagging scope')
   }
-  return { orgId: ctx.orgId, appId: ctx.appId, livemode: ctx.livemode }
+  return { appId: ctx.appId, livemode: ctx.livemode }
 }
 
 /**

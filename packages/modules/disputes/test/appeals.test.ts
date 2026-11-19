@@ -4,7 +4,7 @@ import { AppealError, appealDeadline, fileAppeal, resolveAppeal, type FileAppeal
 import { VersionConflictError, type AppealRecord, type AppealsDeps, type DecisionView } from '../src/app/ports.ts'
 import { InMemoryAppeals, InMemoryDecisions, RecordingPublisher } from './fakes.ts'
 
-const tenant: TenantRef = { orgId: 'org_1', appId: 'app_a', livemode: true }
+const tenant: TenantRef = { appId: 'app_a', livemode: true }
 const DECIDED = new Date('2026-11-03T09:00:00.000Z')
 const DAY = 86_400_000
 const REVERSE: Record<string, string> = { suspend_7d: 'unsuspend', hide_content: 'unhide_content' }

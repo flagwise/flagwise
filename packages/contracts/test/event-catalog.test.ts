@@ -59,6 +59,6 @@ describe('eventContract', () => {
     const { memberId: _, ...missing } = claimed
     expect(() => eventContract.versionOf('case.claimed.v1', missing)).toThrow(/memberId/)
     expect(() => eventContract.versionOf('case.claimed.v1', { ...claimed, occurredAt: 'yesterday' })).toThrow(/occurredAt/)
-    expect(() => eventContract.versionOf('case.claimed.v1', { ...claimed, tenant: { orgId: 'org_1' } })).toThrow(/tenant/)
+    expect(() => eventContract.versionOf('case.claimed.v1', { ...claimed, tenant: { appId: 'app_1' } })).toThrow(/tenant/)
   })
 })

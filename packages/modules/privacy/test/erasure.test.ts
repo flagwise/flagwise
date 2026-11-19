@@ -6,7 +6,7 @@ import { createMemoryBus, memoryUnitOfWork, type BusEvent, type MemoryBus } from
 import { beforeEach, describe, expect, it } from 'vitest'
 import { ERASURE_DEADLINE_MS, erasureStatus, privacyService, subscribePrivacy, type ErasureRecord, type ErasureStore, type PrivacyService } from '../src/index.ts'
 
-const tenant: TenantRef = { orgId: 'org_jane', appId: 'app_a', livemode: true }
+const tenant: TenantRef = { appId: 'app_a', livemode: true }
 const T0 = new Date('2026-11-19T09:00:00.000Z')
 
 class Erasures implements ErasureStore {

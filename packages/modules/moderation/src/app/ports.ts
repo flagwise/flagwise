@@ -115,7 +115,7 @@ export interface CaseChange {
   readonly decision?: Decision
 }
 
-/** Every method only sees cases of the given tenant (org, app and livemode). */
+/** Every method only sees cases of the given tenant (app and livemode). */
 export interface CaseRepository {
   findById(tenant: TenantRef, caseId: string): Promise<CaseRecord | null>
   findBySubject(tenant: TenantRef, subjectExternalId: string): Promise<readonly CaseRecord[]>

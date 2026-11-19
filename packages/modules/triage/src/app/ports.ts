@@ -55,7 +55,7 @@ export interface TriageCase {
 
 export type TriageCaseChange = Partial<Pick<TriageCase, 'state' | 'classification' | 'claimed' | 'everClaimed' | 'corrected' | 'decided'>>
 
-/** Every method only sees cases of the given tenant (org, app and livemode). */
+/** Every method only sees cases of the given tenant (app and livemode). */
 export interface TriageCaseStore {
   find(tenant: TenantRef, caseId: string): Promise<TriageCase | null>
   /** Keeps a newly opened case; one already kept stays as it is. */

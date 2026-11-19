@@ -6,8 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createDatabase, createPgBus, migrate, runInRequest, withTenant, type BusEvent, type Database, type EventContract, type PgBus, type PgBusOptions } from '../src/index.ts'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '../src/testing/pg.ts'
 
-const A: TenantRef = { orgId: 'org_a', appId: 'app_a', livemode: true }
-const B: TenantRef = { orgId: 'org_b', appId: 'app_b', livemode: true }
+const A: TenantRef = { appId: 'app_a', livemode: true }
+const B: TenantRef = { appId: 'app_b', livemode: true }
 let n = 0
 const ev = (type: string, key: string, data: unknown = null, tenant: TenantRef = A, id = `evt_${++n}`): BusEvent => ({ id, type, key, data, tenant })
 
@@ -93,23 +93,23 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
     bus.subscribe('g', '*', handler())
     await bus.drain()
     await expect(
-      withTenant(db, { orgId: 'org_a', appIds: ['app_a'], livemode: true }, async (tx) => {
+      withTenant(db, { appIds: ['app_a'], livemode: true }, async (tx) => {
         await bus.publish(ev('a', 'k'), tx)
         throw new Error('rolled back')
       }),
     ).rejects.toThrow('rolled back')
-    await withTenant(db, { orgId: 'org_a', appIds: ['app_a'], livemode: true }, (tx) => bus.publish(ev('b', 'k'), tx))
+    await withTenant(db, { appIds: ['app_a'], livemode: true }, (tx) => bus.publish(ev('b', 'k'), tx))
     await bus.drain()
     expect(calls).toEqual(['g:evt_2#1'])
   })
 
   it('lets the app role read only its own tenant events, and no deliveries', async () => {
     await bus.publish([ev('a', 'k', null, A), ev('b', 'k', null, B)])
-    const mine = await withTenant(db, { orgId: 'org_a', appIds: ['app_a'], livemode: true }, (tx) =>
+    const mine = await withTenant(db, { appIds: ['app_a'], livemode: true }, (tx) =>
       tx.execute<{ id: string }>(sql`SELECT id FROM platform.events ORDER BY seq`),
     )
     expect(mine.rows.map((r) => r.id)).toEqual(['evt_1'])
-    const writeOther = withTenant(db, { orgId: 'org_a', appIds: ['app_a'], livemode: true }, (tx) => bus.publish(ev('c', 'k', null, B), tx))
+    const writeOther = withTenant(db, { appIds: ['app_a'], livemode: true }, (tx) => bus.publish(ev('c', 'k', null, B), tx))
     await expect(writeOther).rejects.toThrow()
     await expect(db.app.execute(sql`SELECT * FROM platform.deliveries`)).rejects.toThrow()
   })
@@ -388,7 +388,7 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
     bus.subscribe('g', '*', (e) => void seen.push(e.meta))
     await bus.drain()
     await runInRequest({ requestId: 'req_1', actor: { type: 'api_key', id: 'key_1' } }, () => bus.publish(ev('a', 'k')))
-    await withTenant(db, { orgId: A.orgId, appIds: [A.appId], livemode: A.livemode }, (tx) =>
+    await withTenant(db, { appIds: [A.appId], livemode: A.livemode }, (tx) =>
       runInRequest({ actor: { type: 'operator', id: 'cli' } }, () => bus.publish(ev('b', 'k'), tx)),
     )
     await bus.publish(ev('c', 'k'))
@@ -478,7 +478,7 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
       const checked = newBus({ contract })
       await expect(checked.publish([ev('order.placed.v1', 'o1', { orderId: 'o1' }), ev('order.placed.v1', 'o2', {})])).rejects.toThrow(/needs an orderId/)
       await expect(
-        withTenant(db, { orgId: A.orgId, appIds: [A.appId], livemode: A.livemode }, (tx) => checked.publish([ev('order.placed.v1', 'o3', { orderId: 'o3' }), ev('order.placed', 'o4', { orderId: 'o4' })], tx)),
+        withTenant(db, { appIds: [A.appId], livemode: A.livemode }, (tx) => checked.publish([ev('order.placed.v1', 'o3', { orderId: 'o3' }), ev('order.placed', 'o4', { orderId: 'o4' })], tx)),
       ).rejects.toThrow(/not in the contract/)
       expect(await checked.log()).toEqual([])
     })
@@ -497,8 +497,8 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
       await owner.query("DELETE FROM platform.schema_migrations WHERE module = 'platform' AND id = '0005_event_contracts'")
       await owner.query('ALTER TABLE platform.events DROP COLUMN schema_version')
       await owner.query('ALTER TABLE platform.events NO FORCE ROW LEVEL SECURITY')
-      await owner.query(`INSERT INTO platform.events (id, type, key, data, org_id, app_id, livemode) VALUES
-        ('e1', 'case.opened', 'k', '{}', 'org_a', 'app_a', true), ('e2', 'case.claimed.v2', 'k', '{}', 'org_a', 'app_a', true)`)
+      await owner.query(`INSERT INTO platform.events (id, type, key, data, app_id, livemode) VALUES
+        ('e1', 'case.opened', 'k', '{}', 'app_a', true), ('e2', 'case.claimed.v2', 'k', '{}', 'app_a', true)`)
       await owner.query('ALTER TABLE platform.events FORCE ROW LEVEL SECURITY')
       await owner.query(`INSERT INTO platform.consumer_groups (name, types, max_attempts, since_seq) VALUES
         ('g1', '{case.opened,case.claimed.v2,case.decided}', 5, 0), ('g2', NULL, 5, 0)`)

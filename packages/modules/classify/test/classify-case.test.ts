@@ -20,7 +20,7 @@ import {
   type ReportScreening,
 } from '../src/index.ts'
 
-const A: TenantRef = { orgId: 'org_1', appId: 'app_a', livemode: true }
+const A: TenantRef = { appId: 'app_a', livemode: true }
 const USAGE = { input: 100, output: 20, cached: 900 }
 const PROMPT = classifierPrompt('You classify user reports.')
 

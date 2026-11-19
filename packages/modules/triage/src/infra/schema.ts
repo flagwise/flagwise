@@ -10,7 +10,6 @@ export const policyCopiesTable = copyTable(schema, 'policy_copies')
 
 /** Triage's record of each case, from the cases' events. */
 export const triageCasesTable = schema.table('cases', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   caseId: text('case_id').notNull(),

@@ -54,7 +54,7 @@ export function auditRoutes(deps: AuditRoutesDeps): Hono<AuditEnv> {
 
 function reader(ctx: TenantContext): TenantRef {
   if (!ctx.appId || !can(ctx, { action: 'audit.read', appId: ctx.appId })) throw new FlagwiseError('forbidden', 'This API key does not have the admin scope')
-  return { orgId: ctx.orgId, appId: ctx.appId, livemode: ctx.livemode }
+  return { appId: ctx.appId, livemode: ctx.livemode }
 }
 
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/

@@ -1,4 +1,4 @@
-// Setting up an install: the database roles, the migrations, and the first org, app and API keys.
+// Setting up an install: the database roles, the migrations, and the first app and its API keys.
 // Each step is safe to run again and needs only its own URL. With separate role URLs they run from
 // the CLI with roles the server never gets; with one DATABASE_URL the server does the first two.
 
@@ -19,7 +19,7 @@ import {
 } from '@flagwise/delivery'
 import type { TenantRef } from '@flagwise/kernel'
 import { busPolicyEvents, pgPolicy, PRESETS, type PresetName } from '@flagwise/policy'
-import { busTenancyEvents, createApp as createOrgApp, createOrg, issueApiKey, pgTenancyStore, type App, type Org } from '@flagwise/tenancy'
+import { busTenancyEvents, createApp as createRegistryApp, issueApiKey, pgTenancyStore, type App } from '@flagwise/tenancy'
 import { envReader, type Env } from './config/env.ts'
 import type { ServerConfig } from './config/server.ts'
 import { ALL_MIGRATIONS } from './migrations.ts'
@@ -97,7 +97,6 @@ export async function migrateFromEnv(env: Env): Promise<string[]> {
 }
 
 export interface Bootstrapped {
-  readonly org: Org
   readonly app: App
   /** Shown once, never stored. */
   readonly liveKey: string
@@ -105,12 +104,12 @@ export interface Bootstrapped {
 }
 
 /**
- * `flagwise bootstrap`: creates an org, an app and a live and a test API key for it (flagging and
+ * `flagwise bootstrap`: creates an app and a live and a test API key for it (flagging and
  * actions scopes), after preparing what the server needs before its first request: the database
  * (server.prepare without waiting: with one URL it migrates, with role URLs pending migrations
  * throw), the storage (the bucket or directory) and the event bus's consumer groups. A group only receives events
  * published after it is stored, and no report can arrive before the first key exists, so storing
- * them here means no event is missed. Each run creates another org. With `preset`, the app starts
+ * them here means no event is missed. Each run creates another app. With `preset`, the app starts
  * with that preset's categories, in live and test mode.
  */
 export function bootstrap(config: ServerConfig, input: BootstrapInput, clock: Clock = systemClock): Promise<Bootstrapped> {
@@ -118,7 +117,6 @@ export function bootstrap(config: ServerConfig, input: BootstrapInput, clock: Cl
 }
 
 export interface BootstrapInput {
-  readonly orgName: string
   readonly appName: string
   readonly preset?: PresetName
 }
@@ -134,25 +132,23 @@ async function bootstrapAsOperator(config: ServerConfig, input: BootstrapInput, 
   try {
     await server.prepare()
     await server.bus.drain()
-    const orgId = newId('org', { clock })
     const appId = newId('app', { clock })
     const scopes = ['flagging', 'actions']
     // Each mode in its own transaction: a key's event is written in its own mode.
-    const live = await withTenant(server.db, { orgId, appIds: [appId], livemode: true }, async (tx) => {
+    const live = await withTenant(server.db, { appIds: [appId], livemode: true }, async (tx) => {
       const deps = registryDeps(server, tx, clock)
-      const org = await createOrg(deps, { id: orgId, name: input.orgName })
-      const app = await createOrgApp(deps, { orgId, id: appId, name: input.appName })
-      return { org, app, key: (await issueApiKey(deps, { orgId, appId, livemode: true, scopes })).key }
+      const app = await createRegistryApp(deps, { id: appId, name: input.appName })
+      return { app, key: (await issueApiKey(deps, { appId, livemode: true, scopes })).key }
     })
-    const test = await withTenant(server.db, { orgId, appIds: [appId], livemode: false }, async (tx) => {
-      return issueApiKey(registryDeps(server, tx, clock), { orgId, appId, livemode: false, scopes })
+    const test = await withTenant(server.db, { appIds: [appId], livemode: false }, async (tx) => {
+      return issueApiKey(registryDeps(server, tx, clock), { appId, livemode: false, scopes })
     })
     // The preset is the policy service's to apply, in its own transaction per mode.
     if (input.preset) {
       const policy = pgPolicy(server.db, { clock, events: (tx) => busPolicyEvents(server.bus, tx, () => newId('evt', { clock })) })
-      for (const livemode of [true, false]) await policy.replaceCategories({ orgId, appId, livemode }, PRESETS[input.preset])
+      for (const livemode of [true, false]) await policy.replaceCategories({ appId, livemode }, PRESETS[input.preset])
     }
-    return { org: live.org, app: live.app, liveKey: live.key, testKey: test.key }
+    return { app: live.app, liveKey: live.key, testKey: test.key }
   } finally {
     await server.stop()
   }
@@ -173,7 +169,7 @@ export interface CreatedKey {
  */
 export function createKey(
   config: ServerConfig,
-  input: { readonly orgId: string; readonly appId: string; readonly scopes: readonly string[]; readonly livemode: boolean },
+  input: { readonly appId: string; readonly scopes: readonly string[]; readonly livemode: boolean },
   clock: Clock = systemClock,
 ): Promise<CreatedKey> {
   return asOperator(() => createKeyAsOperator(config, input, clock))
@@ -181,14 +177,14 @@ export function createKey(
 
 async function createKeyAsOperator(
   config: ServerConfig,
-  input: { readonly orgId: string; readonly appId: string; readonly scopes: readonly string[]; readonly livemode: boolean },
+  input: { readonly appId: string; readonly scopes: readonly string[]; readonly livemode: boolean },
   clock: Clock,
 ): Promise<CreatedKey> {
   const server = createServer({ ...config, mode: 'api' }, { clock })
   try {
     await server.prepare()
-    return await withTenant(server.db, { orgId: input.orgId, appIds: [input.appId], livemode: input.livemode }, async (tx) => {
-      const issued = await issueApiKey(registryDeps(server, tx, clock), { orgId: input.orgId, appId: input.appId, livemode: input.livemode, scopes: input.scopes })
+    return await withTenant(server.db, { appIds: [input.appId], livemode: input.livemode }, async (tx) => {
+      const issued = await issueApiKey(registryDeps(server, tx, clock), { appId: input.appId, livemode: input.livemode, scopes: input.scopes })
       return { key: issued.key, id: issued.record.id, scopes: issued.record.scopes, livemode: issued.record.livemode }
     })
   } finally {
@@ -207,7 +203,7 @@ function registryDeps(server: Server, tx: TenantTx, clock: Clock) {
   return {
     store: pgTenancyStore(tx),
     clock,
-    newId: (prefix: 'org' | 'app' | 'key') => newId(prefix, { clock }),
+    newId: (prefix: 'app' | 'key') => newId(prefix, { clock }),
     events: busTenancyEvents(server.bus, tx, () => newId('evt', { clock })),
   }
 }
@@ -217,7 +213,7 @@ async function withWebhooks<T>(config: ServerConfig, tenant: TenantRef, clock: C
   const server = createServer({ ...config, mode: 'api' }, { clock })
   try {
     await server.prepare()
-    return await withTenant(server.db, { orgId: tenant.orgId, appIds: [tenant.appId], livemode: tenant.livemode }, (tx) =>
+    return await withTenant(server.db, { appIds: [tenant.appId], livemode: tenant.livemode }, (tx) =>
       fn({
         webhooks: pgWebhookStore(tx),
         // Listing and removing never seal; adding and rolling check for the keys first.

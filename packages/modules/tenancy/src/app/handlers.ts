@@ -1,5 +1,5 @@
 // tenancy's answer to an erasure: it keeps nothing about the tenant's end users (its data is about
-// the install's org, apps, members and API keys), so it answers nothing_held.
+// the install's apps, members and API keys), so it answers nothing_held.
 
 import { currentType, erasureAnswer, type EventData } from '@flagwise/contracts'
 import type { Clock } from '@flagwise/kernel'

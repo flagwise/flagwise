@@ -12,12 +12,11 @@ import { scopeOfRef, withTenant, type Database } from './tenant.ts'
 
 /**
  * The copy table `name` in a service's schema. Its migration creates it with the primary key
- * (org_id, app_id, livemode), `version integer NOT NULL CHECK (version >= 1)` and tenant
+ * (app_id, livemode), `version integer NOT NULL CHECK (version >= 1)` and tenant
  * row-level security.
  */
 export function copyTable(schema: PgSchema, name: string) {
   return schema.table(name, {
-    orgId: text('org_id').notNull(),
     appId: text('app_id').notNull(),
     livemode: boolean('livemode').notNull(),
     version: integer('version').notNull(),
@@ -47,7 +46,7 @@ export function pgDocumentCopy<T>(db: Database, table: CopyTable): DocumentCopy<
         tx
           .select({ version: table.version, document: table.document })
           .from(table)
-          .where(and(eq(table.orgId, tenant.orgId), eq(table.appId, tenant.appId), eq(table.livemode, tenant.livemode))),
+          .where(and(eq(table.appId, tenant.appId), eq(table.livemode, tenant.livemode))),
       )
       return row ? { version: row.version, document: row.document as T } : null
     },
@@ -56,9 +55,9 @@ export function pgDocumentCopy<T>(db: Database, table: CopyTable): DocumentCopy<
       const rows = await withTenant(db, scopeOfRef(tenant), (tx) =>
         tx
           .insert(table)
-          .values({ orgId: tenant.orgId, appId: tenant.appId, livemode: tenant.livemode, version, document })
+          .values({ appId: tenant.appId, livemode: tenant.livemode, version, document })
           .onConflictDoUpdate({
-            target: [table.orgId, table.appId, table.livemode],
+            target: [table.appId, table.livemode],
             set: { version, document },
             setWhere: sql`${table.version} < excluded.version`,
           })
@@ -72,7 +71,7 @@ export function pgDocumentCopy<T>(db: Database, table: CopyTable): DocumentCopy<
 /** A copy in memory, for tests and dev. */
 export function memoryDocumentCopy<T>(): DocumentCopy<T> & { readonly kept: Map<string, KeptCopy<T>> } {
   const kept = new Map<string, KeptCopy<T>>()
-  const k = (t: TenantRef) => `${t.orgId}|${t.appId}|${t.livemode}`
+  const k = (t: TenantRef) => `${t.appId}|${t.livemode}`
   return {
     kept,
     async get(tenant) {

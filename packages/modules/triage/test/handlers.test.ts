@@ -5,7 +5,7 @@ import { createMemoryBus, memoryDocumentCopy, memoryUnitOfWork, type MemoryBus }
 import { beforeEach, describe, expect, it } from 'vitest'
 import { erasedFromCase, subscribeTriage, type TriageCase, type TriageCaseStore } from '../src/index.ts'
 
-const tenant: TenantRef = { orgId: 'org_jane', appId: 'app_a', livemode: true }
+const tenant: TenantRef = { appId: 'app_a', livemode: true }
 const T0 = '2026-11-19T09:00:00.000Z'
 const H = 3_600_000
 

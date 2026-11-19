@@ -4,7 +4,6 @@
 -- the master key rotates; it never sees an endpoint or an event body.
 
 CREATE TABLE delivery.webhook_secrets (
-  org_id text NOT NULL,
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   -- 1 for the first secret, then one more for each roll.
@@ -14,11 +13,10 @@ CREATE TABLE delivery.webhook_secrets (
   created_at timestamptz NOT NULL,
   -- Null for the current secret; a rolled-over secret still signs until then.
   expires_at timestamptz,
-  PRIMARY KEY (org_id, app_id, livemode, version)
+  PRIMARY KEY (app_id, livemode, version)
 );
 
 CREATE TABLE delivery.webhook_endpoints (
-  org_id text NOT NULL,
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   id text NOT NULL,
@@ -26,11 +24,10 @@ CREATE TABLE delivery.webhook_endpoints (
   -- Null: every event type.
   event_types text[],
   created_at timestamptz NOT NULL,
-  PRIMARY KEY (org_id, app_id, id)
+  PRIMARY KEY (app_id, id)
 );
 
 CREATE TABLE delivery.webhook_events (
-  org_id text NOT NULL,
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   -- The `evt_` id tenants see, the same for every endpoint and every retry.
@@ -41,12 +38,11 @@ CREATE TABLE delivery.webhook_events (
   -- The exact JSON that is signed and sent.
   body text NOT NULL,
   created_at timestamptz NOT NULL,
-  PRIMARY KEY (org_id, app_id, id),
-  UNIQUE (org_id, app_id, livemode, source_id)
+  PRIMARY KEY (app_id, id),
+  UNIQUE (app_id, livemode, source_id)
 );
 
 CREATE TABLE delivery.webhook_deliveries (
-  org_id text NOT NULL,
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   event_id text NOT NULL,
@@ -60,15 +56,14 @@ CREATE TABLE delivery.webhook_deliveries (
   leased_until timestamptz,
   created_at timestamptz NOT NULL,
   finished_at timestamptz,
-  PRIMARY KEY (org_id, app_id, event_id, endpoint_id),
-  FOREIGN KEY (org_id, app_id, event_id) REFERENCES delivery.webhook_events (org_id, app_id, id) ON DELETE CASCADE,
+  PRIMARY KEY (app_id, event_id, endpoint_id),
+  FOREIGN KEY (app_id, event_id) REFERENCES delivery.webhook_events (app_id, id) ON DELETE CASCADE,
   CHECK ((status = 'pending') = (next_attempt_at IS NOT NULL))
 );
 
 CREATE INDEX webhook_deliveries_due ON delivery.webhook_deliveries (next_attempt_at) WHERE status = 'pending';
 
 CREATE TABLE delivery.webhook_attempts (
-  org_id text NOT NULL,
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   event_id text NOT NULL,
@@ -81,8 +76,8 @@ CREATE TABLE delivery.webhook_attempts (
   delivered boolean NOT NULL,
   -- Why it failed without a response (timeout, connection refused, ...).
   error text,
-  PRIMARY KEY (org_id, app_id, event_id, endpoint_id, number),
-  FOREIGN KEY (org_id, app_id, event_id, endpoint_id) REFERENCES delivery.webhook_deliveries (org_id, app_id, event_id, endpoint_id) ON DELETE CASCADE
+  PRIMARY KEY (app_id, event_id, endpoint_id, number),
+  FOREIGN KEY (app_id, event_id, endpoint_id) REFERENCES delivery.webhook_deliveries (app_id, event_id, endpoint_id) ON DELETE CASCADE
 );
 
 ALTER TABLE delivery.webhook_secrets ENABLE ROW LEVEL SECURITY;
@@ -97,20 +92,20 @@ ALTER TABLE delivery.webhook_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE delivery.webhook_attempts FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY tenant ON delivery.webhook_secrets TO {{app}}
-  USING (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
-  WITH CHECK (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 CREATE POLICY tenant ON delivery.webhook_endpoints TO {{app}}
-  USING (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
-  WITH CHECK (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 CREATE POLICY tenant ON delivery.webhook_events TO {{app}}
-  USING (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
-  WITH CHECK (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 CREATE POLICY tenant ON delivery.webhook_deliveries TO {{app}}
-  USING (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
-  WITH CHECK (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 CREATE POLICY tenant ON delivery.webhook_attempts TO {{app}}
-  USING (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
-  WITH CHECK (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 
 GRANT USAGE ON SCHEMA delivery TO {{system}};
 

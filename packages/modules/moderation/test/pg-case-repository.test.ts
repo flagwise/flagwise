@@ -16,9 +16,9 @@ import {
 } from '../src/index.ts'
 import { RecordingPublisher } from './fakes.ts'
 
-const A: TenantRef = { orgId: 'org_a', appId: 'app_a', livemode: true }
-const B: TenantRef = { orgId: 'org_a', appId: 'app_b', livemode: true }
-const scope = (t: TenantRef): TenantScope => ({ orgId: t.orgId, appIds: [t.appId], livemode: t.livemode })
+const A: TenantRef = { appId: 'app_a', livemode: true }
+const B: TenantRef = { appId: 'app_b', livemode: true }
+const scope = (t: TenantRef): TenantScope => ({ appIds: [t.appId], livemode: t.livemode })
 const T0 = new Date('2026-11-03T09:00:00.000Z')
 
 const base = (over: Partial<CaseRecord> = {}): CaseRecord => ({

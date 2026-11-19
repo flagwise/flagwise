@@ -1,4 +1,4 @@
-// Invitations and org rules. Who may invite whom is the permission matrix in kernel (can); this file
+// Invitations and member rules. Who may invite whom is the permission matrix in kernel (can); this file
 // is about the invitation itself: a single-use token, stored only as a hash, bound to the invited
 // email and valid for INVITE_TTL_MS.
 
@@ -8,7 +8,6 @@ import type { Role } from '@flagwise/kernel'
 export const INVITE_TTL_MS = 7 * 86_400_000
 
 export interface Invitation {
-  readonly orgId: string
   readonly email: string
   readonly role: Role
   readonly appId: string | null
@@ -22,7 +21,6 @@ export interface Invitation {
 }
 
 export interface CreateInvitationInput {
-  readonly orgId: string
   readonly email: string
   readonly role: Role
   readonly appId?: string
@@ -40,18 +38,18 @@ export interface AcceptAttempt {
 
 export type AcceptFailure = 'invalid_token' | 'revoked' | 'already_used' | 'expired' | 'email_mismatch' | 'email_unverified'
 
-export interface OrgMember {
+export interface Member {
   readonly memberId: string
-  readonly orgRole: 'owner' | 'org_admin' | null
+  readonly adminRole: 'owner' | 'admin' | null
 }
 
-export type OrgErrorCode = 'not_pending' | 'not_owner' | 'same_member' | 'not_a_member' | 'target_owns_org'
+export type MemberErrorCode = 'not_pending' | 'not_owner' | 'same_member' | 'not_a_member'
 
-export class OrgError extends Error {
-  readonly code: OrgErrorCode
-  constructor(code: OrgErrorCode) {
+export class MemberError extends Error {
+  readonly code: MemberErrorCode
+  constructor(code: MemberErrorCode) {
     super(code)
-    this.name = 'OrgError'
+    this.name = 'MemberError'
     this.code = code
   }
 }
@@ -68,7 +66,7 @@ function newToken(random?: Random): string {
 /**
  * A new invitation and its token (returned once). The email is trimmed and lowercased and must have
  * exactly one `@` with something on both sides. Role and app must fit: 'owner' is never invited,
- * 'org_admin' takes no app, app roles need one. Otherwise RangeError. The token is base64url without
+ * 'admin' takes no app, app roles need one. Otherwise RangeError. The token is base64url without
  * padding of `random(32)`; only its SHA-256 (lowercase hex) is stored.
  */
 export function createInvitation(input: CreateInvitationInput, random?: Random): { invitation: Invitation; token: string } {
@@ -76,14 +74,13 @@ export function createInvitation(input: CreateInvitationInput, random?: Random):
   const parts = email.split('@')
   if (parts.length !== 2 || !parts[0] || !parts[1]) throw new RangeError('invalid email')
   if (input.role === 'owner') throw new RangeError('an owner cannot be invited')
-  if (input.role === 'org_admin') {
-    if (input.appId !== undefined) throw new RangeError('an org admin takes no app')
+  if (input.role === 'admin') {
+    if (input.appId !== undefined) throw new RangeError('an admin takes no app')
   } else if (input.appId === undefined) {
     throw new RangeError('an app role needs an app')
   }
   const token = newToken(random)
   const invitation: Invitation = {
-    orgId: input.orgId,
     email,
     role: input.role,
     appId: input.appId ?? null,
@@ -118,15 +115,15 @@ export function acceptInvitation(
   return { ok: true, invitation: { ...invitation, status: 'accepted', acceptedBy: attempt.accountId, acceptedAt: attempt.now } }
 }
 
-/** Revokes a pending invitation (expired or not); otherwise OrgError 'not_pending'. */
+/** Revokes a pending invitation (expired or not); otherwise MemberError 'not_pending'. */
 export function revokeInvitation(invitation: Invitation, now: Date): Invitation {
-  if (invitation.status !== 'pending') throw new OrgError('not_pending')
+  if (invitation.status !== 'pending') throw new MemberError('not_pending')
   return { ...invitation, status: 'revoked' }
 }
 
-/** A new token and a fresh expiry for a pending invitation, so the old link stops working; otherwise OrgError 'not_pending'. */
+/** A new token and a fresh expiry for a pending invitation, so the old link stops working; otherwise MemberError 'not_pending'. */
 export function resendInvitation(invitation: Invitation, now: Date, random?: Random): { invitation: Invitation; token: string } {
-  if (invitation.status !== 'pending') throw new OrgError('not_pending')
+  if (invitation.status !== 'pending') throw new MemberError('not_pending')
   const token = newToken(random)
   return {
     invitation: { ...invitation, tokenHash: sha256Hex(token), expiresAt: new Date(now.getTime() + INVITE_TTL_MS) },
@@ -134,30 +131,18 @@ export function resendInvitation(invitation: Invitation, now: Date, random?: Ran
   }
 }
 
-/** A user owns at most one org. */
-export function canCreateOrg(ownedOrgCount: number): boolean {
-  return ownedOrgCount < 1
-}
-
 /**
- * Hands the org to another member: `toId` becomes owner, `fromId` org_admin, everyone else and the
- * order unchanged. OrgError, in this order: 'not_owner', 'same_member', 'not_a_member',
- * 'target_owns_org'.
+ * Hands ownership to another member: `toId` becomes owner, `fromId` admin, everyone else and the
+ * order unchanged. MemberError, in this order: 'not_owner', 'same_member', 'not_a_member'.
  */
-export function transferOwnership(
-  members: readonly OrgMember[],
-  fromId: string,
-  toId: string,
-  targetOwnsAnotherOrg: boolean,
-): OrgMember[] {
+export function transferOwnership(members: readonly Member[], fromId: string, toId: string): Member[] {
   const from = members.find((m) => m.memberId === fromId)
-  if (!from || from.orgRole !== 'owner') throw new OrgError('not_owner')
-  if (fromId === toId) throw new OrgError('same_member')
-  if (!members.some((m) => m.memberId === toId)) throw new OrgError('not_a_member')
-  if (targetOwnsAnotherOrg) throw new OrgError('target_owns_org')
+  if (!from || from.adminRole !== 'owner') throw new MemberError('not_owner')
+  if (fromId === toId) throw new MemberError('same_member')
+  if (!members.some((m) => m.memberId === toId)) throw new MemberError('not_a_member')
   return members.map((m) => {
-    if (m.memberId === toId) return { ...m, orgRole: 'owner' as const }
-    if (m.memberId === fromId) return { ...m, orgRole: 'org_admin' as const }
+    if (m.memberId === toId) return { ...m, adminRole: 'owner' as const }
+    if (m.memberId === fromId) return { ...m, adminRole: 'admin' as const }
     return m
   })
 }

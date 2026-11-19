@@ -16,21 +16,21 @@ const sample: MigrationSet = {
 CREATE SCHEMA sample;
 GRANT USAGE ON SCHEMA sample TO {{app}};
 CREATE TABLE sample.policy_copies (
-  org_id text NOT NULL, app_id text NOT NULL, livemode boolean NOT NULL,
+  app_id text NOT NULL, livemode boolean NOT NULL,
   version integer NOT NULL CHECK (version >= 1), document jsonb NOT NULL,
-  PRIMARY KEY (org_id, app_id, livemode)
+  PRIMARY KEY (app_id, livemode)
 );
 ALTER TABLE sample.policy_copies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sample.policy_copies FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant ON sample.policy_copies TO {{app}}
-  USING (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
-  WITH CHECK (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 `,
     },
   ],
 }
 
-const LIVE: TenantRef = { orgId: 'org_jane', appId: 'app_a', livemode: true }
+const LIVE: TenantRef = { appId: 'app_a', livemode: true }
 const TEST: TenantRef = { ...LIVE, livemode: false }
 
 describe.skipIf(!testDatabaseUrl)('a document copy on Postgres', () => {

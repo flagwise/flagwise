@@ -8,7 +8,7 @@ import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { classifyMigrations, pgClassificationStore } from '../src/index.ts'
 
-const A: TenantRef = { orgId: 'org_jane', appId: 'app_jane', livemode: true }
+const A: TenantRef = { appId: 'app_jane', livemode: true }
 
 describe.skipIf(!testDatabaseUrl)('upgrading to evidence refs', () => {
   let t: TestDatabase
@@ -27,8 +27,8 @@ describe.skipIf(!testDatabaseUrl)('upgrading to evidence refs', () => {
     // A release before: screenings without a ref.
     await migrate(t.ownerUrl, [{ ...classifyMigrations, migrations: classifyMigrations.migrations.slice(0, 4) }], t.roles)
     await withTenant(db, scopeOfRef(A), (tx) =>
-      tx.execute(sql`INSERT INTO classify.report_screenings (org_id, app_id, livemode, report_id, p0_signals, injection_suspected, reported_external_id)
-        VALUES ('org_jane', 'app_jane', true, 'rpt_1', ARRAY[]::text[], false, 'u_john_doe')`),
+      tx.execute(sql`INSERT INTO classify.report_screenings (app_id, livemode, report_id, p0_signals, injection_suspected, reported_external_id)
+        VALUES ('app_jane', true, 'rpt_1', ARRAY[]::text[], false, 'u_john_doe')`),
     )
     await migrate(t.ownerUrl, [classifyMigrations], t.roles)
     const screening = await withTenant(db, scopeOfRef(A), (tx) => pgClassificationStore(tx).findScreening(A, 'rpt_1'))

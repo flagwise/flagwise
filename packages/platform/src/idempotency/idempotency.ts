@@ -46,16 +46,16 @@ export function pgIdempotencyStore(db: Database): IdempotencyStore {
         const expired = new Date(now.getTime() - IDEMPOTENCY_WINDOW_MS)
         const stale = new Date(now.getTime() - IDEMPOTENCY_IN_PROGRESS_MS)
         const taken = await tx.execute(sql`
-          INSERT INTO platform.idempotency_keys AS k (org_id, app_id, livemode, key, fingerprint, created_at)
-          VALUES (${tenant.orgId}, ${tenant.appId}, ${tenant.livemode}, ${key}, ${fingerprint}, ${now})
-          ON CONFLICT (org_id, app_id, livemode, key) DO UPDATE
+          INSERT INTO platform.idempotency_keys AS k (app_id, livemode, key, fingerprint, created_at)
+          VALUES (${tenant.appId}, ${tenant.livemode}, ${key}, ${fingerprint}, ${now})
+          ON CONFLICT (app_id, livemode, key) DO UPDATE
             SET fingerprint = EXCLUDED.fingerprint, created_at = EXCLUDED.created_at, status = NULL, content_type = NULL, body = NULL
             WHERE k.created_at < ${expired} OR (k.status IS NULL AND k.created_at < ${stale})
           RETURNING key`)
         if (taken.rows.length > 0) return { kind: 'new' }
         const found = await tx.execute(sql`
           SELECT fingerprint, status, content_type, body FROM platform.idempotency_keys
-          WHERE org_id = ${tenant.orgId} AND app_id = ${tenant.appId} AND livemode = ${tenant.livemode} AND key = ${key}`)
+          WHERE app_id = ${tenant.appId} AND livemode = ${tenant.livemode} AND key = ${key}`)
         const row = found.rows[0] as { fingerprint: string; status: number | null; content_type: string | null; body: string | null } | undefined
         if (!row || row.fingerprint !== fingerprint) return { kind: 'mismatch' }
         if (row.status === null) return { kind: 'in_progress' }
@@ -66,7 +66,7 @@ export function pgIdempotencyStore(db: Database): IdempotencyStore {
       withTenant(db, scopeOfRef(tenant), async (tx) => {
         await tx.execute(sql`
           UPDATE platform.idempotency_keys SET status = ${response.status}, content_type = ${response.contentType}, body = ${response.body}
-          WHERE org_id = ${tenant.orgId} AND app_id = ${tenant.appId} AND livemode = ${tenant.livemode} AND key = ${key}
+          WHERE app_id = ${tenant.appId} AND livemode = ${tenant.livemode} AND key = ${key}
             AND fingerprint = ${fingerprint} AND status IS NULL`)
       }),
 
@@ -74,7 +74,7 @@ export function pgIdempotencyStore(db: Database): IdempotencyStore {
       withTenant(db, scopeOfRef(tenant), async (tx) => {
         await tx.execute(sql`
           DELETE FROM platform.idempotency_keys
-          WHERE org_id = ${tenant.orgId} AND app_id = ${tenant.appId} AND livemode = ${tenant.livemode} AND key = ${key}
+          WHERE app_id = ${tenant.appId} AND livemode = ${tenant.livemode} AND key = ${key}
             AND fingerprint = ${fingerprint} AND status IS NULL`)
       }),
   }

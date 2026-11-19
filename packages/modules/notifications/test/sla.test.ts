@@ -91,10 +91,10 @@ describe('timerAlerts', () => {
 
 describe('routeAlert', () => {
   it('uses the default route', () => {
-    expect(routeAlert('sla_75', 'free')).toEqual({ channels: ['email'], roles: ['owner', 'org_admin', 'app_admin'], dropped: [] })
-    expect(routeAlert('new_p0', 'pro')).toEqual({ channels: ['email'], roles: ['owner', 'org_admin', 'app_admin', 'moderator'], dropped: [] })
+    expect(routeAlert('sla_75', 'free')).toEqual({ channels: ['email'], roles: ['owner', 'admin', 'app_admin'], dropped: [] })
+    expect(routeAlert('new_p0', 'pro')).toEqual({ channels: ['email'], roles: ['owner', 'admin', 'app_admin', 'moderator'], dropped: [] })
     expect(routeAlert('sla_breach', 'free').roles).toContain('moderator')
-    expect(routeAlert('credits_low', 'free').roles).toEqual(['owner', 'org_admin', 'app_admin'])
+    expect(routeAlert('credits_low', 'free').roles).toEqual(['owner', 'admin', 'app_admin'])
   })
 
   it('lets Pro apps use Slack and Discord', () => {
@@ -117,7 +117,7 @@ describe('routeAlert', () => {
     const routes = { sla_75: { channels: ['slack'] as const, roles: ['moderator'] as const } }
     expect(routeAlert('sla_breach', 'pro', routes)).toEqual({
       channels: ['email'],
-      roles: ['owner', 'org_admin', 'app_admin', 'moderator'],
+      roles: ['owner', 'admin', 'app_admin', 'moderator'],
       dropped: [],
     })
   })

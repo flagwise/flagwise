@@ -1,4 +1,4 @@
-// Erasures on Postgres, inside a tenant transaction (row-level security limits it to that org, its
+// Erasures on Postgres, inside a tenant transaction (row-level security limits it to its
 // apps and the mode).
 
 import type { Clock } from '@flagwise/kernel'
@@ -14,7 +14,7 @@ type StoredAnswer = Omit<GroupAnswer, 'at'> & { readonly at: string | null }
 
 const toRecord = (r: typeof erasures.$inferSelect): ErasureRecord => ({
   id: r.id,
-  tenant: { orgId: r.orgId, appId: r.appId, livemode: r.livemode },
+  tenant: { appId: r.appId, livemode: r.livemode },
   subjectExternalId: r.subjectExternalId,
   requestedAt: r.requestedAt,
   deadlineAt: r.deadlineAt,
@@ -30,7 +30,7 @@ export function pgErasureStore(tx: TenantTx): ErasureStore {
       const [row] = await tx
         .select()
         .from(erasures)
-        .where(and(eq(erasures.orgId, tenant.orgId), eq(erasures.appId, tenant.appId), eq(erasures.livemode, tenant.livemode), eq(erasures.id, id)))
+        .where(and(eq(erasures.appId, tenant.appId), eq(erasures.livemode, tenant.livemode), eq(erasures.id, id)))
       return row ? toRecord(row) : null
     },
     async findActive(tenant, subjectExternalId) {
@@ -39,7 +39,7 @@ export function pgErasureStore(tx: TenantTx): ErasureStore {
         .from(erasures)
         .where(
           and(
-            eq(erasures.orgId, tenant.orgId),
+            
             eq(erasures.appId, tenant.appId),
             eq(erasures.livemode, tenant.livemode),
             eq(erasures.subjectExternalId, subjectExternalId),
@@ -52,7 +52,6 @@ export function pgErasureStore(tx: TenantTx): ErasureStore {
       const rows = await tx
         .insert(erasures)
         .values({
-          orgId: r.tenant.orgId,
           appId: r.tenant.appId,
           livemode: r.tenant.livemode,
           id: r.id,
@@ -72,7 +71,7 @@ export function pgErasureStore(tx: TenantTx): ErasureStore {
       await tx
         .update(erasures)
         .set({ expected: r.expected === null ? null : [...r.expected], groups: r.groups, completedAt: r.completedAt, heldItems: r.heldItems })
-        .where(and(eq(erasures.orgId, r.tenant.orgId), eq(erasures.appId, r.tenant.appId), eq(erasures.livemode, r.tenant.livemode), eq(erasures.id, r.id)))
+        .where(and(eq(erasures.appId, r.tenant.appId), eq(erasures.livemode, r.tenant.livemode), eq(erasures.id, r.id)))
     },
   }
 }

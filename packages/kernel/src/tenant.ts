@@ -1,21 +1,20 @@
 // Tenant identity carried by every request, job and outbox row.
 
-/** Org-level roles cover every app in the org. */
-export type OrgRole = 'owner' | 'org_admin'
+/** Admin roles cover every app the actor may read (TenantContext.appIds). */
+export type AdminRole = 'owner' | 'admin'
 /**
  * App-level roles are assigned per app; a member holds at most one per app.
  * A developer integrates the app: keys, webhooks, action keys, and full access to test-mode
  * data, but never live cases or evidence.
  */
 export type AppRole = 'app_admin' | 'moderator' | 'developer'
-export type Role = OrgRole | AppRole
+export type Role = AdminRole | AppRole
 
 /** Server-to-server API key scopes. */
 export type ApiKeyScope = 'flagging' | 'actions' | 'admin'
 
 /** Carried by every job and outbox row; workers run handlers under withTenant(ref, fn). */
 export interface TenantRef {
-  readonly orgId: string
   readonly appId: string
   readonly livemode: boolean
 }
@@ -30,14 +29,13 @@ export type Actor =
 
 /** Built once by the edge; modules authorize locally from it. */
 export interface TenantContext {
-  readonly orgId: string
-  /** The app of this request (API-key and embed calls); undefined for org-level dashboard calls. */
+  /** The app of this request (API-key and embed calls); undefined for dashboard calls across apps. */
   readonly appId: string | undefined
   /** Apps this actor may read: one for API keys and embeds, the member's apps for the dashboard. */
   readonly appIds: readonly string[]
   readonly actor: Actor
-  /** Owner or Org Admin of the org, if any. */
-  readonly orgRole: OrgRole | null
+  /** Owner or Admin over every app in appIds, if any. */
+  readonly adminRole: AdminRole | null
   /** Per-app role by app id (members and embeds). */
   readonly appRoles: Readonly<Record<string, AppRole>>
   readonly livemode: boolean

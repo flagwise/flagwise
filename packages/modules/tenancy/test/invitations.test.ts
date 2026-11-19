@@ -2,16 +2,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   INVITE_TTL_MS,
-  OrgError,
+  MemberError,
   acceptInvitation,
-  canCreateOrg,
   createInvitation,
   resendInvitation,
   revokeInvitation,
   transferOwnership,
   type CreateInvitationInput,
   type Invitation,
-  type OrgMember,
+  type Member,
 } from '../src/domain/invitations.ts'
 
 const NOW = new Date('2026-11-03T09:00:00.000Z')
@@ -25,7 +24,6 @@ const TOKEN_100 = 'ZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1-f4CBgoM'
 const HASH_100 = '45827150f595bab19278b82d22eba203d126486c59732655abb65ea67d209ee6'
 
 const input = (o: Partial<CreateInvitationInput> = {}): CreateInvitationInput => ({
-  orgId: 'org_1',
   email: '  Jane.Doe@Example.COM ',
   role: 'moderator',
   appId: 'app_a',
@@ -44,13 +42,13 @@ const attempt = (o: Partial<Parameters<typeof acceptInvitation>[1]> = {}) => ({
   ...o,
 })
 
-function throwsOrg(fn: () => unknown, code: string) {
+function throwsMember(fn: () => unknown, code: string) {
   try {
     fn()
     expect.unreachable('should have thrown')
   } catch (e) {
-    expect(e).toBeInstanceOf(OrgError)
-    expect((e as OrgError).code).toBe(code)
+    expect(e).toBeInstanceOf(MemberError)
+    expect((e as MemberError).code).toBe(code)
   }
 }
 
@@ -61,7 +59,6 @@ describe('createInvitation', () => {
     expect(token).toBe(TOKEN_0)
     expect(calls).toEqual([32])
     expect(invitation).toEqual({
-      orgId: 'org_1',
       email: 'jane.doe@example.com',
       role: 'moderator',
       appId: 'app_a',
@@ -86,13 +83,13 @@ describe('createInvitation', () => {
     expect(a).not.toBe(createInvitation(input()).token)
   })
 
-  it('invites an Org Admin without an app', () => {
-    expect(createInvitation(input({ role: 'org_admin', appId: undefined as unknown as string }), bytesFrom(0)).invitation.appId).toBeNull()
+  it('invites an Admin without an app', () => {
+    expect(createInvitation(input({ role: 'admin', appId: undefined as unknown as string }), bytesFrom(0)).invitation.appId).toBeNull()
   })
 
   it.each<Partial<CreateInvitationInput>>([
     { role: 'owner', appId: undefined as unknown as string },
-    { role: 'org_admin', appId: 'app_a' },
+    { role: 'admin', appId: 'app_a' },
     { role: 'developer', appId: undefined as unknown as string },
     { email: 'not-an-email' },
     { email: 'a@@b.co' },
@@ -153,42 +150,36 @@ describe('revokeInvitation and resendInvitation', () => {
   it('only changes pending invitations', () => {
     const accepted = { ...pending(), status: 'accepted' as const }
     const revoked = { ...pending(), status: 'revoked' as const }
-    throwsOrg(() => revokeInvitation(accepted, NOW), 'not_pending')
-    throwsOrg(() => revokeInvitation(revoked, NOW), 'not_pending')
-    throwsOrg(() => resendInvitation(accepted, NOW, bytesFrom(1)), 'not_pending')
-    throwsOrg(() => resendInvitation(revoked, NOW, bytesFrom(1)), 'not_pending')
+    throwsMember(() => revokeInvitation(accepted, NOW), 'not_pending')
+    throwsMember(() => revokeInvitation(revoked, NOW), 'not_pending')
+    throwsMember(() => resendInvitation(accepted, NOW, bytesFrom(1)), 'not_pending')
+    throwsMember(() => resendInvitation(revoked, NOW, bytesFrom(1)), 'not_pending')
     expect(resendInvitation(pending(), later(30 * DAY), bytesFrom(1)).invitation.status).toBe('pending')
   })
 })
 
-describe('org rules', () => {
-  it('lets a user own one org', () => {
-    expect(canCreateOrg(0)).toBe(true)
-    expect(canCreateOrg(1)).toBe(false)
-  })
-
-  const members: OrgMember[] = [
-    { memberId: 'mem_owner', orgRole: 'owner' },
-    { memberId: 'mem_admin', orgRole: 'org_admin' },
-    { memberId: 'mem_mod', orgRole: null },
+describe('member rules', () => {
+  const members: Member[] = [
+    { memberId: 'mem_owner', adminRole: 'owner' },
+    { memberId: 'mem_admin', adminRole: 'admin' },
+    { memberId: 'mem_mod', adminRole: null },
   ]
 
-  it('transfers ownership and keeps the former owner as Org Admin', () => {
-    expect(transferOwnership(members, 'mem_owner', 'mem_mod', false)).toEqual([
-      { memberId: 'mem_owner', orgRole: 'org_admin' },
-      { memberId: 'mem_admin', orgRole: 'org_admin' },
-      { memberId: 'mem_mod', orgRole: 'owner' },
+  it('transfers ownership and keeps the former owner as Admin', () => {
+    expect(transferOwnership(members, 'mem_owner', 'mem_mod')).toEqual([
+      { memberId: 'mem_owner', adminRole: 'admin' },
+      { memberId: 'mem_admin', adminRole: 'admin' },
+      { memberId: 'mem_mod', adminRole: 'owner' },
     ])
-    expect(members[0]?.orgRole).toBe('owner')
+    expect(members[0]?.adminRole).toBe('owner')
   })
 
-  it.each<[string, string, string, boolean]>([
-    ['not_owner', 'mem_admin', 'mem_mod', false],
-    ['same_member', 'mem_owner', 'mem_owner', false],
-    ['not_a_member', 'mem_owner', 'mem_ghost', false],
-    ['target_owns_org', 'mem_owner', 'mem_admin', true],
-    ['not_owner', 'mem_admin', 'mem_admin', true],
-  ])('fails with %s', (code, from, to, owns) => {
-    throwsOrg(() => transferOwnership(members, from, to, owns), code)
+  it.each<[string, string, string]>([
+    ['not_owner', 'mem_admin', 'mem_mod'],
+    ['same_member', 'mem_owner', 'mem_owner'],
+    ['not_a_member', 'mem_owner', 'mem_ghost'],
+    ['not_owner', 'mem_admin', 'mem_admin'],
+  ])('fails with %s', (code, from, to) => {
+    throwsMember(() => transferOwnership(members, from, to), code)
   })
 })

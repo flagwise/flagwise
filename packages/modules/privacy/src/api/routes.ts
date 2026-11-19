@@ -54,7 +54,7 @@ export function privacyRoutes(deps: PrivacyRoutesDeps): Hono<PrivacyEnv> {
 
 function eraser(ctx: TenantContext): TenantRef {
   if (!ctx.appId || !can(ctx, { action: 'subject.erase', appId: ctx.appId })) throw new FlagwiseError('forbidden', 'This API key does not have the admin scope')
-  return { orgId: ctx.orgId, appId: ctx.appId, livemode: ctx.livemode }
+  return { appId: ctx.appId, livemode: ctx.livemode }
 }
 
 function body(e: ErasureRecord, now: Date) {

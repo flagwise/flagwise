@@ -6,7 +6,6 @@ const schema = pgSchema('policy')
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' })
 
 export const actionKeysTable = schema.table('action_keys', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   key: text('key').notNull(),
@@ -22,7 +21,6 @@ export const actionKeysTable = schema.table('action_keys', {
 })
 
 export const categoriesTable = schema.table('categories', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   key: text('key').notNull(),
@@ -38,7 +36,6 @@ export const categoriesTable = schema.table('categories', {
 })
 
 export const llmSettingsTable = schema.table('llm_settings', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   rulesOnly: boolean('rules_only').notNull(),
@@ -47,7 +44,6 @@ export const llmSettingsTable = schema.table('llm_settings', {
 })
 
 export const headsTable = schema.table('heads', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   version: integer('version').notNull(),

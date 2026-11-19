@@ -6,7 +6,6 @@ const schema = pgSchema('privacy')
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' })
 
 export const erasuresTable = schema.table('erasures', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   id: text('id').notNull(),

@@ -2,7 +2,6 @@
 -- (removed_at set), so past decisions and their reversal still find it.
 
 CREATE TABLE tenancy.action_keys (
-  org_id text NOT NULL,
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   key text NOT NULL CHECK (key ~ '^[a-z][a-z0-9_]{0,63}$'),
@@ -17,8 +16,8 @@ CREATE TABLE tenancy.action_keys (
   categories text[] NOT NULL CHECK (cardinality(categories) > 0),
   updated_at timestamptz NOT NULL,
   removed_at timestamptz,
-  PRIMARY KEY (org_id, app_id, livemode, key),
-  FOREIGN KEY (org_id, app_id) REFERENCES tenancy.apps (org_id, id),
+  PRIMARY KEY (app_id, livemode, key),
+  FOREIGN KEY (app_id) REFERENCES tenancy.apps (id),
   CHECK (reverse_key IS NULL OR reverse_key <> key),
   CHECK (NOT auto_allowed OR reverse_key IS NOT NULL)
 );
@@ -26,5 +25,5 @@ CREATE TABLE tenancy.action_keys (
 ALTER TABLE tenancy.action_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenancy.action_keys FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant ON tenancy.action_keys TO {{app}}
-  USING (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
-  WITH CHECK (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());

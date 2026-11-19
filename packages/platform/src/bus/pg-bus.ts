@@ -80,7 +80,6 @@ type Leased = {
   key: string
   data: unknown
   schema_version: string | null
-  org_id: string
   app_id: string
   livemode: boolean
   created_at: Date | string
@@ -91,8 +90,8 @@ type Leased = {
 }
 
 /** The identity of a stored event, enough to name it in the bus's facts. */
-type Named = { id: string; type: string; key: string; org_id: string; app_id: string; livemode: boolean }
-const named = (r: Named): BusEvent => ({ id: r.id, type: r.type, key: r.key, data: null, tenant: { orgId: r.org_id, appId: r.app_id, livemode: r.livemode } })
+type Named = { id: string; type: string; key: string; app_id: string; livemode: boolean }
+const named = (r: Named): BusEvent => ({ id: r.id, type: r.type, key: r.key, data: null, tenant: { appId: r.app_id, livemode: r.livemode } })
 
 /** The meta of a stored event: its request and actor when it has them, and when it was published. */
 const metaOf = (r: { request_id: string | null; actor_type: string | null; actor_id: string | null }, publishedAt?: Date | string): EventMeta | undefined => {
@@ -249,7 +248,7 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
            AND (d.leased_until IS NULL OR d.leased_until < ${at})
         RETURNING d.queued, d.group_name, d.seq, d.attempt
       )
-      SELECT l.queued, l.group_name, l.seq, l.attempt, e.id, e.type, e.key, e.data, e.schema_version, e.org_id, e.app_id, e.livemode,
+      SELECT l.queued, l.group_name, l.seq, l.attempt, e.id, e.type, e.key, e.data, e.schema_version, e.app_id, e.livemode,
              e.created_at, e.request_id, e.actor_type, e.actor_id, e.tracked
         FROM leased l JOIN platform.events e ON e.seq = l.seq ORDER BY l.queued`)
     return res.rows
@@ -281,7 +280,7 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
       type: d.type,
       key: d.key,
       data: d.data,
-      tenant: { orgId: d.org_id, appId: d.app_id, livemode: d.livemode },
+      tenant: { appId: d.app_id, livemode: d.livemode },
       meta: metaOf(d, d.created_at)!,
       ...(d.schema_version !== null && { schemaVersion: d.schema_version }),
     }
@@ -322,8 +321,8 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
       const t = e.tenant!
       const m = e.meta
       const res = await tx.execute(sql`
-        INSERT INTO platform.events (id, type, key, data, schema_version, org_id, app_id, livemode, request_id, actor_type, actor_id, tracked)
-        VALUES (${e.id}, ${e.type}, ${e.key}, ${JSON.stringify(e.data ?? null)}::jsonb, ${e.schemaVersion ?? null}, ${t.orgId}, ${t.appId}, ${t.livemode},
+        INSERT INTO platform.events (id, type, key, data, schema_version, app_id, livemode, request_id, actor_type, actor_id, tracked)
+        VALUES (${e.id}, ${e.type}, ${e.key}, ${JSON.stringify(e.data ?? null)}::jsonb, ${e.schemaVersion ?? null}, ${t.appId}, ${t.livemode},
                 ${m?.requestId ?? null}, ${m?.actor?.type ?? null}, ${m?.actor?.id ?? null}, ${e.track === true})
         ON CONFLICT (id) DO NOTHING RETURNING seq`)
       fresh += res.rows.length
@@ -337,8 +336,8 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
       const e = checkedEvent(given, opts.contract)
       const t = e.tenant!
       await tx.execute(sql`
-        INSERT INTO platform.events (id, type, key, data, schema_version, org_id, app_id, livemode)
-        VALUES (${e.id}, ${e.type}, ${e.key}, ${JSON.stringify(e.data ?? null)}::jsonb, ${e.schemaVersion ?? null}, ${t.orgId}, ${t.appId}, ${t.livemode})
+        INSERT INTO platform.events (id, type, key, data, schema_version, app_id, livemode)
+        VALUES (${e.id}, ${e.type}, ${e.key}, ${JSON.stringify(e.data ?? null)}::jsonb, ${e.schemaVersion ?? null}, ${t.appId}, ${t.livemode})
         ON CONFLICT (id) DO NOTHING`)
     }
   }
@@ -372,14 +371,14 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
       if (tx) return insertEvents(tx, events)
       const byTenant = new Map<string, { tenant: TenantRef; events: BusEvent[] }>()
       for (const e of events) {
-        const k = `${e.tenant!.orgId}|${e.tenant!.appId}|${e.tenant!.livemode}`
+        const k = `${e.tenant!.appId}|${e.tenant!.livemode}`
         const entry = byTenant.get(k) ?? { tenant: e.tenant!, events: [] }
         entry.events.push(e)
         byTenant.set(k, entry)
       }
       let fresh = 0
       for (const { tenant, events: list } of byTenant.values()) {
-        fresh += await withTenant(db, { orgId: tenant.orgId, appIds: [tenant.appId], livemode: tenant.livemode }, (t) => insertEvents(t, list))
+        fresh += await withTenant(db, { appIds: [tenant.appId], livemode: tenant.livemode }, (t) => insertEvents(t, list))
       }
       return fresh
     },
@@ -492,17 +491,17 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
   return bus
 }
 
-type StoredRow = { id: string; type: string; key: string; data: unknown; schema_version: string | null; org_id: string; app_id: string; livemode: boolean }
-const STORED = sql.raw('id, type, key, data, schema_version, org_id, app_id, livemode')
-const STORED_E = sql.raw('e.id, e.type, e.key, e.data, e.schema_version, e.org_id, e.app_id, e.livemode')
-const STORED_NAMED = sql.raw('e.id, e.type, e.key, e.org_id, e.app_id, e.livemode')
+type StoredRow = { id: string; type: string; key: string; data: unknown; schema_version: string | null; app_id: string; livemode: boolean }
+const STORED = sql.raw('id, type, key, data, schema_version, app_id, livemode')
+const STORED_E = sql.raw('e.id, e.type, e.key, e.data, e.schema_version, e.app_id, e.livemode')
+const STORED_NAMED = sql.raw('e.id, e.type, e.key, e.app_id, e.livemode')
 
 const storedEvent = (r: StoredRow): BusEvent => ({
   id: r.id,
   type: r.type,
   key: r.key,
   data: r.data,
-  tenant: { orgId: r.org_id, appId: r.app_id, livemode: r.livemode },
+  tenant: { appId: r.app_id, livemode: r.livemode },
   ...(r.schema_version !== null && { schemaVersion: r.schema_version }),
 })
 

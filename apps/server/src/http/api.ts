@@ -57,7 +57,7 @@ export function pgKeyResolver(db: Database): ApiDeps['keys'] {
  * `req_` id), echoed in `X-Request-Id` and in every problem body.
  *
  * Auth: `Authorization: Bearer <key>`. No key, a malformed or unknown one, or a revoked or expired
- * one is 401 with `WWW-Authenticate: Bearer`; a key of a deleted app or org is 410.
+ * one is 401 with `WWW-Authenticate: Bearer`; a key of a deleted app is 410.
  *
  * Every event published while handling an authenticated request carries the request id and the API
  * key as its actor (runInRequest), for the audit log.
@@ -107,10 +107,10 @@ export function createApi(deps: ApiDeps): Hono<ApiEnv> {
 
   api.use(async (c, next) => {
     const key = c.req.header('idempotency-key')
-    const { appId, orgId, livemode } = c.get('tenant')
+    const { appId, livemode } = c.get('tenant')
     if (!deps.idempotency || c.req.method !== 'POST' || key === undefined || !appId || c.req.path.endsWith('/flagging/reports')) return next()
     if (!IDEMPOTENCY_KEY.test(key)) throw new FlagwiseError('invalid_request', 'Idempotency-Key must be 1 to 255 visible ASCII characters')
-    const tenant = { orgId, appId, livemode }
+    const tenant = { appId, livemode }
     const fingerprint = createHash('sha256').update(`POST ${c.req.path}\n`).update(await c.req.text()).digest('hex')
     const started = await deps.idempotency.start(tenant, key, fingerprint, deps.clock.now())
     if (started.kind === 'mismatch') throw new FlagwiseError('conflict', 'This Idempotency-Key was used with a different request')

@@ -2,7 +2,6 @@
 -- A removed category keeps its row (removed_at set), so past cases still find its label.
 
 CREATE TABLE tenancy.categories (
-  org_id text NOT NULL,
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   key text NOT NULL CHECK (key ~ '^[a-z][a-z0-9_]{0,63}$'),
@@ -17,31 +16,30 @@ CREATE TABLE tenancy.categories (
   enabled boolean NOT NULL,
   updated_at timestamptz NOT NULL,
   removed_at timestamptz,
-  PRIMARY KEY (org_id, app_id, livemode, key),
-  FOREIGN KEY (org_id, app_id) REFERENCES tenancy.apps (org_id, id),
+  PRIMARY KEY (app_id, livemode, key),
+  FOREIGN KEY (app_id) REFERENCES tenancy.apps (id),
   -- A custom category (own severity or SLA) has at most one global category.
   CHECK ((severity IS NULL AND sla_hours IS NULL) OR cardinality(maps_to) <= 1)
 );
 
 CREATE TABLE tenancy.llm_settings (
-  org_id text NOT NULL,
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   rules_only boolean NOT NULL,
   fallback_to_rules boolean NOT NULL,
   updated_at timestamptz NOT NULL,
-  PRIMARY KEY (org_id, app_id, livemode),
-  FOREIGN KEY (org_id, app_id) REFERENCES tenancy.apps (org_id, id)
+  PRIMARY KEY (app_id, livemode),
+  FOREIGN KEY (app_id) REFERENCES tenancy.apps (id)
 );
 
 ALTER TABLE tenancy.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenancy.categories FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant ON tenancy.categories TO {{app}}
-  USING (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
-  WITH CHECK (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 
 ALTER TABLE tenancy.llm_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenancy.llm_settings FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant ON tenancy.llm_settings TO {{app}}
-  USING (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
-  WITH CHECK (org_id = platform.org_id() AND app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());

@@ -15,11 +15,11 @@ import {
   type ReportStore,
 } from '../src/index.ts'
 
-const A: TenantRef = { orgId: 'org_1', appId: 'app_a', livemode: true }
+const A: TenantRef = { appId: 'app_a', livemode: true }
 const H = 3_600_000
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
-const sameTenant = (a: TenantRef, b: TenantRef) => a.orgId === b.orgId && a.appId === b.appId && a.livemode === b.livemode
+const sameTenant = (a: TenantRef, b: TenantRef) => a.appId === b.appId && a.livemode === b.livemode
 
 /** Keeps reports in memory with the store's rules; `beforeInsert` lets a test act as a concurrent writer. */
 class MemoryReportStore implements ReportStore {

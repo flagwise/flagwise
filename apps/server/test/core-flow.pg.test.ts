@@ -12,8 +12,8 @@ import { pgTriageDeps, triageMigrations, triageTables } from '@flagwise/triage'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { composeServices, policyWithKeys, type Classification, type Services } from './support/services.ts'
 
-const A: TenantRef = { orgId: 'org_1', appId: 'app_a', livemode: true }
-const B: TenantRef = { orgId: 'org_1', appId: 'app_b', livemode: true }
+const A: TenantRef = { appId: 'app_a', livemode: true }
+const B: TenantRef = { appId: 'app_b', livemode: true }
 const T0 = new Date('2026-11-05T09:00:00.000Z')
 const H = 3_600_000
 const CATEGORY = 'scams_fraud.romance_scam'

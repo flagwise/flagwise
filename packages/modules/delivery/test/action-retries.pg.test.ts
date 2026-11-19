@@ -13,7 +13,7 @@ import {
   type DeliveryEvent,
 } from '../src/index.ts'
 
-const A: TenantRef = { orgId: 'org_a', appId: 'app_a', livemode: true }
+const A: TenantRef = { appId: 'app_a', livemode: true }
 const FACTS = { subjectExternalId: 'u_jane_doe', categoryId: 'scams_fraud.romance_scam', severity: 'P1', requestedBy: { type: 'member', id: 'mem_jane' } } as const
 
 describe.skipIf(!testDatabaseUrl)('retryFailedActions', () => {

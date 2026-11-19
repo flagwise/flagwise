@@ -5,7 +5,6 @@ import { boolean, pgSchema, text, timestamp } from 'drizzle-orm/pg-core'
 const schema = pgSchema('intake')
 
 export const reportsTable = schema.table('reports', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   id: text('id').notNull(),

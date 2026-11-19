@@ -35,7 +35,7 @@ describe.skipIf(!testDatabaseUrl)('app categories and LLM settings on the server
     },
   }
   const json = async (res: Response) => (await res.json()) as Record<string, any>
-  const tenant = () => ({ orgId: installed.org.id, appId: installed.app.id, livemode: true })
+  const tenant = () => ({ appId: installed.app.id, livemode: true })
   const call = (key: string, path: string, init: { method?: string; body?: unknown } = {}) =>
     server.app.http.request(`/v1${path}`, {
       method: init.method ?? 'GET',
@@ -65,7 +65,7 @@ describe.skipIf(!testDatabaseUrl)('app categories and LLM settings on the server
     await migrateFromEnv({ DATABASE_OWNER_URL: t.ownerUrl, DATABASE_APP_URL: `postgres://${t.roles.app}@x/x`, DATABASE_SYSTEM_URL: `postgres://${t.roles.system}@x/x` })
     const base = await serverConfigFromEnv({ DATABASE_APP_URL: t.appUrl, DATABASE_SYSTEM_URL: t.systemUrl, STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')) })
     config = { ...base, llm: { ...base.llm, llm: { provider: failing, model: 'small', escalationModel: 'strong', prompt: classifierPrompt('You classify user reports.') } } }
-    installed = await bootstrap(config, { orgName: 'Jane Doe Dating', appName: 'Jane Doe Dating iOS', preset: 'dating' })
+    installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS', preset: 'dating' })
     admin = await createKey(config, { ...tenant(), scopes: ['admin'] })
     server = createServer(config, { onError: () => {} })
     await server.start()

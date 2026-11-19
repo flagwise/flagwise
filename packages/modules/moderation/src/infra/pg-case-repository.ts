@@ -33,7 +33,7 @@ type DecisionRow = typeof decisionsTable.$inferSelect
  */
 export function pgCaseRepository(tx: TenantTx): CaseRepository & CaseReader {
   const tenantOf = (t: TenantRef) =>
-    and(eq(casesTable.orgId, t.orgId), eq(casesTable.appId, t.appId), eq(casesTable.livemode, t.livemode))
+    and(eq(casesTable.appId, t.appId), eq(casesTable.livemode, t.livemode))
 
   const load = async (tenant: TenantRef, rows: CaseRow[]): Promise<CaseRecord[]> => {
     if (rows.length === 0) return []
@@ -43,7 +43,7 @@ export function pgCaseRepository(tx: TenantTx): CaseRepository & CaseReader {
       .from(caseReportsTable)
       .where(
         and(
-          eq(caseReportsTable.orgId, tenant.orgId),
+          
           eq(caseReportsTable.appId, tenant.appId),
           eq(caseReportsTable.livemode, tenant.livemode),
           inArray(caseReportsTable.caseId, ids),
@@ -55,7 +55,7 @@ export function pgCaseRepository(tx: TenantTx): CaseRepository & CaseReader {
       ? await tx
           .select()
           .from(decisionsTable)
-          .where(and(eq(decisionsTable.orgId, tenant.orgId), eq(decisionsTable.appId, tenant.appId), inArray(decisionsTable.id, decisionIds)))
+          .where(and(eq(decisionsTable.appId, tenant.appId), inArray(decisionsTable.id, decisionIds)))
       : []
     const byId = new Map(decisions.map((d) => [d.id, d]))
     return rows.map((row) => toRecord(row, reports.filter((r) => r.caseId === row.id).map((r) => r.reportId), row.decisionId ? byId.get(row.decisionId) : undefined))
@@ -141,7 +141,7 @@ export function pgCaseRepository(tx: TenantTx): CaseRepository & CaseReader {
         .from(caseReportsTable)
         .where(
           and(
-            eq(caseReportsTable.orgId, tenant.orgId),
+            
             eq(caseReportsTable.appId, tenant.appId),
             eq(caseReportsTable.livemode, tenant.livemode),
             eq(caseReportsTable.reportId, reportId),
@@ -153,7 +153,7 @@ export function pgCaseRepository(tx: TenantTx): CaseRepository & CaseReader {
     async lockSubject(tenant, subjectExternalId) {
       // A transaction-scoped advisory lock: released at commit or rollback. A hash collision
       // only makes two unrelated subjects wait for each other.
-      const key = JSON.stringify([tenant.orgId, tenant.appId, tenant.livemode, subjectExternalId])
+      const key = JSON.stringify([tenant.appId, tenant.livemode, subjectExternalId])
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`cases.subject:${key}`}, 0))`)
     },
 
@@ -201,7 +201,7 @@ export function pgCaseRepository(tx: TenantTx): CaseRepository & CaseReader {
       const [{ n } = { n: 0 }] = await tx
         .select({ n: count() })
         .from(caseReportsTable)
-        .where(and(eq(caseReportsTable.orgId, tenant.orgId), eq(caseReportsTable.appId, tenant.appId), eq(caseReportsTable.caseId, caseId)))
+        .where(and(eq(caseReportsTable.appId, tenant.appId), eq(caseReportsTable.caseId, caseId)))
       await insertReports(tenant, caseId, [reportId], n)
       return true
     },
@@ -217,7 +217,7 @@ export function pgCaseRepository(tx: TenantTx): CaseRepository & CaseReader {
         await tx
           .update(decisionsTable)
           .set({ publicReason: null, internalNote: null })
-          .where(and(eq(decisionsTable.orgId, tenant.orgId), eq(decisionsTable.appId, tenant.appId), eq(decisionsTable.livemode, tenant.livemode), inArray(decisionsTable.caseId, ids)))
+          .where(and(eq(decisionsTable.appId, tenant.appId), eq(decisionsTable.livemode, tenant.livemode), inArray(decisionsTable.caseId, ids)))
       }
       const reports = await tx
         .update(caseReportsTable)
@@ -247,7 +247,7 @@ export function pgCaseRepository(tx: TenantTx): CaseRepository & CaseReader {
       const rows = await tx
         .select({ id: f.actionRequestId })
         .from(f)
-        .where(and(eq(f.orgId, tenant.orgId), eq(f.appId, tenant.appId), eq(f.livemode, tenant.livemode), eq(f.caseId, caseId), eq(f.answered, false)))
+        .where(and(eq(f.appId, tenant.appId), eq(f.livemode, tenant.livemode), eq(f.caseId, caseId), eq(f.answered, false)))
         .orderBy(asc(f.failedAt), asc(f.actionRequestId))
       return rows.map((r) => r.id)
     },
@@ -258,16 +258,16 @@ export function pgCaseRepository(tx: TenantTx): CaseRepository & CaseReader {
       await tx
         .update(f)
         .set({ answered: true })
-        .where(and(eq(f.orgId, tenant.orgId), eq(f.appId, tenant.appId), eq(f.livemode, tenant.livemode), eq(f.caseId, caseId), inArray(f.actionRequestId, [...actionRequestIds])))
+        .where(and(eq(f.appId, tenant.appId), eq(f.livemode, tenant.livemode), eq(f.caseId, caseId), inArray(f.actionRequestId, [...actionRequestIds])))
     },
   }
   return repo
 }
 
-const tenantColumns = (t: TenantRef) => ({ orgId: t.orgId, appId: t.appId, livemode: t.livemode })
+const tenantColumns = (t: TenantRef) => ({ appId: t.appId, livemode: t.livemode })
 
 const reportsOf = (t: TenantRef) =>
-  and(eq(caseReportsTable.orgId, t.orgId), eq(caseReportsTable.appId, t.appId), eq(caseReportsTable.livemode, t.livemode))
+  and(eq(caseReportsTable.appId, t.appId), eq(caseReportsTable.livemode, t.livemode))
 
 /** The columns a change sets; fields not in the change are left out. */
 function changeColumns(c: CaseChange) {
@@ -333,7 +333,7 @@ function decodeCursor(cursor: string, order: CaseOrder): CursorKey {
 function toRecord(row: CaseRow, reportIds: string[], decision: DecisionRow | undefined): CaseRecord {
   return {
     id: row.id,
-    tenant: { orgId: row.orgId, appId: row.appId, livemode: row.livemode },
+    tenant: { appId: row.appId, livemode: row.livemode },
     subjectExternalId: row.subjectExternalId,
     band: row.band as SeverityBand,
     state: row.state as CaseState,

@@ -5,7 +5,7 @@ import { createDatabase, migrate, withSystem, withTenant, type Database } from '
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createApp, createOrg, generateApiKey, pgKeyDirectory, pgTenancyStore, resolveApiKey, tenancyMigrations } from '../src/index.ts'
+import { createApp, generateApiKey, pgKeyDirectory, pgTenancyStore, resolveApiKey, tenancyMigrations } from '../src/index.ts'
 
 describe.skipIf(!testDatabaseUrl)('upgrading to the flagging scope', () => {
   let t: TestDatabase
@@ -25,19 +25,18 @@ describe.skipIf(!testDatabaseUrl)('upgrading to the flagging scope', () => {
     // A release before: keys could hold the ingest scope.
     await migrate(t.ownerUrl, [{ ...tenancyMigrations, migrations: tenancyMigrations.migrations.slice(0, 3) }], t.roles)
     const old = generateApiKey(true)
-    await withTenant(db, { orgId: 'org_jane', appIds: ['app_jane'], livemode: true }, async (tx) => {
+    await withTenant(db, { appIds: ['app_jane'], livemode: true }, async (tx) => {
       const deps = { store: pgTenancyStore(tx), clock, newId: (p: string) => `${p}_1` }
-      await createOrg(deps, { id: 'org_jane', name: 'Jane Doe Dating' })
-      await createApp(deps, { orgId: 'org_jane', id: 'app_jane', name: 'Jane Doe Dating iOS' })
-      await tx.execute(sql`INSERT INTO tenancy.api_keys (org_id, app_id, id, livemode, lookup, hash, scopes, created_at)
-        VALUES ('org_jane', 'app_jane', 'key_old', true, ${old.lookup}, ${old.hash}, ARRAY['ingest', 'actions'], ${clock.now().toISOString()})`)
+      await createApp(deps, { id: 'app_jane', name: 'Jane Doe Dating iOS' })
+      await tx.execute(sql`INSERT INTO tenancy.api_keys (app_id, id, livemode, lookup, hash, scopes, created_at)
+        VALUES ('app_jane', 'key_old', true, ${old.lookup}, ${old.hash}, ARRAY['ingest', 'actions'], ${clock.now().toISOString()})`)
     })
 
     await migrate(t.ownerUrl, [tenancyMigrations], t.roles)
     const resolved = await withSystem(db, (tx) => resolveApiKey(pgKeyDirectory(tx), old.key, clock.now()))
     expect(resolved).toMatchObject({ ok: true, context: { actor: { type: 'api_key', id: 'key_old', scopes: ['flagging', 'actions'] } } })
     await expect(
-      withTenant(db, { orgId: 'org_jane', appIds: ['app_jane'], livemode: true }, (tx) =>
+      withTenant(db, { appIds: ['app_jane'], livemode: true }, (tx) =>
         tx.execute(sql`UPDATE tenancy.api_keys SET scopes = ARRAY['ingest'] WHERE id = 'key_old'`),
       ),
     ).rejects.toThrow()

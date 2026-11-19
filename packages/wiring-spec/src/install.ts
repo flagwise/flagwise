@@ -63,8 +63,8 @@ export async function startInstall(name: string): Promise<Install> {
     }
     await migrateFromEnv({ DATABASE_OWNER_URL: db.ownerUrl, DATABASE_APP_URL: `postgres://${db.roles.app}@x/x`, DATABASE_SYSTEM_URL: `postgres://${db.roles.system}@x/x` })
     const config = await serverConfigFromEnv(env, { fetch: net.fetch })
-    const installed = await bootstrap(config, { orgName: 'Jane Doe Dating', appName: 'Jane Doe Dating iOS' }, clock)
-    const tenant: TenantRef = { orgId: installed.org.id, appId: installed.app.id, livemode: true }
+    const installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' }, clock)
+    const tenant: TenantRef = { appId: installed.app.id, livemode: true }
     const jane = await createKey(config, { ...tenant, scopes: ['admin'] })
     const john = await createKey(config, { ...tenant, scopes: ['admin'] })
     await addWebhookEndpoint(config, tenant, { url: WEBHOOK_URL }, clock)

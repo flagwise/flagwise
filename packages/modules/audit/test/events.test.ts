@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { AUDITED_EVENT_TYPES, auditRecordOf, SYSTEM_ACTOR } from '../src/index.ts'
 
 const NOW = new Date('2026-11-11T10:00:00.000Z')
-const tenant = { orgId: 'org_a', appId: 'app_a', livemode: true }
+const tenant = { appId: 'app_a', livemode: true }
 
 describe('auditRecordOf', () => {
   it('records a decision made in a request: its actor, target, facts, request id and time', () => {

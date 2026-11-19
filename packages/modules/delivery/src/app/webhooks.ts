@@ -53,7 +53,7 @@ export interface SecretSealer {
   open(sealed: string, context: string): string
 }
 
-/** Every method only sees the given tenant's rows (org, app and mode). */
+/** Every method only sees the given tenant's rows (app and mode). */
 export interface WebhookStore {
   /** Until the current transaction ends, another caller locking the same app and mode waits. */
   lockApp(tenant: TenantRef): Promise<void>
@@ -100,7 +100,7 @@ export interface WebhookDeps {
 }
 
 /** What sealed secrets are bound to: the app, mode and version, so a copied value does not open elsewhere. */
-export const secretContext = (tenant: TenantRef, version: number) => `delivery.webhook_secret:${tenant.orgId}:${tenant.appId}:${tenant.livemode}:${version}`
+export const secretContext = (tenant: TenantRef, version: number) => `delivery.webhook_secret:${tenant.appId}:${tenant.livemode}:${version}`
 
 export interface RolledSecret {
   /** The new secret, `whsec_...`: shown to the caller once. */

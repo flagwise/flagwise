@@ -6,7 +6,6 @@ import { copyTable } from '@flagwise/platform'
 const schema = pgSchema('classify')
 
 export const classificationsTable = schema.table('classifications', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   caseId: text('case_id').notNull(),
@@ -32,7 +31,6 @@ export const classificationsTable = schema.table('classifications', {
 })
 
 export const reportScreeningsTable = schema.table('report_screenings', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   reportId: text('report_id').notNull(),

@@ -15,8 +15,8 @@ BEGIN
 END $$;
 ALTER TABLE classify.classifications ADD CONSTRAINT llm_answer_kept
   CHECK (classified_by = 'rules' OR (confidence IS NOT NULL AND model IS NOT NULL AND prompt_hash IS NOT NULL));
-CREATE INDEX report_screenings_by_reported ON classify.report_screenings (org_id, app_id, livemode, reported_external_id);
-CREATE INDEX report_screenings_by_reporter ON classify.report_screenings (org_id, app_id, livemode, reporter_external_id);
+CREATE INDEX report_screenings_by_reported ON classify.report_screenings (app_id, livemode, reported_external_id);
+CREATE INDEX report_screenings_by_reporter ON classify.report_screenings (app_id, livemode, reporter_external_id);
 
 -- On an upgrade, the screenings kept so far take the accounts from intake's reports. This one-time
 -- read runs as the owner, so forced row-level security is lifted around it.
@@ -28,7 +28,7 @@ BEGIN
     UPDATE classify.report_screenings s
        SET reported_external_id = r.reported_external_id, reporter_external_id = r.reporter_external_id
       FROM intake.reports r
-     WHERE r.org_id = s.org_id AND r.app_id = s.app_id AND r.livemode = s.livemode AND r.id = s.report_id;
+     WHERE r.app_id = s.app_id AND r.livemode = s.livemode AND r.id = s.report_id;
     ALTER TABLE intake.reports FORCE ROW LEVEL SECURITY;
     ALTER TABLE classify.report_screenings FORCE ROW LEVEL SECURITY;
   END IF;

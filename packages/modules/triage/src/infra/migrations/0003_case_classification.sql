@@ -20,7 +20,7 @@ BEGIN
              'preRuleP0', c.band = 'p0',
              'classifiedBy', c.classified_by)
       FROM cases.cases c
-     WHERE c.org_id = t.org_id AND c.app_id = t.app_id AND c.livemode = t.livemode AND c.id = t.case_id
+     WHERE c.app_id = t.app_id AND c.livemode = t.livemode AND c.id = t.case_id
        AND c.category_id IS NOT NULL AND c.classified_by IS NOT NULL;
     ALTER TABLE cases.cases FORCE ROW LEVEL SECURITY;
     ALTER TABLE triage.cases FORCE ROW LEVEL SECURITY;

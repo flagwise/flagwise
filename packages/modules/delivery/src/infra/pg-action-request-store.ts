@@ -15,10 +15,10 @@ export const deliveryMigrations: MigrationSet = loadMigrations('delivery', new U
  * failReason and replacedBy only.
  */
 export function pgActionRequestStore(tx: TenantTx): ActionRequestStore {
-  const tenantOf = (tenant: TenantRef) => and(eq(t.orgId, tenant.orgId), eq(t.appId, tenant.appId), eq(t.livemode, tenant.livemode))
+  const tenantOf = (tenant: TenantRef) => and(eq(t.appId, tenant.appId), eq(t.livemode, tenant.livemode))
   const toRequest = (r: typeof t.$inferSelect): ActionRequest => ({
     id: r.id,
-    tenant: { orgId: r.orgId, appId: r.appId, livemode: r.livemode },
+    tenant: { appId: r.appId, livemode: r.livemode },
     caseId: r.caseId,
     decisionId: r.decisionId,
     actionKey: r.actionKey,
@@ -41,7 +41,7 @@ export function pgActionRequestStore(tx: TenantTx): ActionRequestStore {
 
     async lockDecision(tenant, decisionId) {
       // A transaction-scoped advisory lock; a hash collision only makes two decisions wait for each other.
-      const key = JSON.stringify([tenant.orgId, tenant.appId, tenant.livemode, decisionId])
+      const key = JSON.stringify([tenant.appId, tenant.livemode, decisionId])
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`delivery.decision:${key}`}, 0))`)
     },
 
@@ -51,7 +51,6 @@ export function pgActionRequestStore(tx: TenantTx): ActionRequestStore {
         .from(t)
         .where(and(tenantOf(r.tenant), eq(t.decisionId, r.decisionId)))
       await tx.insert(t).values({
-        orgId: r.tenant.orgId,
         appId: r.tenant.appId,
         livemode: r.tenant.livemode,
         id: r.id,

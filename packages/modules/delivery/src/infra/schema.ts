@@ -5,7 +5,6 @@ import { boolean, integer, pgSchema, text, timestamp } from 'drizzle-orm/pg-core
 const schema = pgSchema('delivery')
 
 export const actionRequestsTable = schema.table('action_requests', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   id: text('id').notNull(),
@@ -20,7 +19,6 @@ export const actionRequestsTable = schema.table('action_requests', {
 })
 
 const tenantColumns = () => ({
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
 })

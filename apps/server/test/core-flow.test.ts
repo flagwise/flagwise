@@ -9,10 +9,10 @@ import type { Policy } from '@flagwise/contracts'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { composeServices, MemoryTriageCases, policyWithKeys, type Classification, type Services } from './support/services.ts'
 
-const tenant: TenantRef = { orgId: 'org_1', appId: 'app_a', livemode: true }
+const tenant: TenantRef = { appId: 'app_a', livemode: true }
 const T0 = new Date('2026-11-03T09:00:00.000Z')
 const H = 3_600_000
-const same = (a: TenantRef, b: TenantRef) => a.orgId === b.orgId && a.appId === b.appId && a.livemode === b.livemode
+const same = (a: TenantRef, b: TenantRef) => a.appId === b.appId && a.livemode === b.livemode
 
 class Cases implements CaseRepository {
   readonly rows = new Map<string, CaseRecord>()

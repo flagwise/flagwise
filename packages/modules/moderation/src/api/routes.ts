@@ -136,7 +136,7 @@ function caseWork(ctx: TenantContext): { tenant: TenantRef; actorId: string } {
   }
   const { actor } = ctx
   const actorId = actor.type === 'member' || actor.type === 'api_key' ? actor.id : actor.type === 'embed' ? `embed:${actor.sub}` : 'system'
-  return { tenant: { orgId: ctx.orgId, appId: ctx.appId, livemode: ctx.livemode }, actorId }
+  return { tenant: { appId: ctx.appId, livemode: ctx.livemode }, actorId }
 }
 
 /** Runs a case-work use case, turning its refusals into API errors. */

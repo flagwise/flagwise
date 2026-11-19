@@ -1,5 +1,5 @@
-// The audit log on Postgres, inside a tenant transaction (row-level security limits it to that
-// org, its apps and the mode).
+// The audit log on Postgres, inside a tenant transaction (row-level security limits it to its
+// apps and the mode).
 
 import type { Clock, TenantRef } from '@flagwise/kernel'
 import { loadMigrations, scopeOfRef, withTenant, type Database, type MigrationSet, type TenantTx } from '@flagwise/platform'
@@ -28,11 +28,11 @@ const toEntry = (r: typeof entries.$inferSelect): AuditEntry => ({
 })
 
 export function pgAuditStore(tx: TenantTx): AuditStore {
-  const ofChain = (t: TenantRef) => and(eq(entries.orgId, t.orgId), eq(entries.appId, t.appId), eq(entries.livemode, t.livemode))
+  const ofChain = (t: TenantRef) => and(eq(entries.appId, t.appId), eq(entries.livemode, t.livemode))
   return {
     async lockChain(tenant, sourceEventId) {
       // A transaction-scoped advisory lock; a hash collision only makes two chains wait for each other.
-      const key = `audit.chain:${tenant.orgId}:${tenant.appId}:${tenant.livemode}`
+      const key = `audit.chain:${tenant.appId}:${tenant.livemode}`
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`)
       const [recorded] = await tx.select({ seq: entries.seq }).from(entries).where(and(ofChain(tenant), eq(entries.sourceEventId, sourceEventId)))
       const [last] = await tx.select().from(entries).where(ofChain(tenant)).orderBy(sql`${entries.seq} DESC`).limit(1)
@@ -41,7 +41,6 @@ export function pgAuditStore(tx: TenantTx): AuditStore {
 
     async insert(tenant, e, found) {
       await tx.insert(entries).values({
-        orgId: tenant.orgId,
         appId: tenant.appId,
         livemode: tenant.livemode,
         seq: e.seq,
@@ -94,7 +93,7 @@ export function pgAuditStore(tx: TenantTx): AuditStore {
       const [row] = await tx
         .select({ seq: checkpoints.seq, hash: checkpoints.hash })
         .from(checkpoints)
-        .where(and(eq(checkpoints.orgId, tenant.orgId), eq(checkpoints.appId, tenant.appId), eq(checkpoints.livemode, tenant.livemode)))
+        .where(and(eq(checkpoints.appId, tenant.appId), eq(checkpoints.livemode, tenant.livemode)))
       return row ?? null
     },
   }

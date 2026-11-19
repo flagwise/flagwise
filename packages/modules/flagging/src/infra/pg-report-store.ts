@@ -13,10 +13,10 @@ export const flaggingMigrations: MigrationSet = loadMigrations('intake', new URL
 
 /** A ReportStore on the given tenant transaction. Reports read back equal the reports written. */
 export function pgReportStore(tx: TenantTx): ReportStore {
-  const tenantOf = (tenant: TenantRef) => and(eq(t.orgId, tenant.orgId), eq(t.appId, tenant.appId), eq(t.livemode, tenant.livemode))
+  const tenantOf = (tenant: TenantRef) => and(eq(t.appId, tenant.appId), eq(t.livemode, tenant.livemode))
   const toReport = (r: typeof t.$inferSelect): Report => ({
     id: r.id,
-    tenant: { orgId: r.orgId, appId: r.appId, livemode: r.livemode },
+    tenant: { appId: r.appId, livemode: r.livemode },
     reporterExternalId: r.reporterExternalId,
     reportedExternalId: r.reportedExternalId,
     category: r.category,
@@ -50,7 +50,6 @@ export function pgReportStore(tx: TenantTx): ReportStore {
       const inserted = await tx
         .insert(t)
         .values({
-          orgId: r.tenant.orgId,
           appId: r.tenant.appId,
           livemode: r.tenant.livemode,
           id: r.id,
@@ -65,7 +64,7 @@ export function pgReportStore(tx: TenantTx): ReportStore {
           joinedExistingCase: r.joinedExistingCase,
         })
         // Only the idempotency key can clash: report ids are new.
-        .onConflictDoNothing({ target: [t.orgId, t.appId, t.livemode, t.idempotencyKey] })
+        .onConflictDoNothing({ target: [t.appId, t.livemode, t.idempotencyKey] })
         .returning({ id: t.id })
       return inserted.length === 1
     },

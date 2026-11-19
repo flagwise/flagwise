@@ -3,7 +3,7 @@ import type { TenantRef } from '@flagwise/kernel'
 import type { CaseChange, CaseCondition, CaseRecord, CaseRepository, ModerationEvent, EventPublisher } from '../src/app/ports.ts'
 import type { CaseState } from '../src/domain/case-state.ts'
 
-const sameTenant = (a: TenantRef, b: TenantRef) => a.orgId === b.orgId && a.appId === b.appId && a.livemode === b.livemode
+const sameTenant = (a: TenantRef, b: TenantRef) => a.appId === b.appId && a.livemode === b.livemode
 
 const copy = (r: CaseRecord): CaseRecord => structuredClone(r)
 

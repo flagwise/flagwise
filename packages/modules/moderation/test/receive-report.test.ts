@@ -5,7 +5,7 @@ import { receiveReport, type ReportReceived } from '../src/app/receive-report.ts
 import type { CaseState } from '../src/domain/case-state.ts'
 import { InMemoryCaseRepository, RecordingPublisher } from './fakes.ts'
 
-const tenant: TenantRef = { orgId: 'org_1', appId: 'app_a', livemode: true }
+const tenant: TenantRef = { appId: 'app_a', livemode: true }
 const NOW = '2026-11-03T09:00:00.000Z'
 
 let repo: InMemoryCaseRepository
@@ -88,7 +88,6 @@ describe('opening a case', () => {
 
   it.each<[string, TenantRef]>([
     ['another app', { ...tenant, appId: 'app_b' }],
-    ['another org', { ...tenant, orgId: 'org_2' }],
     ['test mode', { ...tenant, livemode: false }],
   ])('does not join a case in %s', async (_label, other) => {
     repo.seed(existing({ tenant: other }))

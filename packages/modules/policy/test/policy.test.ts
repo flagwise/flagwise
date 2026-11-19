@@ -17,7 +17,7 @@ import {
   type PolicyStores,
 } from '../src/index.ts'
 
-const A: TenantRef = { orgId: 'org_jane', appId: 'app_a', livemode: true }
+const A: TenantRef = { appId: 'app_a', livemode: true }
 const NOW = new Date('2026-11-18T09:00:00Z')
 
 function memoryStores(): PolicyStores & { head: PolicyHead | null; categoryList: AppCategory[] } {

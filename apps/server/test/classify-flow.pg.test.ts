@@ -22,7 +22,7 @@ import { pgTriageDeps, triageMigrations } from '@flagwise/triage'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { composeServices } from './support/services.ts'
 
-const A: TenantRef = { orgId: 'org_jane', appId: 'app_a', livemode: true }
+const A: TenantRef = { appId: 'app_a', livemode: true }
 
 const report = (text: string) =>
   JSON.stringify({

@@ -1,5 +1,5 @@
 // Public facade of the tenancy module. Other modules import only this file.
-// Owns: Orgs, apps, members, roles and API keys.
+// Owns: Apps, members, roles and API keys.
 import { defineModule } from '@flagwise/kernel'
 
 export const tenancyModule = defineModule({ name: 'tenancy' })

@@ -16,8 +16,7 @@ export type TenantTx = Tx & { readonly [tenantBrand]: true }
 export type SystemTx = Tx & { readonly [systemBrand]: true }
 
 export interface TenantScope {
-  readonly orgId: string
-  /** The apps the transaction may see; empty for org-level work. */
+  /** The apps the transaction may see; empty for work on no app. */
   readonly appIds: readonly string[]
   readonly livemode: boolean
 }
@@ -73,19 +72,18 @@ const ID = /^[A-Za-z0-9_-]{1,64}$/
 
 /**
  * Runs `fn` in a transaction of the app role with the tenant context set through `set_config(...,
- * true)`: `app.org_id`, `app.app_ids` (comma-separated) and `app.livemode` (`true` / `false`). The
+ * true)`: `app.app_ids` (comma-separated) and `app.livemode` (`true` / `false`). The
  * context ends with the transaction, so a pooled connection never carries it into the next one.
  * Commits when `fn` resolves and rolls back when it throws, rethrowing the error.
  *
- * A RangeError, before any query, when the org id or an app id is not 1 to 64 of
+ * A RangeError, before any query, when an app id is not 1 to 64 of
  * `A-Z a-z 0-9 _ -`.
  */
 export async function withTenant<T>(db: Database, scope: TenantScope, fn: (tx: TenantTx) => Promise<T>): Promise<T> {
-  if (!ID.test(scope.orgId)) throw new RangeError(`Not a valid org id: ${JSON.stringify(scope.orgId)}`)
   for (const id of scope.appIds) if (!ID.test(id)) throw new RangeError(`Not a valid app id: ${JSON.stringify(id)}`)
   return db.app.transaction(async (tx) => {
     await tx.execute(
-      sql`SELECT set_config('app.org_id', ${scope.orgId}, true), set_config('app.app_ids', ${scope.appIds.join(',')}, true), set_config('app.livemode', ${String(scope.livemode)}, true)`,
+      sql`SELECT set_config('app.app_ids', ${scope.appIds.join(',')}, true), set_config('app.livemode', ${String(scope.livemode)}, true)`,
     )
     return fn(tx as TenantTx)
   })
@@ -98,10 +96,10 @@ export async function withSystem<T>(db: Database, fn: (tx: SystemTx) => Promise<
 
 /** The scope of a job or outbox row: its one app. */
 export function scopeOfRef(ref: TenantRef): TenantScope {
-  return { orgId: ref.orgId, appIds: [ref.appId], livemode: ref.livemode }
+  return { appIds: [ref.appId], livemode: ref.livemode }
 }
 
 /** The scope of a request: the apps its actor may read. */
 export function scopeOfContext(ctx: TenantContext): TenantScope {
-  return { orgId: ctx.orgId, appIds: ctx.appIds, livemode: ctx.livemode }
+  return { appIds: ctx.appIds, livemode: ctx.livemode }
 }

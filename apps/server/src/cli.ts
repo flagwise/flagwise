@@ -23,15 +23,15 @@ const USAGE = `Usage: flagwise <command>
                                    this itself; with role URLs it needs DATABASE_ADMIN_URL.
   db:migrate                       Run pending migrations as DATABASE_OWNER_URL, else DATABASE_URL.
                                    With DATABASE_URL alone the server does this itself.
-  bootstrap --org <name> --app <name> [--preset dating|marketplace|community]
-                                   Create an org, an app and its live and test API keys
+  bootstrap --app <name> [--preset dating|marketplace|community]
+                                   Create an app and its live and test API keys
                                    (flagging and actions scopes); with --preset, the app starts with
                                    that preset's categories in both modes.
-  keys:create --org <org_id> --app <app_id> --scope <scopes> [--test]
+  keys:create --app <app_id> --scope <scopes> [--test]
                                    Issue an API key for the app; scopes are comma-separated
                                    (flagging, actions, admin). Live mode unless --test.
 
-  Webhooks (each for one app and mode: --org <org_id> --app <app_id>, live unless --test):
+  Webhooks (each for one app and mode: --app <app_id>, live unless --test):
   webhooks:add --url <https url> [--events <types>]
                                    Add an endpoint (at most 3); --events is comma-separated, default
                                    every type. The app's first endpoint also makes its signing secret.
@@ -48,7 +48,6 @@ const USAGE = `Usage: flagwise <command>
 
 async function main(argv: string[]): Promise<number> {
   const { positionals, values } = parseArgs({ args: argv, allowPositionals: true, options: {
-      org: { type: 'string' },
       app: { type: 'string' },
       scope: { type: 'string' },
       test: { type: 'boolean' },
@@ -69,20 +68,19 @@ async function main(argv: string[]): Promise<number> {
       return 0
     }
     case 'bootstrap': {
-      if (!values.org || !values.app) {
-        console.error('bootstrap needs --org <name> and --app <name>')
+      if (!values.app) {
+        console.error('bootstrap needs --app <name>')
         return 2
       }
       if (values.preset !== undefined && !PRESET_NAMES.includes(values.preset as PresetName)) {
         console.error(`--preset is one of ${PRESET_NAMES.join(', ')}`)
         return 2
       }
-      const { org, app, liveKey, testKey } = await bootstrap(await serverConfigFromEnv(process.env), {
-        orgName: values.org,
+      const { app, liveKey, testKey } = await bootstrap(await serverConfigFromEnv(process.env), {
         appName: values.app,
         ...(values.preset !== undefined && { preset: values.preset as PresetName }),
       })
-      console.log(`Created org ${org.id} (${org.name}) and app ${app.id} (${app.name}).
+      console.log(`Created app ${app.id} (${app.name}).
 
 Live API key: ${liveKey}
 Test API key: ${testKey}
@@ -91,12 +89,12 @@ These keys are shown only once. Store them now.`)
       return 0
     }
     case 'keys:create': {
-      if (!values.org || !values.app || !values.scope) {
-        console.error('keys:create needs --org <org_id>, --app <app_id> and --scope <scopes>')
+      if (!values.app || !values.scope) {
+        console.error('keys:create needs --app <app_id> and --scope <scopes>')
         return 2
       }
       const scopes = values.scope.split(',').map((s) => s.trim()).filter(Boolean)
-      const created = await createKey(await serverConfigFromEnv(process.env), { orgId: values.org, appId: values.app, scopes, livemode: !values.test })
+      const created = await createKey(await serverConfigFromEnv(process.env), { appId: values.app, scopes, livemode: !values.test })
       console.log(`Created ${created.livemode ? 'live' : 'test'} API key ${created.id} with scopes ${created.scopes.join(', ')}:
 
 ${created.key}
@@ -108,11 +106,11 @@ This key is shown only once. Store it now.`)
     case 'webhooks:list':
     case 'webhooks:remove':
     case 'webhooks:roll-secret': {
-      if (!values.org || !values.app) {
-        console.error(`${positionals[0]} needs --org <org_id> and --app <app_id>`)
+      if (!values.app) {
+        console.error(`${positionals[0]} needs --app <app_id>`)
         return 2
       }
-      const tenant = { orgId: values.org, appId: values.app, livemode: !values.test }
+      const tenant = { appId: values.app, livemode: !values.test }
       const mode = tenant.livemode ? 'live' : 'test'
       const config = await serverConfigFromEnv(process.env)
       if (positionals[0] === 'webhooks:add') {

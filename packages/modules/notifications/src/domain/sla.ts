@@ -36,12 +36,12 @@ export interface DueAlert {
 }
 
 export type Channel = 'email' | 'slack' | 'discord'
-export type AlertRole = 'owner' | 'org_admin' | 'app_admin' | 'moderator' | 'developer'
+export type AlertRole = 'owner' | 'admin' | 'app_admin' | 'moderator' | 'developer'
 
 const CHANNEL_ORDER: readonly Channel[] = ['email', 'slack', 'discord']
-const ROLE_ORDER: readonly AlertRole[] = ['owner', 'org_admin', 'app_admin', 'moderator', 'developer']
+const ROLE_ORDER: readonly AlertRole[] = ['owner', 'admin', 'app_admin', 'moderator', 'developer']
 const DEFAULT_CHANNELS: readonly Channel[] = ['email']
-const DEFAULT_ROLES: readonly AlertRole[] = ['owner', 'org_admin', 'app_admin']
+const DEFAULT_ROLES: readonly AlertRole[] = ['owner', 'admin', 'app_admin']
 
 function checkTimer(timer: Timer): void {
   if (timer.dueAt.getTime() <= timer.startedAt.getTime()) throw new RangeError('dueAt must be after startedAt')
@@ -109,10 +109,10 @@ export function timerAlerts(timer: Timer, sentKeys: ReadonlySet<string>, now: Da
 
 /**
  * Where an alert goes. The route is `routes[type]` when the app configured one, else email to
- * Owner, Org Admin and App Admin (plus Moderator for new_p0 and sla_breach). Free allows email only;
+ * Owner, Admin and App Admin (plus Moderator for new_p0 and sla_breach). Free allows email only;
  * Pro allows email, Slack and Discord; the rest go to `dropped`. With no allowed channel left,
  * channels is ['email']. All lists are deduplicated in canonical order: email, slack, discord;
- * owner, org_admin, app_admin, moderator, developer.
+ * owner, admin, app_admin, moderator, developer.
  */
 export function routeAlert(
   type: AlertType,

@@ -7,7 +7,6 @@ const schema = pgSchema('cases')
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' })
 
 export const casesTable = schema.table('cases', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   id: text('id').notNull(),
@@ -33,7 +32,6 @@ export const casesTable = schema.table('cases', {
 })
 
 export const caseReportsTable = schema.table('case_reports', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   reportId: text('report_id').notNull(),
@@ -47,7 +45,6 @@ export const caseReportsTable = schema.table('case_reports', {
 })
 
 export const decisionsTable = schema.table('decisions', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   id: text('id').notNull(),
@@ -65,7 +62,6 @@ export const decisionsTable = schema.table('decisions', {
 
 /** The failed action requests moderation heard of, and whether a retry answered them. */
 export const actionFailuresTable = schema.table('action_failures', {
-  orgId: text('org_id').notNull(),
   appId: text('app_id').notNull(),
   livemode: boolean('livemode').notNull(),
   caseId: text('case_id').notNull(),

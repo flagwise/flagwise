@@ -9,7 +9,7 @@ import { moderationMigrations, pgCaseRepository, pgModerationPolicyCopy } from '
 import { deliveryMigrations, pgDeliveryDeps } from '@flagwise/delivery'
 import { flaggingMigrations, pgFlaggingRunner, subscribeFlagging, type FlaggingDeps } from '@flagwise/flagging'
 import { pgTriageDeps, triageMigrations } from '@flagwise/triage'
-import { createApp as createOrgApp, createOrg, issueApiKey, pgTenancyStore, revokeApiKey, tenancyMigrations } from '@flagwise/tenancy'
+import { createApp as createOrgApp, issueApiKey, pgTenancyStore, revokeApiKey, tenancyMigrations } from '@flagwise/tenancy'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createApp, pgKeyResolver, type ApiDeps } from '../src/index.ts'
@@ -54,22 +54,21 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
     bus = createPgBus(db, { retryDelayMs: () => 0, contract: eventContract })
     clock = manualClock(T0)
 
-    const registry = <R>(orgId: string, appIds: string[], fn: (d: Parameters<typeof createOrg>[0]) => Promise<R>) =>
-      withTenant(db, { orgId, appIds, livemode: true }, (tx) => fn({ store: pgTenancyStore(tx), clock, newId: (p) => `${p}_${++n}` }))
-    await registry('org_jane', ['app_a', 'app_b', 'app_gone'], async (d) => {
-      await createOrg(d, { id: 'org_jane', name: 'Jane Doe Dating' })
-      for (const id of ['app_a', 'app_b', 'app_gone']) await createOrgApp(d, { orgId: 'org_jane', id, name: id })
-      const issue = async (appId: string, livemode: boolean, scopes: string[]) => (await issueApiKey(d, { orgId: 'org_jane', appId, livemode, scopes })).key
+    const registry = <R>(appIds: string[], fn: (d: Parameters<typeof createOrgApp>[0]) => Promise<R>) =>
+      withTenant(db, { appIds, livemode: true }, (tx) => fn({ store: pgTenancyStore(tx), clock, newId: (p) => `${p}_${++n}` }))
+    await registry(['app_a', 'app_b', 'app_gone'], async (d) => {
+      for (const id of ['app_a', 'app_b', 'app_gone']) await createOrgApp(d, { id, name: id })
+      const issue = async (appId: string, livemode: boolean, scopes: string[]) => (await issueApiKey(d, { appId, livemode, scopes })).key
       keys.live = await issue('app_a', true, ['flagging'])
       keys.test = await issue('app_a', false, ['flagging'])
       keys.actionsOnly = await issue('app_a', true, ['actions'])
       keys.otherApp = await issue('app_b', true, ['flagging'])
       keys.deletedApp = await issue('app_gone', true, ['flagging'])
-      const revoked = await issueApiKey(d, { orgId: 'org_jane', appId: 'app_a', livemode: true, scopes: ['flagging'] })
-      await revokeApiKey(d, { orgId: 'org_jane', appId: 'app_a', keyId: revoked.record.id })
+      const revoked = await issueApiKey(d, { appId: 'app_a', livemode: true, scopes: ['flagging'] })
+      await revokeApiKey(d, { appId: 'app_a', keyId: revoked.record.id })
       keys.revoked = revoked.key
     })
-    await withTenant(db, { orgId: 'org_jane', appIds: ['app_gone'], livemode: true }, (tx) => tx.execute(sql`UPDATE tenancy.apps SET deleted_at = now() WHERE id = 'app_gone'`))
+    await withTenant(db, { appIds: ['app_gone'], livemode: true }, (tx) => tx.execute(sql`UPDATE tenancy.apps SET deleted_at = now() WHERE id = 'app_gone'`))
 
     const flagging: FlaggingDeps = { run: pgFlaggingRunner(db, bus), storage: bucket.storage, clock, newReportId: () => `rpt_${++n}` }
     composeServices({

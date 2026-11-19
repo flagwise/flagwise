@@ -137,7 +137,7 @@ function allowed(ctx: TenantContext, action: AppAction): TenantRef {
   if (!ctx.appId || !can(ctx, { action, appId: ctx.appId })) {
     throw new FlagwiseError('forbidden', action === 'categories.read' ? 'This API key does not have the flagging scope' : 'This API key does not have the admin scope')
   }
-  return { orgId: ctx.orgId, appId: ctx.appId, livemode: ctx.livemode }
+  return { appId: ctx.appId, livemode: ctx.livemode }
 }
 
 /** The body as a JSON object; anything else is an empty object, so its fields fail validation. */
