@@ -54,4 +54,4 @@ The dev server watches folders (`--watch-path`) rather than using plain `--watch
 
 ## License
 
-Core: [Apache-2.0](LICENSE). `spec/` and the SDKs: MIT. Outside contributions require a CLA (to be published before the first external pull request is accepted).
+Core: [Apache-2.0](LICENSE). `spec/` and the SDKs: MIT. Contributions are accepted under the same license (Apache-2.0, Section 5); there is no CLA.
