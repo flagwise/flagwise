@@ -7,7 +7,7 @@ import { coreModules } from './modules.ts'
 export interface CreateAppOptions {
   /** Cloud and Pro plugins, passed at build time. Self-host passes none. */
   readonly plugins?: readonly FlagwisePlugin[]
-  /** Serves the public API at /v1 and /api/v1 (self-host) when given. */
+  /** Serves the public API at /v1 when given, on every deploy. */
   readonly api?: ApiDeps
   /** Checks what the server depends on; /readyz is 503 when it throws. Default: always ready. */
   readonly ready?: () => Promise<void>
@@ -34,9 +34,7 @@ export function createApp(opts: CreateAppOptions = {}): App {
     }
   })
   if (opts.api) {
-    const api = createApi(opts.api)
-    http.route('/v1', api)
-    http.route('/api/v1', api)
+    http.route('/v1', createApi(opts.api))
   }
 
   return { http, modules: coreModules, plugins }

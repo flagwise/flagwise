@@ -112,10 +112,10 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('ingest API on Postgres and obje
     const assigned = await (await call(`/v1/reports/${accepted.id}`, { key: keys.live })).json() as any
     expect(assigned).toEqual({ ...accepted, status: 'assigned', case_id: expect.stringMatching(/^case_/), joined_existing_case: false })
 
-    // A second report about the same account joins that case; the self-host path works too.
-    const second = await (await call('/api/v1/reports', { key: keys.live, body: report({ reporter: { external_id: 'u_jane_roe' } }) })).json() as any
+    // A second report about the same account joins that case.
+    const second = await (await call('/v1/reports', { key: keys.live, body: report({ reporter: { external_id: 'u_jane_roe' } }) })).json() as any
     await drain()
-    expect(await (await call(`/api/v1/reports/${second.id}`, { key: keys.live })).json() as any).toMatchObject({
+    expect(await (await call(`/v1/reports/${second.id}`, { key: keys.live })).json() as any).toMatchObject({
       status: 'assigned',
       case_id: assigned.case_id,
       joined_existing_case: true,
