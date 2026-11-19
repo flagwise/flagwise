@@ -468,7 +468,13 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
         if (stopped) return
         const purging = Date.now() - lastPurge >= purgeEveryMs
         if (purging) lastPurge = Date.now()
-        running = (purging ? purge().then(round) : round())
+        // Purged after the round: the round registers new groups first, so one subscribed before
+        // start() gets every event published from then on.
+        running = round()
+          .then(async (r) => {
+            if (purging) await purge()
+            return r
+          })
           .catch((err) => opts.onError?.(err))
           .then((r) => {
             if (!stopped) timer = setTimeout(tick, r && r.calls > 0 ? 0 : pollMs)
