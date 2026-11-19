@@ -11,7 +11,7 @@ export type AppRole = 'app_admin' | 'moderator' | 'developer'
 export type Role = OrgRole | AppRole
 
 /** Server-to-server API key scopes. */
-export type ApiKeyScope = 'ingest' | 'actions' | 'admin'
+export type ApiKeyScope = 'flagging' | 'actions' | 'admin'
 
 /** Carried by every job and outbox row; workers run handlers under withTenant(ref, fn). */
 export interface TenantRef {

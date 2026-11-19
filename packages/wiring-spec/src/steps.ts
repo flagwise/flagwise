@@ -13,7 +13,7 @@ export interface ReportInput {
 
 /** Files a report from the tenant's backend and returns its id. */
 export async function fileReport(i: Install, input: ReportInput): Promise<string> {
-  const res = await i.call(i.ingestKey, PATHS.reports(), {
+  const res = await i.call(i.flaggingKey, PATHS.reports(), {
     method: 'POST',
     body: {
       reporter: { external_id: input.reporter ?? 'u_jane_doe' },
@@ -28,7 +28,7 @@ export async function fileReport(i: Install, input: ReportInput): Promise<string
 
 /** The case a report ended up in, once it has one. */
 export function caseOf(i: Install, reportId: string): Promise<string> {
-  return eventually(async () => ((await i.call(i.ingestKey, PATHS.report(reportId))).body?.case_id as string | null) ?? undefined, `a case for ${reportId}`)
+  return eventually(async () => ((await i.call(i.flaggingKey, PATHS.report(reportId))).body?.case_id as string | null) ?? undefined, `a case for ${reportId}`)
 }
 
 /** The case as a moderator sees it, once `check` holds. */

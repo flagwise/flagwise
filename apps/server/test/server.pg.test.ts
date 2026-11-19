@@ -4,7 +4,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { pgCaseRepository } from '@flagwise/cases'
+import { pgCaseRepository } from '@flagwise/moderation'
 import { scopeOfRef, withTenant } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -13,7 +13,7 @@ import { bootstrap, createKey, createServer, initDatabaseFromEnv, migrateFromEnv
 
 /** Sends a report from the key, runs the handlers, and returns the case it landed in. */
 async function reportToCase(server: Server, installed: Bootstrapped) {
-  const post = await server.app.http.request('/v1/reports', {
+  const post = await server.app.http.request('/v1/flagging/reports', {
     method: 'POST',
     headers: { authorization: `Bearer ${installed.liveKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -28,7 +28,7 @@ async function reportToCase(server: Server, installed: Bootstrapped) {
   const { id } = (await post.json()) as { id: string }
   await server.bus.drain()
 
-  const get = await server.app.http.request(`/v1/reports/${id}`, { headers: { authorization: `Bearer ${installed.liveKey}` } })
+  const get = await server.app.http.request(`/v1/flagging/reports/${id}`, { headers: { authorization: `Bearer ${installed.liveKey}` } })
   const report = (await get.json()) as { status: string; case_id: string }
   expect(report.status).toBe('assigned')
   const tenant = { orgId: installed.org.id, appId: installed.app.id, livemode: true }
@@ -197,10 +197,10 @@ describe.skipIf(!testDatabaseUrl)('the case API', () => {
   })
 
   it('needs the admin scope', async () => {
-    expect((await call(installed.liveKey, '/cases')).status).toBe(403)
-    expect((await call(installed.liveKey, '/cases/case_x/classification')).status).toBe(403)
-    expect((await call(installed.liveKey, '/reports/rpt_x/evidence')).status).toBe(403)
-    expect((await call(admin.key, '/reports', { method: 'POST', body: {} })).status).toBe(403)
+    expect((await call(installed.liveKey, '/moderation/cases')).status).toBe(403)
+    expect((await call(installed.liveKey, '/classify/classifications/case_x')).status).toBe(403)
+    expect((await call(installed.liveKey, '/flagging/reports/rpt_x/evidence')).status).toBe(403)
+    expect((await call(admin.key, '/flagging/reports', { method: 'POST', body: {} })).status).toBe(403)
   })
 
   it('shows a case in the queue, its classification and evidence apart, and works it to a decision', async () => {
@@ -208,7 +208,7 @@ describe.skipIf(!testDatabaseUrl)('the case API', () => {
     const caseId = opened!.id
     const reportId = opened!.reportIds[0]!
 
-    const queue = await json(await call(admin.key, '/cases'))
+    const queue = await json(await call(admin.key, '/moderation/cases'))
     expect(queue).toMatchObject({ object: 'list', next_cursor: null })
     expect(queue.data).toHaveLength(1)
     expect(queue.data[0]).toMatchObject({
@@ -226,17 +226,17 @@ describe.skipIf(!testDatabaseUrl)('the case API', () => {
       livemode: true,
     })
     expect(queue.data[0]).not.toHaveProperty('summary')
-    expect((await json(await call(admin.key, '/cases?severity=P0'))).data).toEqual([])
-    expect((await call(admin.key, '/cases?severity=P9')).status).toBe(422)
+    expect((await json(await call(admin.key, '/moderation/cases?severity=P0'))).data).toEqual([])
+    expect((await call(admin.key, '/moderation/cases?severity=P9')).status).toBe(422)
 
-    expect(await json(await call(admin.key, `/cases/${caseId}/classification`))).toMatchObject({
+    expect(await json(await call(admin.key, `/classify/classifications/${caseId}`))).toMatchObject({
       object: 'classification',
       case_id: caseId,
       classified_by: 'rules',
       rules_reason: 'rules_only',
       summary: null,
     })
-    expect(await json(await call(admin.key, `/reports/${reportId}/evidence`))).toMatchObject({
+    expect(await json(await call(admin.key, `/flagging/reports/${reportId}/evidence`))).toMatchObject({
       object: 'evidence',
       report_id: reportId,
       reporter: { external_id: 'u_jane_doe' },
@@ -244,48 +244,48 @@ describe.skipIf(!testDatabaseUrl)('the case API', () => {
       text: 'He asked me to send $200 first',
       evidence: { kind: 'message', content: [{ text: 'can you send me $200 first?' }] },
     })
-    expect((await call(admin.key, '/cases/case_missing')).status).toBe(404)
-    expect((await call(admin.key, '/cases/case_missing/classification')).status).toBe(404)
+    expect((await call(admin.key, '/moderation/cases/case_missing')).status).toBe(404)
+    expect((await call(admin.key, '/classify/classifications/case_missing')).status).toBe(404)
 
     const decision = { outcome: 'violation', category_id: 'scams_fraud.romance_scam', severity: 'P1', public_reason: 'Asked a match for money.' }
-    expect(await json(await call(admin.key, `/cases/${caseId}/decision`, { method: 'POST', body: decision }))).toMatchObject({
+    expect(await json(await call(admin.key, `/moderation/cases/${caseId}/decision`, { method: 'POST', body: decision }))).toMatchObject({
       status: 409,
       detail: 'Claim the case before deciding it',
     })
 
-    expect(await json(await call(admin.key, `/cases/${caseId}/claim`, { method: 'POST' }))).toMatchObject({ state: 'claimed', claim: { holder: admin.id } })
-    expect(await json(await call(otherAdmin.key, `/cases/${caseId}/claim`, { method: 'POST' }))).toMatchObject({ status: 409, detail: `The case is claimed by ${admin.id}` })
-    expect((await call(admin.key, `/cases/${caseId}/decision`, { method: 'POST', body: { ...decision, severity: 'P5' } })).status).toBe(422)
-    expect((await call(admin.key, `/cases/${caseId}/decision`, { method: 'POST', body: { ...decision, action_keys: ['suspend_7d'] } })).status).toBe(422)
+    expect(await json(await call(admin.key, `/moderation/cases/${caseId}/claim`, { method: 'POST' }))).toMatchObject({ state: 'claimed', claim: { holder: admin.id } })
+    expect(await json(await call(otherAdmin.key, `/moderation/cases/${caseId}/claim`, { method: 'POST' }))).toMatchObject({ status: 409, detail: `The case is claimed by ${admin.id}` })
+    expect((await call(admin.key, `/moderation/cases/${caseId}/decision`, { method: 'POST', body: { ...decision, severity: 'P5' } })).status).toBe(422)
+    expect((await call(admin.key, `/moderation/cases/${caseId}/decision`, { method: 'POST', body: { ...decision, action_keys: ['suspend_7d'] } })).status).toBe(422)
 
-    const decided = await call(admin.key, `/cases/${caseId}/decision`, { method: 'POST', body: decision })
+    const decided = await call(admin.key, `/moderation/cases/${caseId}/decision`, { method: 'POST', body: decision })
     expect(decided.status).toBe(201)
     expect(await json(decided)).toMatchObject({ object: 'decision', outcome: 'violation', category_id: 'scams_fraud.romance_scam', severity: 'P1', action_keys: [], decided_by: admin.id })
-    expect(await json(await call(admin.key, `/cases/${caseId}`))).toMatchObject({ state: 'actioned', claim: null, decision: { decided_by: admin.id } })
-    expect((await json(await call(admin.key, '/cases'))).data).toEqual([])
-    expect((await json(await call(admin.key, '/cases?state=actioned'))).data).toHaveLength(1)
-    expect((await call(otherAdmin.key, `/cases/${caseId}/decision`, { method: 'POST', body: decision })).status).toBe(409)
+    expect(await json(await call(admin.key, `/moderation/cases/${caseId}`))).toMatchObject({ state: 'actioned', claim: null, decision: { decided_by: admin.id } })
+    expect((await json(await call(admin.key, '/moderation/cases'))).data).toEqual([])
+    expect((await json(await call(admin.key, '/moderation/cases?state=actioned'))).data).toHaveLength(1)
+    expect((await call(otherAdmin.key, `/moderation/cases/${caseId}/decision`, { method: 'POST', body: decision })).status).toBe(409)
     await server.bus.drain()
     expect(await server.bus.deadLetters()).toEqual([])
   })
 
   it('releases a claim, and lets an admin key force-release another key\'s claim', async () => {
-    await server.app.http.request('/v1/reports', {
+    await server.app.http.request('/v1/flagging/reports', {
       method: 'POST',
       headers: { authorization: `Bearer ${installed.liveKey}`, 'content-type': 'application/json' },
       body: JSON.stringify({ reporter: { external_id: 'u_jane_doe' }, reported: { external_id: 'u_jack_doe' }, category: 'spam', evidence: { kind: 'message', content: ['buy now'] } }),
     })
     await server.bus.drain()
-    const [open] = (await json(await call(admin.key, '/cases'))).data
+    const [open] = (await json(await call(admin.key, '/moderation/cases'))).data
     expect(open).toMatchObject({ state: 'open', subject_external_id: 'u_jack_doe' })
-    await call(admin.key, `/cases/${open.id}/claim`, { method: 'POST' })
-    expect(await json(await call(otherAdmin.key, `/cases/${open.id}/release`, { method: 'POST' }))).toMatchObject({ status: 409 })
-    expect(await json(await call(otherAdmin.key, `/cases/${open.id}/release`, { method: 'POST', body: { force: true } }))).toMatchObject({ state: 'open', claim: null })
-    expect((await call(admin.key, `/cases/${open.id}/release`, { method: 'POST', body: { force: 'yes' } })).status).toBe(422)
+    await call(admin.key, `/moderation/cases/${open.id}/claim`, { method: 'POST' })
+    expect(await json(await call(otherAdmin.key, `/moderation/cases/${open.id}/release`, { method: 'POST' }))).toMatchObject({ status: 409 })
+    expect(await json(await call(otherAdmin.key, `/moderation/cases/${open.id}/release`, { method: 'POST', body: { force: true } }))).toMatchObject({ state: 'open', claim: null })
+    expect((await call(admin.key, `/moderation/cases/${open.id}/release`, { method: 'POST', body: { force: 'yes' } })).status).toBe(422)
   })
   it("weighs a new reported account, shows why on the case, and lists the account's cases latest first", async () => {
     const send = (reporter: Record<string, unknown>, reported: Record<string, unknown>) =>
-      server.app.http.request('/v1/reports', {
+      server.app.http.request('/v1/flagging/reports', {
         method: 'POST',
         headers: { authorization: `Bearer ${installed.liveKey}`, 'content-type': 'application/json' },
         body: JSON.stringify({ reporter, reported, category: 'scams_fraud.romance_scam', evidence: { kind: 'message', content: ['send me $200 first'] } }),
@@ -293,23 +293,23 @@ describe.skipIf(!testDatabaseUrl)('the case API', () => {
     const dayAgo = new Date(Date.now() - 86_400_000).toISOString()
     await send({ external_id: 'u_jane_doe', account_created_at: '2025-04-11T08:00:00Z' }, { external_id: 'u_jill_doe', account_created_at: dayAgo })
     await server.bus.drain()
-    const [first] = (await json(await call(admin.key, '/cases?subject_external_id=u_jill_doe'))).data
+    const [first] = (await json(await call(admin.key, '/moderation/cases?subject_external_id=u_jill_doe'))).data
     expect(first).toMatchObject({ state: 'open', applied_rules: ['reported_new_account'], flags: [] })
-    expect((await json(await call(admin.key, `/cases/${first.id}`))).priority).toBe(first.priority)
+    expect((await json(await call(admin.key, `/moderation/cases/${first.id}`))).priority).toBe(first.priority)
 
     // Once decided it stays in the account's history, and the next report opens another case.
-    await call(admin.key, `/cases/${first.id}/claim`, { method: 'POST' })
-    const decided = await call(admin.key, `/cases/${first.id}/decision`, { method: 'POST', body: { outcome: 'no_violation', category_id: first.category_id, severity: first.severity } })
+    await call(admin.key, `/moderation/cases/${first.id}/claim`, { method: 'POST' })
+    const decided = await call(admin.key, `/moderation/cases/${first.id}/decision`, { method: 'POST', body: { outcome: 'no_violation', category_id: first.category_id, severity: first.severity } })
     expect(decided.status).toBe(201)
     await send({ external_id: 'u_jim_doe' }, { external_id: 'u_jill_doe' })
     await server.bus.drain()
     const states = 'classifying,untriaged,open,claimed,decided,action_failed,actioned,closed'
-    const history = await json(await call(admin.key, `/cases?subject_external_id=u_jill_doe&state=${states}&order=recent&limit=1`))
-    const second = await json(await call(admin.key, `/cases?subject_external_id=u_jill_doe&state=${states}&order=recent&cursor=${history.next_cursor}`))
+    const history = await json(await call(admin.key, `/moderation/cases?subject_external_id=u_jill_doe&state=${states}&order=recent&limit=1`))
+    const second = await json(await call(admin.key, `/moderation/cases?subject_external_id=u_jill_doe&state=${states}&order=recent&cursor=${history.next_cursor}`))
     expect([...history.data, ...second.data].map((c: { id: string }) => c.id)).toHaveLength(2)
     expect(second.data[0].id).toBe(first.id)
     expect(history.data[0]).toMatchObject({ applied_rules: [], flags: ['reported_age_unknown'] })
-    expect((await call(admin.key, '/cases?order=newest')).status).toBe(422)
-    expect((await call(admin.key, `/cases?order=urgency&cursor=${history.next_cursor}`)).status).toBe(422)
+    expect((await call(admin.key, '/moderation/cases?order=newest')).status).toBe(422)
+    expect((await call(admin.key, `/moderation/cases?order=urgency&cursor=${history.next_cursor}`)).status).toBe(422)
   })
 })

@@ -1,10 +1,10 @@
 // Every module's migrations, in the order they run. The platform's own tables are added by migrate().
 
 import { auditMigrations } from '@flagwise/audit'
-import { casesMigrations } from '@flagwise/cases'
+import { moderationMigrations } from '@flagwise/moderation'
 import { classifyMigrations } from '@flagwise/classify'
 import { deliveryMigrations } from '@flagwise/delivery'
-import { intakeMigrations } from '@flagwise/intake'
+import { flaggingMigrations } from '@flagwise/flagging'
 import type { MigrationSet } from '@flagwise/platform'
 import { policyMigrations } from '@flagwise/policy'
 import { privacyMigrations } from '@flagwise/privacy'
@@ -15,9 +15,9 @@ export const ALL_MIGRATIONS: readonly MigrationSet[] = [
   tenancyMigrations,
   // After tenancy: it takes over tenancy's config tables.
   policyMigrations,
-  intakeMigrations,
+  flaggingMigrations,
   // Each policy copy starts from the policy heads on an upgrade, so after policy.
-  casesMigrations,
+  moderationMigrations,
   deliveryMigrations,
   classifyMigrations,
   triageMigrations,

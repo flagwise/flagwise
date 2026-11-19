@@ -1,11 +1,11 @@
-import { alertsModule } from '@flagwise/alerts'
-import { appealsModule } from '@flagwise/appeals'
+import { notificationsModule } from '@flagwise/notifications'
+import { disputesModule } from '@flagwise/disputes'
 import { auditModule } from '@flagwise/audit'
-import { casesModule } from '@flagwise/cases'
+import { moderationModule } from '@flagwise/moderation'
 import { classifyModule } from '@flagwise/classify'
 import { deliveryModule } from '@flagwise/delivery'
-import { intakeModule } from '@flagwise/intake'
-import { metricsModule } from '@flagwise/metrics'
+import { flaggingModule } from '@flagwise/flagging'
+import { analyticsModule } from '@flagwise/analytics'
 import { policyModule } from '@flagwise/policy'
 import { privacyModule } from '@flagwise/privacy'
 import { scoringModule } from '@flagwise/scoring'
@@ -15,15 +15,15 @@ import { triageModule } from '@flagwise/triage'
 export const coreModules = [
   tenancyModule,
   policyModule,
-  intakeModule,
+  flaggingModule,
   classifyModule,
   triageModule,
-  casesModule,
+  moderationModule,
   scoringModule,
   deliveryModule,
-  appealsModule,
+  disputesModule,
   privacyModule,
-  alertsModule,
+  notificationsModule,
   auditModule,
-  metricsModule,
+  analyticsModule,
 ] as const

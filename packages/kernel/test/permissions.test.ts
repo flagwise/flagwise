@@ -204,7 +204,7 @@ describe('evidence.cross_app_full', () => {
 
 describe('API keys', () => {
   const byScope: [ApiKeyScope, AppAction[]][] = [
-    ['ingest', ['report.create', 'categories.read', 'identifiers.check']],
+    ['flagging', ['report.create', 'categories.read', 'identifiers.check']],
     ['actions', ['action_request.respond', 'appeal.file']],
     [
       'admin',
@@ -231,17 +231,17 @@ describe('API keys', () => {
     })
 
     it.each(actions)('denies %s without the scope', (action) => {
-      const others = (['ingest', 'actions', 'admin'] as const).filter((s) => s !== scope)
+      const others = (['flagging', 'actions', 'admin'] as const).filter((s) => s !== scope)
       expect(can(apiKey([...others]), { action, appId: A })).toBe(false)
     })
 
     it.each(actions)('denies %s on another app', (action) => {
-      expect(can(apiKey(['ingest', 'actions', 'admin']), { action, appId: B })).toBe(false)
+      expect(can(apiKey(['flagging', 'actions', 'admin']), { action, appId: B })).toBe(false)
     })
   })
 
   it('never manages API keys, sends support bundles, or touches org settings or roles', () => {
-    const all = apiKey(['ingest', 'actions', 'admin'])
+    const all = apiKey(['flagging', 'actions', 'admin'])
     expect(can(all, { action: 'api_key.manage', appId: A })).toBe(false)
     expect(can(all, { action: 'support_bundle.send', appId: A })).toBe(false)
     expect(can(all, { action: 'billing.manage' })).toBe(false)

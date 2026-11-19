@@ -10,7 +10,7 @@ const BODY_LENGTH = 40
 const LOOKUP_LENGTH = 12
 const KEY_PATTERN = /^fw_(live|test)_([0-9A-Za-z]{40})$/
 const HASH_PATTERN = /^[0-9a-f]{64}$/
-const SCOPE_ORDER: readonly ApiKeyScope[] = ['ingest', 'actions', 'admin']
+const SCOPE_ORDER: readonly ApiKeyScope[] = ['flagging', 'actions', 'admin']
 const MIN_OVERLAP_MS = 3_600_000
 const MAX_OVERLAP_MS = 7 * 86_400_000
 
@@ -68,7 +68,7 @@ export function maskApiKey(key: string): string {
   return `${parsed.livemode ? 'fw_live_' : 'fw_test_'}${parsed.lookup}…`
 }
 
-/** Scopes deduplicated in the order ingest, actions, admin; null when empty or containing anything else. */
+/** Scopes deduplicated in the order flagging, actions, admin; null when empty or containing anything else. */
 export function normalizeScopes(scopes: readonly string[]): ApiKeyScope[] | null {
   if (scopes.length === 0 || !scopes.every((s) => (SCOPE_ORDER as readonly string[]).includes(s))) return null
   return SCOPE_ORDER.filter((s) => scopes.includes(s))

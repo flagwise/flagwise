@@ -26,18 +26,12 @@ importers:
 
   apps/server:
     dependencies:
-      '@flagwise/alerts':
+      '@flagwise/analytics':
         specifier: workspace:*
-        version: link:../../packages/modules/alerts
-      '@flagwise/appeals':
-        specifier: workspace:*
-        version: link:../../packages/modules/appeals
+        version: link:../../packages/modules/analytics
       '@flagwise/audit':
         specifier: workspace:*
         version: link:../../packages/modules/audit
-      '@flagwise/cases':
-        specifier: workspace:*
-        version: link:../../packages/modules/cases
       '@flagwise/classify':
         specifier: workspace:*
         version: link:../../packages/modules/classify
@@ -47,15 +41,21 @@ importers:
       '@flagwise/delivery':
         specifier: workspace:*
         version: link:../../packages/modules/delivery
-      '@flagwise/intake':
+      '@flagwise/disputes':
         specifier: workspace:*
-        version: link:../../packages/modules/intake
+        version: link:../../packages/modules/disputes
+      '@flagwise/flagging':
+        specifier: workspace:*
+        version: link:../../packages/modules/flagging
       '@flagwise/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
-      '@flagwise/metrics':
+      '@flagwise/moderation':
         specifier: workspace:*
-        version: link:../../packages/modules/metrics
+        version: link:../../packages/modules/moderation
+      '@flagwise/notifications':
+        specifier: workspace:*
+        version: link:../../packages/modules/notifications
       '@flagwise/platform':
         specifier: workspace:*
         version: link:../../packages/platform
@@ -95,37 +95,13 @@ importers:
 
   packages/kernel: {}
 
-  packages/modules/alerts:
-    dependencies:
-      '@flagwise/kernel':
-        specifier: workspace:*
-        version: link:../../kernel
-
-  packages/modules/appeals:
+  packages/modules/analytics:
     dependencies:
       '@flagwise/kernel':
         specifier: workspace:*
         version: link:../../kernel
 
   packages/modules/audit:
-    dependencies:
-      '@flagwise/contracts':
-        specifier: workspace:*
-        version: link:../../contracts
-      '@flagwise/kernel':
-        specifier: workspace:*
-        version: link:../../kernel
-      '@flagwise/platform':
-        specifier: workspace:*
-        version: link:../../platform
-      drizzle-orm:
-        specifier: ^0.45.4
-        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)
-      hono:
-        specifier: ^4.13.16
-        version: 4.13.16
-
-  packages/modules/cases:
     dependencies:
       '@flagwise/contracts':
         specifier: workspace:*
@@ -188,7 +164,13 @@ importers:
         specifier: ^4.13.16
         version: 4.13.16
 
-  packages/modules/intake:
+  packages/modules/disputes:
+    dependencies:
+      '@flagwise/kernel':
+        specifier: workspace:*
+        version: link:../../kernel
+
+  packages/modules/flagging:
     dependencies:
       '@flagwise/contracts':
         specifier: workspace:*
@@ -206,7 +188,25 @@ importers:
         specifier: ^4.13.16
         version: 4.13.16
 
-  packages/modules/metrics:
+  packages/modules/moderation:
+    dependencies:
+      '@flagwise/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
+      '@flagwise/kernel':
+        specifier: workspace:*
+        version: link:../../kernel
+      '@flagwise/platform':
+        specifier: workspace:*
+        version: link:../../platform
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)
+      hono:
+        specifier: ^4.13.16
+        version: 4.13.16
+
+  packages/modules/notifications:
     dependencies:
       '@flagwise/kernel':
         specifier: workspace:*

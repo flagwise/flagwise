@@ -21,9 +21,9 @@ const MAX_ID = 128
 
 /**
  * For callers allowed `audit.read` on the app (API keys with the `admin` scope; 'forbidden'
- * otherwise), on the caller's app and mode:
+ * otherwise), mounted at `/audit`, on the caller's app and mode:
  *
- * - `GET /audit`: entries in the order they were written. Filters, each optional: `actor_id`,
+ * - `GET /audit/entries`: entries in the order they were written. Filters, each optional: `actor_id`,
  *   `case_id` (the case's timeline), `subject_external_id` (the reported account), `from` and `to`
  *   (RFC 3339; from inclusive, to exclusive); `limit` 1 to 100 (default 50) and `cursor`. Answers
  *   `{ object: 'list', data, next_cursor }`.
@@ -36,14 +36,14 @@ const MAX_ID = 128
  * filters are 'validation_failed' with field errors.
  */
 export function auditRoutes(deps: AuditRoutesDeps): Hono<AuditEnv> {
-  const routes = new Hono<AuditEnv>()
+  const routes = new Hono<AuditEnv>().basePath('/audit')
 
-  routes.get('/audit/verify', async (c) => {
+  routes.get('/verify', async (c) => {
     const result = await deps.verify(reader(c.get('tenant')))
     return c.json({ object: 'audit_verification', ...result })
   })
 
-  routes.get('/audit', async (c) => {
+  routes.get('/entries', async (c) => {
     const tenant = reader(c.get('tenant'))
     const page = await deps.search(tenant, auditQuery(c.req.query()))
     return c.json({ object: 'list', data: page.data.map(entryBody), next_cursor: page.nextAfterSeq === null ? null : String(page.nextAfterSeq) })

@@ -32,8 +32,8 @@ export interface Install {
   readonly clock: SkippingClock
   readonly net: FakeNet
   readonly tenant: TenantRef
-  /** The app's live ingest key, as the tenant's backend holds it. */
-  readonly ingestKey: string
+  /** The app's live flagging key, as the tenant's backend holds it. */
+  readonly flaggingKey: string
   /** Two moderators with admin keys. */
   readonly jane: Member
   readonly john: Member
@@ -76,7 +76,7 @@ export async function startInstall(name: string): Promise<Install> {
       clock,
       net,
       tenant,
-      ingestKey: installed.liveKey,
+      flaggingKey: installed.liveKey,
       jane: { id: jane.id, key: jane.key },
       john: { id: john.id, key: john.key },
       async call(key, path, init = {}) {

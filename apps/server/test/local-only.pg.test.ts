@@ -77,19 +77,19 @@ describe.skipIf(!testDatabaseUrl)('local development with no outside service', (
   })
 
   it('classifies with the fake LLM, keeps the evidence on disk and posts a signed webhook to a local receiver', async () => {
-    const post = await call(installed.liveKey, '/reports', {
+    const post = await call(installed.liveKey, '/flagging/reports', {
       method: 'POST',
       body: { reporter: { external_id: 'u_jane_doe' }, reported: { external_id: 'u_john_doe' }, category: 'asking_for_money', evidence: { kind: 'message', content: ['invest in my crypto coin'] } },
     })
     expect(post.status).toBe(202)
     const reportId = ((await post.json()) as { id: string }).id
-    const caseId = await eventually(async () => ((await got(installed.liveKey, `/reports/${reportId}`))?.case_id as string | null) ?? undefined)
+    const caseId = await eventually(async () => ((await got(installed.liveKey, `/flagging/reports/${reportId}`))?.case_id as string | null) ?? undefined)
     const c = await eventually(async () => {
-      const now = await got(admin.key, `/cases/${caseId}`)
+      const now = await got(admin.key, `/moderation/cases/${caseId}`)
       return now && now.state !== 'classifying' ? now : undefined
     })
     expect(c).toMatchObject({ state: 'open', classified_by: 'llm', category_id: 'scams_fraud.investment_scam' })
-    expect(await got(admin.key, `/cases/${caseId}/classification`)).toMatchObject({ summary: 'Fake classification of 1 message(s).' })
+    expect(await got(admin.key, `/classify/classifications/${caseId}`)).toMatchObject({ summary: 'Fake classification of 1 message(s).' })
 
     const hook = await eventually(() => hooks.find((h) => h.body.includes('"report.triaged"')))
     expect(verify(secret, hook.headers, hook.body).ok).toBe(true)

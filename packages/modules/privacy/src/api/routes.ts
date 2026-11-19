@@ -20,9 +20,9 @@ const MAX_ID = 128
  * For callers allowed `subject.erase` on the app (API keys with the `admin` scope; 'forbidden'
  * otherwise), on the caller's app and mode:
  *
- * - `POST /subjects/{external_id}/erase`: starts erasing the account's data in every service that
+ * - `POST /privacy/subjects/{external_id}/erase`: starts erasing the account's data in every service that
  *   holds it, within 24 hours: 202 with the new erasure, or 200 with the one already in progress.
- * - `GET /erasures/{id}`: its progress; 'not_found' for an unknown id.
+ * - `GET /privacy/erasures/{id}`: its progress; 'not_found' for an unknown id.
  *
  * An erasure: `{ object: 'erasure', id, subject_external_id, status (in_progress, overdue or
  * completed), requested_at, deadline_at, completed_at, held_items, groups }`, where `groups` lists
@@ -30,7 +30,7 @@ const MAX_ID = 128
  * (pending, failed, erased, nothing_held or retained), answered_at, held_items, reason, error }`.
  */
 export function privacyRoutes(deps: PrivacyRoutesDeps): Hono<PrivacyEnv> {
-  const routes = new Hono<PrivacyEnv>()
+  const routes = new Hono<PrivacyEnv>().basePath('/privacy')
 
   routes.post('/subjects/:external_id/erase', async (c) => {
     const tenant = eraser(c.get('tenant'))

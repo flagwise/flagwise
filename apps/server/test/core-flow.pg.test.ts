@@ -5,7 +5,7 @@ import { manualClock, type TenantRef } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
 import { createDatabase, createPgBus, migrate, pgUnitOfWork, scopeOfRef, withTenant, type Database, type PgBus } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
-import { casesMigrations, casesTables, pgCaseRepository, pgCasesPolicyCopy } from '@flagwise/cases'
+import { moderationMigrations, moderationTables, pgCaseRepository, pgModerationPolicyCopy } from '@flagwise/moderation'
 import { deliveryMigrations, deliveryTables, pgActionRequestStore, pgDeliveryDeps } from '@flagwise/delivery'
 import { schemaDrift } from '@flagwise/platform/testing'
 import { pgTriageDeps, triageMigrations, triageTables } from '@flagwise/triage'
@@ -53,11 +53,11 @@ describe.skipIf(!testDatabaseUrl)('core flow on Postgres', () => {
   beforeEach(async () => {
     n = 0
     t = await createTestDatabase()
-    await migrate(t.ownerUrl, [casesMigrations, deliveryMigrations, triageMigrations], t.roles)
+    await migrate(t.ownerUrl, [moderationMigrations, deliveryMigrations, triageMigrations], t.roles)
     db = createDatabase({ appUrl: t.appUrl, systemUrl: t.systemUrl })
     bus = createPgBus(db, { retryDelayMs: () => 0, contract: eventContract })
     const classification: Classification = { categoryId: CATEGORY, signals: [], injectionSuspected: false, preRuleP0: false, classifiedBy: 'llm' }
-    const policy = pgCasesPolicyCopy(db)
+    const policy = pgModerationPolicyCopy(db)
     for (const tenant of [A, B]) await policy.keep(tenant, 1, policyWithKeys('warn', 'suspend_7d', 'hide_content'))
     const clock = manualClock(T0)
     flow = composeServices({
@@ -81,7 +81,7 @@ describe.skipIf(!testDatabaseUrl)('core flow on Postgres', () => {
   })
 
   it('has tables that match the Drizzle schema', async () => {
-    expect(await schemaDrift(t.ownerUrl, [...deliveryTables, ...casesTables, ...triageTables])).toEqual([])
+    expect(await schemaDrift(t.ownerUrl, [...deliveryTables, ...moderationTables, ...triageTables])).toEqual([])
   })
 
   it('takes a report to an open, triaged case', async () => {

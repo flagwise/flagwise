@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { currentType, EVENT_CATALOG, EventContractError, eventContract, factOf } from '../src/index.ts'
 
 // The services, plus the platform (the bus's own facts) and any (an answer every service gives).
-const OWNERS = ['intake', 'cases', 'classify', 'triage', 'delivery', 'tenancy', 'policy', 'privacy', 'platform', 'any']
+const OWNERS = ['flagging', 'moderation', 'classify', 'triage', 'delivery', 'tenancy', 'policy', 'privacy', 'platform', 'any']
 
 describe('the event catalog', () => {
   it('names every type by its fact and major, with a semver of that major, an owner and a meaning', () => {

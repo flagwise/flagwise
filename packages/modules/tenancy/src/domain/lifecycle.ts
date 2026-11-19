@@ -48,7 +48,7 @@ export function deletionStatus(entity: Deletable, now: Date): { state: DeletionS
 }
 
 /** 202 while active, 410 in every other state. */
-export function intakeStatus(entity: Deletable, now: Date): 202 | 410 {
+export function flaggingStatus(entity: Deletable, now: Date): 202 | 410 {
   return deletionStatus(entity, now).state === 'active' ? 202 : 410
 }
 

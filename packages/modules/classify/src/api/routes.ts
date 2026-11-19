@@ -11,19 +11,19 @@ export interface ClassifyEnv {
 }
 
 /**
- * `GET /cases/:id/classification`, for callers allowed `case.work` on the app ('forbidden'
+ * `GET /classify/classifications/:caseId`, for callers allowed `case.work` on the app ('forbidden'
  * otherwise); 'not_found' when the case has no classification (yet), or does not exist.
  * Usage, model and prompt details stay internal.
  */
 export function classifyRoutes(deps: Pick<ClassifyDeps, 'run'>): Hono<ClassifyEnv> {
-  const routes = new Hono<ClassifyEnv>()
-  routes.get('/cases/:id/classification', async (c) => {
+  const routes = new Hono<ClassifyEnv>().basePath('/classify')
+  routes.get('/classifications/:caseId', async (c) => {
     const ctx = c.get('tenant')
     if (!ctx.appId || !can(ctx, { action: 'case.work', appId: ctx.appId })) {
       throw new FlagwiseError('forbidden', 'This API key does not have the admin scope')
     }
     const tenant = { orgId: ctx.orgId, appId: ctx.appId, livemode: ctx.livemode }
-    const record = await findClassification(deps, tenant, c.req.param('id'))
+    const record = await findClassification(deps, tenant, c.req.param('caseId'))
     if (!record) throw new FlagwiseError('not_found', 'This case has no classification yet')
     return c.json(classificationBody(record))
   })

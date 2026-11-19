@@ -25,11 +25,11 @@ const USAGE = `Usage: flagwise <command>
                                    With DATABASE_URL alone the server does this itself.
   bootstrap --org <name> --app <name> [--preset dating|marketplace|community]
                                    Create an org, an app and its live and test API keys
-                                   (ingest and actions scopes); with --preset, the app starts with
+                                   (flagging and actions scopes); with --preset, the app starts with
                                    that preset's categories in both modes.
   keys:create --org <org_id> --app <app_id> --scope <scopes> [--test]
                                    Issue an API key for the app; scopes are comma-separated
-                                   (ingest, actions, admin). Live mode unless --test.
+                                   (flagging, actions, admin). Live mode unless --test.
 
   Webhooks (each for one app and mode: --org <org_id> --app <app_id>, live unless --test):
   webhooks:add --url <https url> [--events <types>]

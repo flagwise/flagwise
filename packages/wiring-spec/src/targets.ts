@@ -28,6 +28,7 @@ export const ENFORCED: readonly string[] = [
   'composition-only', // items 5+6
   'own-tables-only', // items 5+6
   'erasure-acks', // item 9
+  'service-routes', // renames and routes, in progress
 ]
 
 export const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
@@ -262,16 +263,47 @@ function policyCopies(): CheckResult {
   if (seen.installs === 0) problems.push('no consumer groups seen yet: run the scenarios first')
   else {
     for (const reader of POLICY_READERS) {
-      const subscribed = Object.entries(seen.groups).some(([g, types]) => g.startsWith(`${reader}.`) && (types ?? []).includes('policy.updated.v1'))
+      const subscribed = Object.entries(seen.groups).some(([g, types]) => g.startsWith(`${GROUP_PREFIX[reader] ?? reader}.`) && (types ?? []).includes('policy.updated.v1'))
       if (!subscribed) problems.push(`no ${reader} group subscribes to policy.updated.v1`)
     }
   }
   return problems.length === 0 ? result(true, `${POLICY_READERS.length} readers keep copies; no policy store outside the policy service`) : result(false, `${problems.length} problems: ${list(problems, 3)}`)
 }
 
+/**
+ * 9. Every public route sits under its service's name, `/v1/{service}/{resource}[/{id}[/{action}]]`:
+ * each service's routes are a Hono app with `basePath('/{service}')`, so a gateway routes by the
+ * first segment, and a service booted alone serves the same paths.
+ */
+function serviceRoutes(): CheckResult {
+  const problems: string[] = []
+  let withRoutes = 0
+  for (const name of services()) {
+    const files = sourceFiles(join(MODULES_DIR, name, 'src/api'))
+    if (files.length === 0) continue
+    withRoutes++
+    for (const file of files) {
+      const text = read(file)
+      for (const m of text.matchAll(/new Hono<[^>]*>\(\)(\.basePath\('([^']*)'\))?/g)) {
+        if (m[2] !== `/${name}`) problems.push(`${rel(file)}: ${m[2] === undefined ? 'no basePath' : `basePath ${m[2]}`}, not /${name}`)
+      }
+    }
+  }
+  return {
+    id: 'service-routes',
+    title: "Every public route sits under its service's name (/v1/{service}/...)",
+    items: 'renames',
+    green: problems.length === 0,
+    detail: problems.length === 0 ? `${withRoutes} services serve routes, each under its name` : `${problems.length}: ${list(problems)}`,
+  }
+}
+
 /** The services that read the policy: classify (categories, LLM settings), triage (category rules, fallback to rules), moderation (action keys). */
-const POLICY_READERS = ['classify', 'triage', 'cases']
+const POLICY_READERS = ['classify', 'triage', 'moderation']
+
+/** Consumer groups keep a service's first name, an internal id that does not change with it. */
+const GROUP_PREFIX: Readonly<Record<string, string>> = { moderation: 'cases', flagging: 'intake' }
 
 export async function runChecks(): Promise<readonly CheckResult[]> {
-  return [noServiceImports(), bootsAlone(), ownTablesOnly(), compositionOnly(), await eventCatalog(), erasureAcks(), await notificationClears(), policyCopies()]
+  return [noServiceImports(), bootsAlone(), ownTablesOnly(), compositionOnly(), await eventCatalog(), erasureAcks(), await notificationClears(), policyCopies(), serviceRoutes()]
 }

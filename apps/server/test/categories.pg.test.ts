@@ -48,14 +48,14 @@ describe.skipIf(!testDatabaseUrl)('app categories and LLM settings on the server
     return res.ok ? await json(res) : undefined
   }
   const caseFor = async (reported: string, category: string) => {
-    const res = await call(installed.liveKey, '/reports', {
+    const res = await call(installed.liveKey, '/flagging/reports', {
       method: 'POST',
       body: { reporter: { external_id: 'u_jane_doe' }, reported: { external_id: reported }, category, evidence: { kind: 'message', content: ['send me $200'] } },
     })
     const reportId = (await json(res)).id as string
-    const caseId = await eventually(async () => ((await got(installed.liveKey, `/reports/${reportId}`))?.case_id as string | null) ?? undefined)
+    const caseId = await eventually(async () => ((await got(installed.liveKey, `/flagging/reports/${reportId}`))?.case_id as string | null) ?? undefined)
     return eventually(async () => {
-      const c = await got(admin.key, `/cases/${caseId}`)
+      const c = await got(admin.key, `/moderation/cases/${caseId}`)
       return c === undefined || c.state === 'classifying' ? undefined : c
     })
   }
@@ -76,7 +76,7 @@ describe.skipIf(!testDatabaseUrl)('app categories and LLM settings on the server
   })
 
   it('starts from the preset, serves the report screen and replaces the list', async () => {
-    const preset = await json(await call(admin.key, '/config/categories'))
+    const preset = await json(await call(admin.key, '/policy/categories/definitions'))
     expect(preset.data.map((c: { key: string }) => c.key)).toEqual([
       'fake_profile',
       'asking_for_money',
@@ -89,19 +89,19 @@ describe.skipIf(!testDatabaseUrl)('app categories and LLM settings on the server
       'other',
     ])
     expect(preset.warnings).toEqual([])
-    const screen = await json(await call(installed.liveKey, '/categories?locale=id'))
+    const screen = await json(await call(installed.liveKey, '/policy/categories/menu?locale=id'))
     expect(screen.data[1]).toEqual({ object: 'category', key: 'asking_for_money', label: 'Minta uang atau penipuan' })
-    expect((await call(installed.liveKey, '/categories?locale=fr')).status).toBe(422)
+    expect((await call(installed.liveKey, '/policy/categories/menu?locale=fr')).status).toBe(422)
     // The test mode got the preset too.
-    expect((await json(await call(installed.testKey, '/categories'))).data).toHaveLength(9)
+    expect((await json(await call(installed.testKey, '/policy/categories/menu'))).data).toHaveLength(9)
 
-    expect((await call(installed.liveKey, '/config/categories', { method: 'PUT', body: { preset: 'community' } })).status).toBe(403)
-    expect((await call(admin.key, '/config/categories', { method: 'PUT', body: { preset: 'gaming' } })).status).toBe(422)
-    const bad = await call(admin.key, '/config/categories', { method: 'PUT', body: { data: [{ key: 'grooming', label: { en: 'Grooming' }, maps_to: ['child_safety.grooming'], severity: 'P2' }] } })
+    expect((await call(installed.liveKey, '/policy/categories/definitions', { method: 'PUT', body: { preset: 'community' } })).status).toBe(403)
+    expect((await call(admin.key, '/policy/categories/definitions', { method: 'PUT', body: { preset: 'gaming' } })).status).toBe(422)
+    const bad = await call(admin.key, '/policy/categories/definitions', { method: 'PUT', body: { data: [{ key: 'grooming', label: { en: 'Grooming' }, maps_to: ['child_safety.grooming'], severity: 'P2' }] } })
     expect(bad.status).toBe(422)
 
     const replaced = await json(
-      await call(admin.key, '/config/categories', {
+      await call(admin.key, '/policy/categories/definitions', {
         method: 'PUT',
         body: {
           data: [
@@ -122,13 +122,25 @@ describe.skipIf(!testDatabaseUrl)('app categories and LLM settings on the server
       enabled: true,
     })
     expect(replaced.warnings).toEqual([{ key: 'house_rules', message: 'Not mapped to a global category: left out of the DSA export and counted as Other' }])
-    expect((await json(await call(installed.liveKey, '/categories'))).data.map((c: { key: string }) => c.key)).toEqual(['asking_for_money', 'rude_or_harassing'])
+    expect((await json(await call(installed.liveKey, '/policy/categories/menu'))).data.map((c: { key: string }) => c.key)).toEqual(['asking_for_money', 'rude_or_harassing'])
     // The readers' copies of the policy follow over the bus; the next tests classify with them.
     await eventually(async () => ((await server.bus.pending()) === 0 ? true : undefined))
   })
 
+  it('lists the global taxonomy and the presets for admin keys only', async () => {
+    const taxonomy = await json(await call(admin.key, '/policy/taxonomy'))
+    expect(taxonomy.groups).toContain('child_safety')
+    expect(taxonomy.data).toContainEqual({ object: 'global_category', id: 'child_safety.grooming', group: 'child_safety', label: 'Grooming or sexual enticement of a minor', severity: 'P0', p0_locked: true })
+    expect(taxonomy.data).toContainEqual(expect.objectContaining({ id: 'threats_violence.graphic_violence', severity: 'P2', p0_locked: false }))
+    const presets = await json(await call(admin.key, '/policy/presets'))
+    expect(presets.data.map((p: { name: string }) => p.name)).toEqual(['dating', 'marketplace', 'community'])
+    expect(presets.data[0].categories[0]).toEqual({ object: 'category', key: 'fake_profile', label: { en: 'Fake profile', id: 'Profil palsu' }, maps_to: ['fake_identity'], severity: null, sla_hours: null, enabled: true })
+    expect((await call(installed.liveKey, '/policy/taxonomy')).status).toBe(403)
+    expect((await call(installed.liveKey, '/policy/presets')).status).toBe(403)
+  })
+
   it("falls back to rules when the LLM fails, and triages with the app's category", async () => {
-    expect(await json(await call(admin.key, '/config/llm'))).toEqual({ object: 'llm_settings', rules_only: false, fallback_to_rules: true })
+    expect(await json(await call(admin.key, '/policy/llm-settings'))).toEqual({ object: 'llm_settings', rules_only: false, fallback_to_rules: true })
     const before = llmCalls
     const c = await caseFor('u_jack_doe', 'asking_for_money')
     expect(llmCalls).toBeGreaterThan(before)
@@ -142,8 +154,8 @@ describe.skipIf(!testDatabaseUrl)('app categories and LLM settings on the server
   })
 
   it('never calls the LLM for a rules-only app', async () => {
-    expect((await call(admin.key, '/config/llm', { method: 'PUT', body: { rules_only: 'yes' } })).status).toBe(422)
-    expect(await json(await call(admin.key, '/config/llm', { method: 'PUT', body: { rules_only: true, fallback_to_rules: false } }))).toEqual({
+    expect((await call(admin.key, '/policy/llm-settings', { method: 'PUT', body: { rules_only: 'yes' } })).status).toBe(422)
+    expect(await json(await call(admin.key, '/policy/llm-settings', { method: 'PUT', body: { rules_only: true, fallback_to_rules: false } }))).toEqual({
       object: 'llm_settings',
       rules_only: true,
       fallback_to_rules: false,
@@ -154,24 +166,24 @@ describe.skipIf(!testDatabaseUrl)('app categories and LLM settings on the server
   })
 
   it('leaves the case untriaged when the LLM fails and the fallback is off, for a moderator to triage', async () => {
-    await call(admin.key, '/config/llm', { method: 'PUT', body: { rules_only: false, fallback_to_rules: false } })
+    await call(admin.key, '/policy/llm-settings', { method: 'PUT', body: { rules_only: false, fallback_to_rules: false } })
     const c = await caseFor('u_jay_doe', 'asking_for_money')
     expect(c).toMatchObject({ state: 'untriaged', severity: null, priority: null, category_id: 'scams_fraud.romance_scam', custom_category_id: 'asking_for_money' })
-    const queue = await json(await call(admin.key, '/cases'))
+    const queue = await json(await call(admin.key, '/moderation/cases'))
     expect(queue.data.at(-1)).toMatchObject({ id: c.id, state: 'untriaged' })
 
-    expect((await call(admin.key, `/cases/${c.id}/claim`, { method: 'POST' })).status).toBe(200)
-    const asked = await json(await call(admin.key, `/cases/${c.id}`, { method: 'PATCH', body: { category_id: 'scams_fraud.romance_scam' } }))
+    expect((await call(admin.key, `/moderation/cases/${c.id}/claim`, { method: 'POST' })).status).toBe(200)
+    const asked = await json(await call(admin.key, `/moderation/cases/${c.id}`, { method: 'PATCH', body: { category_id: 'scams_fraud.romance_scam' } }))
     expect(asked).toMatchObject({ state: 'claimed', severity: null, custom_category_id: 'asking_for_money' })
     // Triage triages it from the correction, with the app's category's own severity.
     const triaged = await eventually(async () => {
-      const now = await got(admin.key, `/cases/${c.id}`)
+      const now = await got(admin.key, `/moderation/cases/${c.id}`)
       return now?.severity ? now : undefined
     })
     expect(triaged).toMatchObject({ state: 'claimed', severity: 'P2', custom_category_id: 'asking_for_money' })
 
     const timeline = await eventually(async () => {
-      const page = await got(admin.key, `/audit?case_id=${c.id}`)
+      const page = await got(admin.key, `/audit/entries?case_id=${c.id}`)
       return page?.data.some((e: { action: string }) => e.action === 'case.corrected') ? page.data : undefined
     })
     expect(timeline.find((e: { action: string }) => e.action === 'case.untriaged')).toMatchObject({ facts: { reason: 'provider_error' } })

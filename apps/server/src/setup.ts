@@ -105,7 +105,7 @@ export interface Bootstrapped {
 }
 
 /**
- * `flagwise bootstrap`: creates an org, an app and a live and a test API key for it (ingest and
+ * `flagwise bootstrap`: creates an org, an app and a live and a test API key for it (flagging and
  * actions scopes), after preparing what the server needs before its first request: the database
  * (server.prepare without waiting: with one URL it migrates, with role URLs pending migrations
  * throw), the storage (the bucket or directory) and the event bus's consumer groups. A group only receives events
@@ -136,7 +136,7 @@ async function bootstrapAsOperator(config: ServerConfig, input: BootstrapInput, 
     await server.bus.drain()
     const orgId = newId('org', { clock })
     const appId = newId('app', { clock })
-    const scopes = ['ingest', 'actions']
+    const scopes = ['flagging', 'actions']
     // Each mode in its own transaction: a key's event is written in its own mode.
     const live = await withTenant(server.db, { orgId, appIds: [appId], livemode: true }, async (tx) => {
       const deps = registryDeps(server, tx, clock)
@@ -167,8 +167,8 @@ export interface CreatedKey {
 }
 
 /**
- * `flagwise keys:create`: issues an API key for an existing app, with the given scopes (`ingest`,
- * `actions`, `admin`) and mode. Bootstrap gives only ingest and actions keys, so an admin key (the
+ * `flagwise keys:create`: issues an API key for an existing app, with the given scopes (`flagging`,
+ * `actions`, `admin`) and mode. Bootstrap gives only flagging and actions keys, so an admin key (the
  * case endpoints) is always asked for on purpose. Pending migrations throw, as in bootstrap.
  */
 export function createKey(

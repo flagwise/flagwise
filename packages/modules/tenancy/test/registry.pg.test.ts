@@ -56,10 +56,10 @@ describe.skipIf(!testDatabaseUrl)('tenancy registry on Postgres', () => {
   })
 
   it('issues a key shown once, and resolves it to its org, app, mode and scopes', async () => {
-    const issued = await asOrg('org_a', ['app_a'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_a', livemode: true, scopes: ['admin', 'ingest', 'ingest'] }))
+    const issued = await asOrg('org_a', ['app_a'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_a', livemode: true, scopes: ['admin', 'flagging', 'flagging'] }))
     expect(issued.key).toMatch(/^fw_live_[0-9A-Za-z]{40}$/)
     expect(issued.masked).toBe(`fw_live_${issued.key.slice(8, 20)}…`)
-    expect(issued.record).toMatchObject({ orgId: 'org_a', appId: 'app_a', livemode: true, scopes: ['ingest', 'admin'] })
+    expect(issued.record).toMatchObject({ orgId: 'org_a', appId: 'app_a', livemode: true, scopes: ['flagging', 'admin'] })
     expect(issued.record.hash).not.toContain(issued.key.slice(8))
     expect(await resolve(issued.key)).toEqual({
       ok: true,
@@ -67,18 +67,18 @@ describe.skipIf(!testDatabaseUrl)('tenancy registry on Postgres', () => {
         orgId: 'org_a',
         appId: 'app_a',
         appIds: ['app_a'],
-        actor: { type: 'api_key', id: issued.record.id, scopes: ['ingest', 'admin'] },
+        actor: { type: 'api_key', id: issued.record.id, scopes: ['flagging', 'admin'] },
         orgRole: null,
         appRoles: {},
         livemode: true,
       },
     })
-    const test = await asOrg('org_a', ['app_a'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_a', livemode: false, scopes: ['ingest'] }))
+    const test = await asOrg('org_a', ['app_a'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_a', livemode: false, scopes: ['flagging'] }))
     expect(await resolve(test.key)).toMatchObject({ ok: true, context: { livemode: false } })
   })
 
   it('refuses malformed, unknown and tampered keys alike', async () => {
-    const issued = await asOrg('org_a', ['app_a'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_a', livemode: true, scopes: ['ingest'] }))
+    const issued = await asOrg('org_a', ['app_a'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_a', livemode: true, scopes: ['flagging'] }))
     expect(await resolve('Bearer nonsense')).toEqual({ ok: false, reason: 'malformed' })
     expect(await resolve(`fw_live_${'a'.repeat(40)}`)).toEqual({ ok: false, reason: 'unknown' })
     // Same lookup prefix, different rest of the body: the hash does not match.
@@ -89,9 +89,9 @@ describe.skipIf(!testDatabaseUrl)('tenancy registry on Postgres', () => {
   })
 
   it('keeps an old key working through the rotation overlap, then stops it', async () => {
-    const old = await asOrg('org_a', ['app_a'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_a', livemode: true, scopes: ['ingest', 'actions'] }))
+    const old = await asOrg('org_a', ['app_a'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_a', livemode: true, scopes: ['flagging', 'actions'] }))
     const fresh = await asOrg('org_a', ['app_a'], (d) => rotateApiKey(d, { orgId: 'org_a', appId: 'app_a', keyId: old.record.id, overlapMs: 2 * H }))
-    expect(fresh.record.scopes).toEqual(['ingest', 'actions'])
+    expect(fresh.record.scopes).toEqual(['flagging', 'actions'])
     expect(await resolve(old.key, new Date(clock.now().getTime() + 2 * H - 1))).toMatchObject({ ok: true })
     expect(await resolve(old.key, new Date(clock.now().getTime() + 2 * H))).toEqual({ ok: false, reason: 'inactive' })
     expect(await resolve(fresh.key, new Date(clock.now().getTime() + 3 * H))).toMatchObject({ ok: true })
@@ -103,18 +103,18 @@ describe.skipIf(!testDatabaseUrl)('tenancy registry on Postgres', () => {
   })
 
   it('stops a revoked key at once', async () => {
-    const issued = await asOrg('org_a', ['app_a'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_a', livemode: true, scopes: ['ingest'] }))
+    const issued = await asOrg('org_a', ['app_a'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_a', livemode: true, scopes: ['flagging'] }))
     await asOrg('org_a', ['app_a'], (d) => revokeApiKey(d, { orgId: 'org_a', appId: 'app_a', keyId: issued.record.id }))
     expect(await resolve(issued.key)).toEqual({ ok: false, reason: 'inactive' })
     await expect(asOrg('org_a', ['app_a'], (d) => rotateApiKey(d, { orgId: 'org_a', appId: 'app_a', keyId: issued.record.id, overlapMs: H }))).rejects.toThrow('No active API key')
   })
 
-  it('tells a deleted app apart, so intake can answer 410', async () => {
+  it('tells a deleted app apart, so flagging can answer 410', async () => {
     await asOrg('org_a', ['app_gone'], (d) => createApp(d, { orgId: 'org_a', id: 'app_gone', name: 'Old app' }))
-    const issued = await asOrg('org_a', ['app_gone'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_gone', livemode: true, scopes: ['ingest'] }))
+    const issued = await asOrg('org_a', ['app_gone'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_gone', livemode: true, scopes: ['flagging'] }))
     await withTenant(db, { orgId: 'org_a', appIds: ['app_gone'], livemode: true }, (tx) => tx.execute(sql`UPDATE tenancy.apps SET deleted_at = now() WHERE id = 'app_gone'`))
     expect(await resolve(issued.key)).toEqual({ ok: false, reason: 'app_deleted' })
-    await expect(asOrg('org_a', ['app_gone'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_gone', livemode: true, scopes: ['ingest'] }))).rejects.toThrow('No app app_gone')
+    await expect(asOrg('org_a', ['app_gone'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_gone', livemode: true, scopes: ['flagging'] }))).rejects.toThrow('No app app_gone')
   })
 
   it('refuses bad scopes and names', async () => {
@@ -124,7 +124,7 @@ describe.skipIf(!testDatabaseUrl)('tenancy registry on Postgres', () => {
   })
 
   it('keeps tenants apart, and lets the system role only read', async () => {
-    const issued = await asOrg('org_a', ['app_a'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_a', livemode: true, scopes: ['ingest'] }))
+    const issued = await asOrg('org_a', ['app_a'], (d) => issueApiKey(d, { orgId: 'org_a', appId: 'app_a', livemode: true, scopes: ['flagging'] }))
     // Another org cannot see org A's app or key, even when it asks for them by id.
     expect(await asOrg('org_b', ['app_b', 'app_a'], (d) => d.store.findApp('org_a', 'app_a'))).toBeNull()
     expect(await asOrg('org_b', ['app_b', 'app_a'], (d) => d.store.findApiKey('org_a', 'app_a', issued.record.id))).toBeNull()

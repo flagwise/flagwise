@@ -1,7 +1,7 @@
 // Upgrading to triage's own record of each case: the cases moderation already held that triage may
 // still triage start from moderation's tables, with the classification each was triaged on. Runs
 // against a real Postgres through TEST_DATABASE_URL; skipped without it.
-import { casesMigrations, pgCaseRepository } from '@flagwise/cases'
+import { moderationMigrations, pgCaseRepository } from '@flagwise/moderation'
 import type { TenantRef } from '@flagwise/kernel'
 import { createDatabase, migrate, scopeOfRef, withTenant, type Database } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
@@ -28,7 +28,7 @@ describe.skipIf(!testDatabaseUrl)('upgrading to triage records', () => {
 
   it('starts from the cases moderation held, leaving decided ones out, with forced row-level security back on', async () => {
     // A release before: moderation's cases, and triage with only its policy copies.
-    await migrate(t.ownerUrl, [casesMigrations, { ...triageMigrations, migrations: triageMigrations.migrations.slice(0, 1) }], t.roles)
+    await migrate(t.ownerUrl, [moderationMigrations, { ...triageMigrations, migrations: triageMigrations.migrations.slice(0, 1) }], t.roles)
     await withTenant(db, scopeOfRef(A), async (tx) => {
       const repo = pgCaseRepository(tx)
       const base = { tenant: A, subjectExternalId: 'u_john_doe', band: 'standard' as const, openedAt: T0 }
@@ -39,7 +39,7 @@ describe.skipIf(!testDatabaseUrl)('upgrading to triage records', () => {
       await repo.insert({ ...base, id: 'case_waiting', state: 'claimed', reportIds: ['rpt_3'], claim: { memberId: 'mem_jane', claimedAt: T0, lastActivityAt: T0 } })
       await repo.insert({ ...base, id: 'case_done', state: 'actioned', reportIds: ['rpt_4'] })
     })
-    await migrate(t.ownerUrl, [casesMigrations, triageMigrations], t.roles)
+    await migrate(t.ownerUrl, [moderationMigrations, triageMigrations], t.roles)
     expect((await db.system.execute(sql`SELECT 1 FROM platform.consumer_groups WHERE name = 'triage'`)).rows).toEqual([])
     const records = await withTenant(db, scopeOfRef(A), async (tx) => {
       const store = pgTriageCaseStore(tx)
@@ -67,7 +67,7 @@ describe.skipIf(!testDatabaseUrl)('upgrading to triage records', () => {
     const udb = createDatabase({ appUrl: u.appUrl, systemUrl: u.systemUrl })
     try {
       // A release before: triage with only its policy copies, and moderation's group that triaged cases itself.
-      await migrate(u.ownerUrl, [casesMigrations, { ...triageMigrations, migrations: triageMigrations.migrations.slice(0, 1) }], u.roles)
+      await migrate(u.ownerUrl, [moderationMigrations, { ...triageMigrations, migrations: triageMigrations.migrations.slice(0, 1) }], u.roles)
       const event = (id: string, type: string, fannedOut: boolean) =>
         withTenant(udb, scopeOfRef(A), (tx) =>
           tx.execute<{ seq: string }>(sql`
@@ -83,7 +83,7 @@ describe.skipIf(!testDatabaseUrl)('upgrading to triage records', () => {
       await udb.system.execute(sql`
         INSERT INTO platform.deliveries (group_name, seq, key) VALUES ('classify', ${opened}, 'case_1'), ('cases.triage', ${classified}, 'case_1')`)
 
-      await migrate(u.ownerUrl, [casesMigrations, triageMigrations], u.roles)
+      await migrate(u.ownerUrl, [moderationMigrations, triageMigrations], u.roles)
       const queued = await udb.system.execute<{ seq: string }>(sql`SELECT seq FROM platform.deliveries WHERE group_name = 'triage'`)
       expect(queued.rows.map((r) => r.seq)).toEqual([classified])
       // Events not fanned out yet reach triage's group too.

@@ -1,9 +1,9 @@
-// The services of the core loop put together on one bus for tests, as server.ts puts them: intake's
+// The services of the core loop put together on one bus for tests, as server.ts puts them: flagging's
 // report.received, classify (or a fixed classifier in its place), triage, moderation and delivery,
 // each on its own unit of work. It hands back moderation's and delivery's use cases, and
 // submitReport, which publishes report.received as flagging does.
 
-import { casesService, subscribeCases, type CaseRecord, type CaseRef, type CasesServiceDeps, type CorrectInput, type DecideInput, type Decision, type ReportFacts, type RetryActionsInput } from '@flagwise/cases'
+import { moderationService, subscribeModeration, type CaseRecord, type CaseRef, type ModerationServiceDeps, type CorrectInput, type DecideInput, type Decision, type ReportFacts, type RetryActionsInput } from '@flagwise/moderation'
 import { subscribeClassify, type ClassifyServiceDeps } from '@flagwise/classify'
 import { currentType, DEFAULT_POLICY, type EventData, type Policy, type PolicyActionKey } from '@flagwise/contracts'
 import { actionSettlement, subscribeDelivery, type DeliveryServiceDeps } from '@flagwise/delivery'
@@ -49,7 +49,7 @@ export interface ServicesOptions {
   readonly newDecisionId: () => string
   readonly newActionRequestId: () => string
   readonly newEventId: () => string
-  readonly cases: Pick<CasesServiceDeps, 'uow' | 'policy'>
+  readonly cases: Pick<ModerationServiceDeps, 'uow' | 'policy'>
   readonly delivery: Pick<DeliveryServiceDeps, 'uow'>
   readonly triage: TriageDeps
   /** The classify service, or a fixed classifier in its place: case.opened -> case.classified with what it says. */
@@ -71,11 +71,11 @@ export function composeServices(o: ServicesOptions): Services {
     subscribeClassify(bus, o.classify)
   }
   subscribeTriage(bus, o.triage)
-  const cases: CasesServiceDeps = { ...o.cases, clock, newCaseId: o.newCaseId, newDecisionId: o.newDecisionId, newEventId: o.newEventId }
-  subscribeCases(bus, cases)
+  const cases: ModerationServiceDeps = { ...o.cases, clock, newCaseId: o.newCaseId, newDecisionId: o.newDecisionId, newEventId: o.newEventId }
+  subscribeModeration(bus, cases)
   const delivery: DeliveryServiceDeps = { ...o.delivery, clock, newActionRequestId: o.newActionRequestId, newEventId: o.newEventId }
   subscribeDelivery(bus, delivery)
-  const work = casesService(cases)
+  const work = moderationService(cases)
   const settlement = actionSettlement(delivery)
   return {
     async submitReport(report) {

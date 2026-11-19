@@ -43,9 +43,9 @@ describe.skipIf(!testDatabaseUrl)('from report to action', () => {
     const [requested] = await webhooksOf(i, WEBHOOKS.actionRequested, (w) => w.data.case_id === c.id)
     expect(requested!.data).toMatchObject({ action_key: 'suspend_7d', subject_external_id: 'u_jack_doe', decision_id: decided.body.id })
     const requestId = requested!.data.action_request_id as string
-    expect((await i.call(i.ingestKey, PATHS.actionRequest(requestId))).body).toMatchObject({ status: 'pending' })
+    expect((await i.call(i.flaggingKey, PATHS.actionRequest(requestId))).body).toMatchObject({ status: 'pending' })
 
-    expect((await i.call(i.ingestKey, PATHS.confirmAction(requestId), { method: 'POST' })).status).toBe(200)
+    expect((await i.call(i.flaggingKey, PATHS.confirmAction(requestId), { method: 'POST' })).status).toBe(200)
     await caseWhen(i, c.id, (x) => x.state === 'actioned', 'actioned')
 
     const types = (await i.facts()).filter((f) => f.key === c.id || f.data?.caseId === c.id).map((f) => f.type)
@@ -67,7 +67,7 @@ describe.skipIf(!testDatabaseUrl)('from report to action', () => {
 
     // A retry before anything failed is refused.
     expect((await i.call(i.jane.key, PATHS.retryActions(c.id), { method: 'POST', body: { action_keys: ['ban'] } })).status).toBe(409)
-    expect((await i.call(i.ingestKey, PATHS.failAction(firstId), { method: 'POST', body: { reason: 'Account already deleted' } })).status).toBe(200)
+    expect((await i.call(i.flaggingKey, PATHS.failAction(firstId), { method: 'POST', body: { reason: 'Account already deleted' } })).status).toBe(200)
     await caseWhen(i, c.id, (x) => x.state === 'action_failed', 'action_failed')
 
     const retried = await i.call(i.jane.key, PATHS.retryActions(c.id), { method: 'POST', body: { action_keys: ['ban'] } })
@@ -76,10 +76,10 @@ describe.skipIf(!testDatabaseUrl)('from report to action', () => {
 
     const requests = await webhooksOf(i, WEBHOOKS.actionRequested, (w) => w.data.case_id === c.id, 2)
     const ban = requests.find((w) => w.data.action_key === 'ban')!
-    expect((await i.call(i.ingestKey, PATHS.actionRequest(firstId))).body).toMatchObject({ status: 'failed' })
+    expect((await i.call(i.flaggingKey, PATHS.actionRequest(firstId))).body).toMatchObject({ status: 'failed' })
 
     // The replaced request's failure no longer holds the case back once the new one is confirmed.
-    expect((await i.call(i.ingestKey, PATHS.confirmAction(ban.data.action_request_id), { method: 'POST' })).status).toBe(200)
+    expect((await i.call(i.flaggingKey, PATHS.confirmAction(ban.data.action_request_id), { method: 'POST' })).status).toBe(200)
     await caseWhen(i, c.id, (x) => x.state === 'actioned', 'actioned')
     expect((await i.facts()).some((f) => f.type === EVENTS.actionsRetried)).toBe(true)
   })

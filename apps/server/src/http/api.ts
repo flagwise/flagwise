@@ -5,11 +5,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { FlagwiseError, toProblem, type Clock, type TenantContext } from '@flagwise/kernel'
 import { runInRequest, withSystem, type BucketConfig, type Database, type IdempotencyStore, type RateLimiter } from '@flagwise/platform'
 import { auditRoutes, type AuditRoutesDeps } from '@flagwise/audit'
-import { casesRoutes, type CasesRoutesDeps } from '@flagwise/cases'
+import { moderationRoutes, type ModerationRoutesDeps } from '@flagwise/moderation'
 import { classifyRoutes, type ClassifyDeps } from '@flagwise/classify'
-import { actionRequestRoutes, type ActionRequestRoutesDeps } from '@flagwise/delivery'
-import { intakeRoutes, type IntakeDeps } from '@flagwise/intake'
-import { configRoutes, type ConfigRoutesDeps } from '@flagwise/policy'
+import { deliveryRoutes, type ActionRequestRoutesDeps } from '@flagwise/delivery'
+import { flaggingRoutes, type FlaggingDeps } from '@flagwise/flagging'
+import { policyRoutes, type PolicyRoutesDeps } from '@flagwise/policy'
 import { privacyRoutes, type PrivacyRoutesDeps } from '@flagwise/privacy'
 import { pgKeyDirectory, resolveApiKey, type KeyResolution } from '@flagwise/tenancy'
 import { Hono, type Context } from 'hono'
@@ -21,15 +21,15 @@ export interface ApiDeps {
   /** The token bucket of each app (self-host: from config). */
   readonly rateLimit: BucketConfig
   readonly clock: Clock
-  readonly intake: IntakeDeps
+  readonly flagging: FlaggingDeps
   /** The case routes; left out, they answer 404 like any unknown path. */
-  readonly cases?: CasesRoutesDeps
+  readonly cases?: ModerationRoutesDeps
   /** The classification route; left out, it answers 404. */
   readonly classify?: Pick<ClassifyDeps, 'run'>
   /** The action request routes; left out, they answer 404. */
   readonly actionRequests?: ActionRequestRoutesDeps
   /** The app config routes (action keys); left out, they answer 404. */
-  readonly config?: ConfigRoutesDeps
+  readonly config?: PolicyRoutesDeps
   /** The audit routes; left out, they answer 404. */
   readonly audit?: AuditRoutesDeps
   /** The erasure routes; left out, they answer 404. */
@@ -108,7 +108,7 @@ export function createApi(deps: ApiDeps): Hono<ApiEnv> {
   api.use(async (c, next) => {
     const key = c.req.header('idempotency-key')
     const { appId, orgId, livemode } = c.get('tenant')
-    if (!deps.idempotency || c.req.method !== 'POST' || key === undefined || !appId || c.req.path.endsWith('/reports')) return next()
+    if (!deps.idempotency || c.req.method !== 'POST' || key === undefined || !appId || c.req.path.endsWith('/flagging/reports')) return next()
     if (!IDEMPOTENCY_KEY.test(key)) throw new FlagwiseError('invalid_request', 'Idempotency-Key must be 1 to 255 visible ASCII characters')
     const tenant = { orgId, appId, livemode }
     const fingerprint = createHash('sha256').update(`POST ${c.req.path}\n`).update(await c.req.text()).digest('hex')
@@ -130,11 +130,11 @@ export function createApi(deps: ApiDeps): Hono<ApiEnv> {
     await deps.idempotency.finish(tenant, key, fingerprint, { status: c.res.status, contentType: c.res.headers.get('content-type') ?? 'application/json', body })
   })
 
-  api.route('/', intakeRoutes(deps.intake))
-  if (deps.cases) api.route('/', casesRoutes(deps.cases))
+  api.route('/', flaggingRoutes(deps.flagging))
+  if (deps.cases) api.route('/', moderationRoutes(deps.cases))
   if (deps.classify) api.route('/', classifyRoutes(deps.classify))
-  if (deps.actionRequests) api.route('/', actionRequestRoutes(deps.actionRequests))
-  if (deps.config) api.route('/', configRoutes(deps.config))
+  if (deps.actionRequests) api.route('/', deliveryRoutes(deps.actionRequests))
+  if (deps.config) api.route('/', policyRoutes(deps.config))
   if (deps.audit) api.route('/', auditRoutes(deps.audit))
   if (deps.privacy) api.route('/', privacyRoutes(deps.privacy))
   api.all('*', () => {

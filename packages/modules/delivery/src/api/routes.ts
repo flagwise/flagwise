@@ -23,10 +23,10 @@ const MAX_REASON = 500
 /**
  * For API keys with the `actions` scope ('forbidden' otherwise):
  *
- * - `GET /action-requests/:id`: the request, or 'not_found'. The tenant carries out an action only
+ * - `GET /delivery/action-requests/:id`: the request, or 'not_found'. The tenant carries out an action only
  *   while its request is `pending`.
- * - `POST /action-requests/:id/confirm`: the action ran; the request after the change.
- * - `POST /action-requests/:id/fail` with `{ "reason": "..." }` (1 to 500 characters): it could not
+ * - `POST /delivery/action-requests/:id/confirm`: the action ran; the request after the change.
+ * - `POST /delivery/action-requests/:id/fail` with `{ "reason": "..." }` (1 to 500 characters): it could not
  *   run; the request after the change.
  *
  * Answering again with the same outcome is harmless and returns the request. Answering a request
@@ -34,8 +34,8 @@ const MAX_REASON = 500
  *
  * Body: `{ object: 'action_request', id, status, action_key, case_id, decision_id, fail_reason }`.
  */
-export function actionRequestRoutes(deps: ActionRequestRoutesDeps): Hono<ActionRequestsEnv> {
-  const routes = new Hono<ActionRequestsEnv>()
+export function deliveryRoutes(deps: ActionRequestRoutesDeps): Hono<ActionRequestsEnv> {
+  const routes = new Hono<ActionRequestsEnv>().basePath('/delivery')
   const find = async (tenant: TenantRef, id: string) => {
     const request = await deps.read(tenant, (requests) => requests.findById(tenant, id))
     if (!request) throw new FlagwiseError('not_found', 'No such action request')

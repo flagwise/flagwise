@@ -1,4 +1,4 @@
-// The evidence snapshot blob: what intake writes to object storage at `apps/{app_id}/{report_id}`
+// The evidence snapshot blob: what flagging writes to object storage at `apps/{app_id}/{report_id}`
 // once a report is accepted, and what other modules read. JSON, UTF-8. Bump the format when the
 // layout changes; readers refuse a format they do not know.
 
@@ -18,7 +18,7 @@ export interface SnapshotContentItem {
   readonly at?: string
 }
 
-/** The checked report as intake accepted it. */
+/** The checked report as flagging accepted it. */
 export interface SnapshotReport {
   readonly reporter: SnapshotParty
   readonly reported: SnapshotParty
@@ -50,7 +50,7 @@ export interface ReportSnapshot {
  * REPORT_SNAPSHOT_FORMAT, or the parts readers rely on are missing: report_id, received_at,
  * report.reporter.externalId, report.reported.externalId, report.category, report.evidence.kind
  * and report.evidence.content as an array of items with a string text. The rest is trusted as
- * intake wrote it.
+ * flagging wrote it.
  */
 export function parseReportSnapshot(bytes: Uint8Array): ReportSnapshot {
   let value: unknown

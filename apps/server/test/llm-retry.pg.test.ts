@@ -58,20 +58,20 @@ describe.skipIf(!testDatabaseUrl)('LLM retries on the server', () => {
     return res.ok ? await json(res) : undefined
   }
   const caseFor = async (reported: string) => {
-    const res = await call(installed.liveKey, '/reports', {
+    const res = await call(installed.liveKey, '/flagging/reports', {
       method: 'POST',
       body: { reporter: { external_id: 'u_jane_doe' }, reported: { external_id: reported }, category: 'asking_for_money', evidence: { kind: 'message', content: ['buy my coin'] } },
     })
     const reportId = (await json(res)).id as string
-    const caseId = await eventually(async () => ((await got(installed.liveKey, `/reports/${reportId}`))?.case_id as string | null) ?? undefined)
+    const caseId = await eventually(async () => ((await got(installed.liveKey, `/flagging/reports/${reportId}`))?.case_id as string | null) ?? undefined)
     return caseIn(caseId, (c) => c.state !== 'classifying')
   }
   const caseIn = (caseId: string, check: (c: Record<string, any>) => boolean) =>
     eventually(async () => {
-      const c = await got(admin.key, `/cases/${caseId}`)
+      const c = await got(admin.key, `/moderation/cases/${caseId}`)
       return c && check(c) ? c : undefined
     })
-  const setLlm = (fallback: boolean) => call(admin.key, '/config/llm', { method: 'PUT', body: { rules_only: false, fallback_to_rules: fallback } })
+  const setLlm = (fallback: boolean) => call(admin.key, '/policy/llm-settings', { method: 'PUT', body: { rules_only: false, fallback_to_rules: fallback } })
 
   beforeAll(async () => {
     t = await createTestDatabase()
@@ -101,9 +101,9 @@ describe.skipIf(!testDatabaseUrl)('LLM retries on the server', () => {
 
     const after = await caseIn(c.id, (x) => x.classified_by === 'llm')
     expect(after).toMatchObject({ state: 'open', category_id: 'scams_fraud.investment_scam', severity: 'P1' })
-    expect(await json(await call(admin.key, `/cases/${c.id}/classification`))).toMatchObject({ classified_by: 'llm', summary: 'The reported account pushed a crypto scheme.' })
+    expect(await json(await call(admin.key, `/classify/classifications/${c.id}`))).toMatchObject({ classified_by: 'llm', summary: 'The reported account pushed a crypto scheme.' })
     const timeline = await eventually(async () => {
-      const page = await got(admin.key, `/audit?case_id=${c.id}`)
+      const page = await got(admin.key, `/audit/entries?case_id=${c.id}`)
       const triaged = page?.data.filter((e: { action: string }) => e.action === 'case.triaged')
       return triaged?.length === 2 ? page!.data : undefined
     })
@@ -121,11 +121,11 @@ describe.skipIf(!testDatabaseUrl)('LLM retries on the server', () => {
   it("leaves a case a moderator has taken alone, keeping the LLM's answer in classify", async () => {
     await setLlm(true)
     const c = await caseFor('u_joe_doe')
-    expect((await call(admin.key, `/cases/${c.id}/claim`, { method: 'POST' })).status).toBe(200)
+    expect((await call(admin.key, `/moderation/cases/${c.id}/claim`, { method: 'POST' })).status).toBe(200)
     down = false
-    await eventually(async () => ((await got(admin.key, `/cases/${c.id}/classification`))?.classified_by === 'llm' ? true : undefined))
+    await eventually(async () => ((await got(admin.key, `/classify/classifications/${c.id}`))?.classified_by === 'llm' ? true : undefined))
     await server.bus.drain()
-    expect(await json(await call(admin.key, `/cases/${c.id}`))).toMatchObject({ state: 'claimed', classified_by: 'rules', category_id: 'other' })
+    expect(await json(await call(admin.key, `/moderation/cases/${c.id}`))).toMatchObject({ state: 'claimed', classified_by: 'rules', category_id: 'other' })
   })
 
   it('gives up quietly when the retries run out', async () => {
@@ -136,7 +136,7 @@ describe.skipIf(!testDatabaseUrl)('LLM retries on the server', () => {
     await eventually(async () => (calls - before >= DELAYS.length ? true : undefined))
     await new Promise((r) => setTimeout(r, 1_000))
     expect(calls - before).toBe(DELAYS.length)
-    expect(await json(await call(admin.key, `/cases/${c.id}`))).toMatchObject({ state: 'untriaged' })
+    expect(await json(await call(admin.key, `/moderation/cases/${c.id}`))).toMatchObject({ state: 'untriaged' })
     expect((await server.bus.deadLetters()).filter((d) => d.group === 'classify.retry')).toEqual([])
   })
 })

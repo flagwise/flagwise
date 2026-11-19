@@ -114,14 +114,14 @@ describe('maskApiKey', () => {
 
 describe('normalizeScopes', () => {
   it('deduplicates into the canonical order', () => {
-    expect(normalizeScopes(['admin', 'ingest', 'admin'])).toEqual(['ingest', 'admin'])
+    expect(normalizeScopes(['admin', 'flagging', 'admin'])).toEqual(['flagging', 'admin'])
     expect(normalizeScopes(['actions'])).toEqual(['actions'])
-    expect(normalizeScopes(['admin', 'actions', 'ingest'])).toEqual(['ingest', 'actions', 'admin'])
+    expect(normalizeScopes(['admin', 'actions', 'flagging'])).toEqual(['flagging', 'actions', 'admin'])
   })
 
   it('rejects empty lists and unknown scopes', () => {
     expect(normalizeScopes([])).toBeNull()
-    expect(normalizeScopes(['ingest', 'write'])).toBeNull()
+    expect(normalizeScopes(['flagging', 'write'])).toBeNull()
     expect(normalizeScopes(['Admin'])).toBeNull()
   })
 })

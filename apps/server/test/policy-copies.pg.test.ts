@@ -1,7 +1,7 @@
 // The copies of the policy that classify, triage and moderation keep, on Postgres: filled from
 // policy.updated, and on an upgrade started from the config the policy service took over.
 // Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
-import { pgCasesPolicyCopy, casesTables } from '@flagwise/cases'
+import { pgModerationPolicyCopy, moderationTables } from '@flagwise/moderation'
 import { classifyTables, pgClassifyPolicyCopy } from '@flagwise/classify'
 import { DEFAULT_POLICY, eventContract, policyIn, type Policy } from '@flagwise/contracts'
 import { manualClock, type TenantRef } from '@flagwise/kernel'
@@ -37,7 +37,7 @@ const subscribePolicyCopies = (bus: PgBus, copies: PolicyCopies) => {
     })
   }
 }
-const copiesOf = (db: Database): PolicyCopies => ({ classify: pgClassifyPolicyCopy(db), triage: pgTriagePolicyCopy(db), cases: pgCasesPolicyCopy(db) })
+const copiesOf = (db: Database): PolicyCopies => ({ classify: pgClassifyPolicyCopy(db), triage: pgTriagePolicyCopy(db), cases: pgModerationPolicyCopy(db) })
 const versions = async (copies: PolicyCopies, tenant: TenantRef) =>
   Object.fromEntries(await Promise.all(Object.entries(copies).map(async ([name, copy]) => [name, (await copy.get(tenant))?.version ?? null])))
 
@@ -64,7 +64,7 @@ describe.skipIf(!testDatabaseUrl)('policy copies on Postgres', () => {
   })
 
   it('match their migrations', async () => {
-    expect(await schemaDrift(t.ownerUrl, [...classifyTables, ...triageTables, ...casesTables])).toEqual([])
+    expect(await schemaDrift(t.ownerUrl, [...classifyTables, ...triageTables, ...moderationTables])).toEqual([])
   })
 
   it("read as the default policy until the app's first version reaches them", async () => {

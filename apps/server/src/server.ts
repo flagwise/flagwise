@@ -2,7 +2,7 @@
 // public API (MODE api or all) and the event handlers (MODE worker or all).
 
 import { auditReads, pgAuditDeps, subscribeAudit } from '@flagwise/audit'
-import { casesService, pgCaseReads, pgCasesDeps, subscribeCases, type CasesRoutesDeps } from '@flagwise/cases'
+import { moderationService, pgCaseReads, pgModerationDeps, subscribeModeration, type ModerationRoutesDeps } from '@flagwise/moderation'
 import { classifyDepsWithPolicy, pgClassifyPolicyCopy, pgClassifyRunner, subscribeClassify, type ClassifyDeps } from '@flagwise/classify'
 import { eventContract } from '@flagwise/contracts'
 import {
@@ -17,7 +17,7 @@ import {
   type ActionRequestRoutesDeps,
   type WebhookSender,
 } from '@flagwise/delivery'
-import { pgIntakeRunner, subscribeIntake, type IntakeDeps } from '@flagwise/intake'
+import { pgFlaggingRunner, subscribeFlagging, type FlaggingDeps } from '@flagwise/flagging'
 import { newId, systemClock, type Clock } from '@flagwise/kernel'
 import {
   createDatabase,
@@ -131,10 +131,10 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
   const worker = config.mode !== 'api'
   const eventId = () => newId('evt', { clock })
 
-  const intake: IntakeDeps = { run: pgIntakeRunner(db, bus), storage, clock, newReportId: () => newId('rpt', { clock }) }
+  const flagging: FlaggingDeps = { run: pgFlaggingRunner(db, bus), storage, clock, newReportId: () => newId('rpt', { clock }) }
   const classifyPolicy = pgClassifyPolicyCopy(db)
   const classify: ClassifyDeps = classifyDepsWithPolicy({ run: pgClassifyRunner(db), snapshots: storage, clock, llm: config.llm.llm, redact: config.llm.redact }, classifyPolicy)
-  const moderation = pgCasesDeps(db, bus, {
+  const moderation = pgModerationDeps(db, bus, {
     clock,
     newCaseId: () => newId('case', { clock }),
     newDecisionId: () => newId('dec', { clock }),
@@ -145,18 +145,18 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
   const privacy = pgPrivacyDeps(db, bus, { clock, newErasureId: () => newId('ers', { clock }) })
 
   // Each service's handlers; they only run once the bus is started, in MODE worker or all.
-  subscribeIntake(bus, intake)
+  subscribeFlagging(bus, flagging)
   subscribeClassify(bus, { classify, policy: classifyPolicy, ...(options.llmRetryDelaysMs && { llmRetryDelaysMs: options.llmRetryDelaysMs }) })
   subscribeTriage(bus, pgTriageDeps(db, bus))
-  subscribeCases(bus, moderation)
+  subscribeModeration(bus, moderation)
   subscribeDelivery(bus, delivery)
   subscribeAudit(bus, auditLog)
   subscribePrivacy(bus, privacy)
   subscribePolicy(bus, { clock })
   subscribeTenancy(bus, { clock })
 
-  const caseWork = casesService(moderation)
-  const cases: CasesRoutesDeps = { read: pgCaseReads(db), ...caseWork, clock }
+  const caseWork = moderationService(moderation)
+  const cases: ModerationRoutesDeps = { read: pgCaseReads(db), ...caseWork, clock }
   const settlement = actionSettlement(delivery)
   const actionRequests: ActionRequestRoutesDeps = { read: pgActionRequestReads(db), confirm: settlement.confirm, fail: settlement.fail }
   const appConfig = pgPolicy(db, { clock, events: (tx) => busPolicyEvents(bus, tx, eventId) })
@@ -199,7 +199,7 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
 
   const app = createApp({
     ...(options.plugins ? { plugins: options.plugins } : {}),
-    ...(api ? { api: { keys: pgKeyResolver(db), limiter: memoryRateLimiter(), rateLimit: config.rateLimit, clock, intake, cases, classify, actionRequests, config: appConfig, audit, privacy: erasures, idempotency: pgIdempotencyStore(db) } } : {}),
+    ...(api ? { api: { keys: pgKeyResolver(db), limiter: memoryRateLimiter(), rateLimit: config.rateLimit, clock, flagging, cases, classify, actionRequests, config: appConfig, audit, privacy: erasures, idempotency: pgIdempotencyStore(db) } } : {}),
     ready: async () => {
       if (!prepared) throw new Error('The database is not ready yet')
       await Promise.all([db.app.execute(sql`SELECT 1`), db.system.execute(sql`SELECT 1`)])

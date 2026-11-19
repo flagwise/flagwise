@@ -123,7 +123,7 @@ export async function issueApiKey(
   input: { readonly orgId: string; readonly appId: string; readonly livemode: boolean; readonly scopes: readonly string[] },
 ): Promise<IssuedApiKey> {
   const scopes = normalizeScopes(input.scopes)
-  if (!scopes) throw new FlagwiseError('invalid_request', 'Scopes must be one or more of ingest, actions, admin')
+  if (!scopes) throw new FlagwiseError('invalid_request', 'Scopes must be one or more of flagging, actions, admin')
   const app = await deps.store.findApp(input.orgId, input.appId)
   if (!app || app.deletedAt) throw new FlagwiseError('not_found', `No app ${input.appId}`)
   const now = deps.clock.now()
@@ -184,7 +184,7 @@ export type KeyResolution =
   | { readonly ok: true; readonly context: TenantContext }
   /**
    * Why the key does not let the request in. 'app_deleted': the key is valid but its app (or org)
-   * is deleted, which intake answers with 410; every other reason is a 401.
+   * is deleted, which flagging answers with 410; every other reason is a 401.
    */
   | { readonly ok: false; readonly reason: 'malformed' | 'unknown' | 'inactive' | 'app_deleted' }
 

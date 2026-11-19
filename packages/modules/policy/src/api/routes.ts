@@ -1,19 +1,20 @@
-// The app config routes: the action keys moderators pick from, the categories and the LLM settings,
-// and the report screen's categories. The edge authenticates and sets the tenant context; these
+// The policy routes: the action keys moderators pick from, the categories and the LLM settings,
+// the report screen's menu, and what an app maps to and starts from (the global taxonomy, the presets). The edge authenticates and sets the tenant context; these
 // routes authorize from it and call the use cases.
 
 import { can, FlagwiseError, type AppAction, type TenantContext, type TenantRef } from '@flagwise/kernel'
+import { GLOBAL_CATEGORIES, GLOBAL_GROUPS } from '@flagwise/contracts'
 import { Hono } from 'hono'
 import type { ReportScreenCategory } from '../app/policy.ts'
 import { parseActionKeys, type ActionKey } from '../domain/action-keys.ts'
 import { isUnmapped, parseCategories, type AppCategory, type LlmSettings } from '../domain/categories.ts'
 import { PRESET_NAMES, PRESETS, type PresetName } from '../domain/presets.ts'
 
-export interface ConfigEnv {
+export interface PolicyEnv {
   Variables: { tenant: TenantContext }
 }
 
-export interface ConfigRoutesDeps {
+export interface PolicyRoutesDeps {
   /** listActionKeys in a tenant transaction. */
   listActionKeys(tenant: TenantRef): Promise<readonly ActionKey[]>
   /** replaceActionKeys in a tenant transaction. */
@@ -31,53 +32,58 @@ export interface ConfigRoutesDeps {
 }
 
 /**
- * For the caller's app and mode:
+ * Mounted at `/policy`; for the caller's app and mode:
  *
- * - `GET /config/actions` (callers allowed `config.read`: API keys with the `admin` scope): the
+ * - `GET /policy/action-keys` (callers allowed `config.read`: API keys with the `admin` scope): the
  *   action keys in their order, as `{ object: 'list', data }`.
- * - `PUT /config/actions` (callers allowed `integration.configure`: API keys with the `admin`
+ * - `PUT /policy/action-keys` (callers allowed `integration.configure`: API keys with the `admin`
  *   scope) with `{ "data": [...] }`: replaces the whole list and answers like GET. Each key:
  *   `key`, `label: { en, id? }`, `description?`, `reverse_key?`, `auto_allowed?` (default false),
  *   `categories` (`*`, global groups or global category ids). A key left out is removed: decisions
  *   can no longer pick it, while past decisions keep it.
- * - `GET /config/categories` (`config.read`): the categories in their order, as `{ object: 'list',
+ * - `GET /policy/categories/definitions` (`config.read`): the categories in their order, as `{ object: 'list',
  *   data, warnings }`; `warnings` names each unmapped category, which the DSA export leaves out and
  *   metrics count as Other.
- * - `PUT /config/categories` (callers allowed `policy.configure`: API keys with the `admin` scope)
+ * - `PUT /policy/categories/definitions` (callers allowed `policy.configure`: API keys with the `admin` scope)
  *   with `{ "data": [...] }` (see parseCategories) or `{ "preset": "dating" | "marketplace" |
  *   "community" }`: replaces the whole list and answers like GET. A category left out is removed:
  *   reports naming it count as an unknown pick, while past cases keep it.
- * - `GET /categories?locale=en|id` (`categories.read`: API keys with the `ingest` scope): the
- *   report screen, the enabled categories in their order as `{ object: 'list', locale, data: [{
+ * - `GET /policy/categories/menu?locale=en|id` (`categories.read`: API keys with the `flagging`
+ *   scope): the report screen's menu, the enabled categories in their order as `{ object: 'list', locale, data: [{
  *   object: 'category', key, label }] }`; default locale `en`, and an Indonesian label falls back to
  *   English.
- * - `GET /config/llm` (`config.read`): `{ object: 'llm_settings', rules_only, fallback_to_rules }`.
- * - `PUT /config/llm` (`policy.configure`) with both fields as booleans: stores them and answers like
+ * - `GET /policy/llm-settings` (`config.read`): `{ object: 'llm_settings', rules_only, fallback_to_rules }`.
+ * - `PUT /policy/llm-settings` (`policy.configure`) with both fields as booleans: stores them and answers like
  *   GET.
+ * - `GET /policy/taxonomy` (`config.read`): the global categories `maps_to` names, the same on every
+ *   install: `{ object: 'list', groups, data: [{ object: 'global_category', id, group, label,
+ *   severity, p0_locked }] }`. A P0-locked category is always detected and never lowered.
+ * - `GET /policy/presets` (`config.read`): what each preset holds, `{ object: 'list', data: [{
+ *   object: 'preset', name, categories }] }`, each category as in the definitions.
  *
  * Field errors are 'validation_failed'; a body that is not JSON is 'invalid_request'.
  */
-export function configRoutes(deps: ConfigRoutesDeps): Hono<ConfigEnv> {
-  const routes = new Hono<ConfigEnv>()
+export function policyRoutes(deps: PolicyRoutesDeps): Hono<PolicyEnv> {
+  const routes = new Hono<PolicyEnv>().basePath('/policy')
 
-  routes.get('/config/actions', async (c) => {
+  routes.get('/action-keys', async (c) => {
     const tenant = allowed(c.get('tenant'), 'config.read')
     return c.json(listBody(await deps.listActionKeys(tenant)))
   })
 
-  routes.put('/config/actions', async (c) => {
+  routes.put('/action-keys', async (c) => {
     const tenant = allowed(c.get('tenant'), 'integration.configure')
     const parsed = parseActionKeys((await jsonObject(c.req.text())).data)
     if (!parsed.ok) throw new FlagwiseError('validation_failed', 'The action keys are not valid', { errors: parsed.errors })
     return c.json(listBody(await deps.replaceActionKeys(tenant, parsed.keys)))
   })
 
-  routes.get('/config/categories', async (c) => {
+  routes.get('/categories/definitions', async (c) => {
     const tenant = allowed(c.get('tenant'), 'config.read')
     return c.json(categoriesBody(await deps.listCategories(tenant)))
   })
 
-  routes.put('/config/categories', async (c) => {
+  routes.put('/categories/definitions', async (c) => {
     const tenant = allowed(c.get('tenant'), 'policy.configure')
     const body = await jsonObject(c.req.text())
     if (body.preset !== undefined) {
@@ -92,7 +98,7 @@ export function configRoutes(deps: ConfigRoutesDeps): Hono<ConfigEnv> {
     return c.json(categoriesBody(await deps.replaceCategories(tenant, parsed.categories)))
   })
 
-  routes.get('/categories', async (c) => {
+  routes.get('/categories/menu', async (c) => {
     const tenant = allowed(c.get('tenant'), 'categories.read')
     const locale = c.req.query('locale') ?? 'en'
     if (locale !== 'en' && locale !== 'id') throw new FlagwiseError('validation_failed', 'Unknown locale', { errors: [{ path: 'locale', message: 'en or id' }] })
@@ -100,12 +106,12 @@ export function configRoutes(deps: ConfigRoutesDeps): Hono<ConfigEnv> {
     return c.json({ object: 'list', locale, data: data.map((d) => ({ object: 'category', key: d.key, label: d.label })) })
   })
 
-  routes.get('/config/llm', async (c) => {
+  routes.get('/llm-settings', async (c) => {
     const tenant = allowed(c.get('tenant'), 'config.read')
     return c.json(llmBody(await deps.getLlmSettings(tenant)))
   })
 
-  routes.put('/config/llm', async (c) => {
+  routes.put('/llm-settings', async (c) => {
     const tenant = allowed(c.get('tenant'), 'policy.configure')
     const body = await jsonObject(c.req.text())
     const errors = (['rules_only', 'fallback_to_rules'] as const).filter((f) => typeof body[f] !== 'boolean').map((path) => ({ path, message: 'Must be true or false' }))
@@ -113,12 +119,23 @@ export function configRoutes(deps: ConfigRoutesDeps): Hono<ConfigEnv> {
     return c.json(llmBody(await deps.setLlmSettings(tenant, { rulesOnly: body.rules_only as boolean, fallbackToRules: body.fallback_to_rules as boolean })))
   })
 
+  routes.get('/taxonomy', (c) => {
+    allowed(c.get('tenant'), 'config.read')
+    const data = GLOBAL_CATEGORIES.map((g) => ({ object: 'global_category', id: g.id, group: g.group, label: g.label, severity: g.severity, p0_locked: g.severity === 'P0' }))
+    return c.json({ object: 'list', groups: GLOBAL_GROUPS, data })
+  })
+
+  routes.get('/presets', (c) => {
+    allowed(c.get('tenant'), 'config.read')
+    return c.json({ object: 'list', data: PRESET_NAMES.map((name) => ({ object: 'preset', name, categories: categoriesBody(PRESETS[name]).data })) })
+  })
+
   return routes
 }
 
 function allowed(ctx: TenantContext, action: AppAction): TenantRef {
   if (!ctx.appId || !can(ctx, { action, appId: ctx.appId })) {
-    throw new FlagwiseError('forbidden', action === 'categories.read' ? 'This API key does not have the ingest scope' : 'This API key does not have the admin scope')
+    throw new FlagwiseError('forbidden', action === 'categories.read' ? 'This API key does not have the flagging scope' : 'This API key does not have the admin scope')
   }
   return { orgId: ctx.orgId, appId: ctx.appId, livemode: ctx.livemode }
 }

@@ -5,7 +5,7 @@ import type { Policy } from '@flagwise/contracts'
 import type { Clock, TenantRef } from '@flagwise/kernel'
 import { loadMigrations, scopeOfRef, withTenant, type Database, type MigrationSet, type TenantTx } from '@flagwise/platform'
 import { and, eq, sql } from 'drizzle-orm'
-import type { ConfigRoutesDeps } from '../api/routes.ts'
+import type { PolicyRoutesDeps } from '../api/routes.ts'
 import { getLlmSettings, listActionKeys, listCategories, replaceActionKeys, replaceCategories, reportScreenCategories, setLlmSettings } from '../app/policy.ts'
 import type { PolicyEventPublisher, PolicyHeadStore, PolicyStores } from '../app/ports.ts'
 import { pgActionKeyStore } from './pg-action-key-store.ts'
@@ -45,7 +45,7 @@ export interface PgPolicyOptions {
 }
 
 /** The policy's use cases on `db`, each in one tenant transaction: what the config routes need. */
-export function pgPolicy(db: Database, opts: PgPolicyOptions): ConfigRoutesDeps {
+export function pgPolicy(db: Database, opts: PgPolicyOptions): PolicyRoutesDeps {
   const read = <R>(tenant: TenantRef, fn: (stores: PolicyStores) => Promise<R>) => withTenant(db, scopeOfRef(tenant), (tx) => fn(pgPolicyStores(tx)))
   const write = <R>(tenant: TenantRef, fn: (deps: { stores: PolicyStores; clock: Clock; events: PolicyEventPublisher }) => Promise<R>) =>
     withTenant(db, scopeOfRef(tenant), (tx) => fn({ stores: pgPolicyStores(tx), clock: opts.clock, events: opts.events(tx) }))

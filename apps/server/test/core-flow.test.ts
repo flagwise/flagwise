@@ -3,7 +3,7 @@
 import { manualClock, type ManualClock, type TenantRef } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
 import { createMemoryBus, memoryDocumentCopy, memoryUnitOfWork, type MemoryBus } from '@flagwise/platform'
-import type { CaseRecord, CaseRepository } from '@flagwise/cases'
+import type { CaseRecord, CaseRepository } from '@flagwise/moderation'
 import type { ActionRequest, ActionRequestStore, StoredEvent, StoredSecret, WebhookEndpoint, WebhookStore } from '@flagwise/delivery'
 import type { Policy } from '@flagwise/contracts'
 import { beforeEach, describe, expect, it } from 'vitest'

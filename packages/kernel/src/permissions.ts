@@ -88,9 +88,9 @@ const APP_ACTIONS: Readonly<Record<AppAction, AppRule>> = {
   'support_bundle.send': { roles: CASES, scope: null },
   'audit.read': { roles: CASES, scope: 'admin' },
   'metrics.read': { roles: ALL, scope: 'admin' },
-  'categories.read': { roles: ALL, scope: 'ingest' },
-  'report.create': { roles: {}, scope: 'ingest', apiOnly: true },
-  'identifiers.check': { roles: {}, scope: 'ingest', apiOnly: true },
+  'categories.read': { roles: ALL, scope: 'flagging' },
+  'report.create': { roles: {}, scope: 'flagging', apiOnly: true },
+  'identifiers.check': { roles: {}, scope: 'flagging', apiOnly: true },
   'action_request.respond': { roles: {}, scope: 'actions', apiOnly: true },
   'appeal.file': { roles: {}, scope: 'actions', apiOnly: true },
 }

@@ -5,7 +5,7 @@ import {
   canDeleteOrg,
   canRestore,
   deletionStatus,
-  intakeStatus,
+  flaggingStatus,
   planAppTransfer,
   planDowngrade,
   type Deletable,
@@ -36,11 +36,11 @@ describe('deletion grace period', () => {
     expect(deletionStatus({ ...deleted('pro'), purgedAt: at(DAY) }, at(2 * DAY)).state).toBe('purged')
   })
 
-  it('answers intake with 410 once deleted', () => {
-    expect(intakeStatus(active, at(0))).toBe(202)
-    expect(intakeStatus(deleted('pro'), at(DAY))).toBe(410)
-    expect(intakeStatus(deleted('free'), at(8 * DAY))).toBe(410)
-    expect(intakeStatus({ ...deleted('free'), purgedAt: at(DAY) }, at(DAY))).toBe(410)
+  it('answers flagging with 410 once deleted', () => {
+    expect(flaggingStatus(active, at(0))).toBe(202)
+    expect(flaggingStatus(deleted('pro'), at(DAY))).toBe(410)
+    expect(flaggingStatus(deleted('free'), at(8 * DAY))).toBe(410)
+    expect(flaggingStatus({ ...deleted('free'), purgedAt: at(DAY) }, at(DAY))).toBe(410)
   })
 
   it('allows a restore only during the grace period', () => {

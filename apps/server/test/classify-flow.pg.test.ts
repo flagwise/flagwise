@@ -1,10 +1,10 @@
-// A report through intake and the services of the core loop on Postgres, with classify on a
+// A report through flagging and the services of the core loop on Postgres, with classify on a
 // scripted LLM. Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
 import { manualClock, type TenantRef } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
 import { createDatabase, createPgBus, memoryStorage, migrate, pgUnitOfWork, scopeOfRef, withTenant, type Database, type PgBus } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
-import { casesMigrations, pgCaseRepository, pgCasesPolicyCopy } from '@flagwise/cases'
+import { moderationMigrations, pgCaseRepository, pgModerationPolicyCopy } from '@flagwise/moderation'
 import {
   classifierPrompt,
   classifyDepsWithPolicy,
@@ -17,7 +17,7 @@ import {
   type LlmRequest,
 } from '@flagwise/classify'
 import { deliveryMigrations, pgDeliveryDeps } from '@flagwise/delivery'
-import { intakeMigrations, pgIntakeRunner, submitReport, type IntakeDeps } from '@flagwise/intake'
+import { flaggingMigrations, pgFlaggingRunner, submitReport, type FlaggingDeps } from '@flagwise/flagging'
 import { pgTriageDeps, triageMigrations } from '@flagwise/triage'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { composeServices } from './support/services.ts'
@@ -37,7 +37,7 @@ describe.skipIf(!testDatabaseUrl)('classify in the core loop on Postgres', () =>
   let t: TestDatabase
   let db: Database
   let bus: PgBus
-  let intake: IntakeDeps
+  let flagging: FlaggingDeps
   let classify: ClassifyDeps
   const requests: LlmRequest[] = []
   let answers: unknown[] = []
@@ -50,7 +50,7 @@ describe.skipIf(!testDatabaseUrl)('classify in the core loop on Postgres', () =>
   }
   const caseOf = (id: string) => withTenant(db, scopeOfRef(A), (tx) => pgCaseRepository(tx).findById(A, id))
   const send = async (text: string) => {
-    const { report: r } = await submitReport(intake, { tenant: A, body: report(text) })
+    const { report: r } = await submitReport(flagging, { tenant: A, body: report(text) })
     await bus.drain()
     const caseId = (await bus.log()).map((l) => l.event).find((e) => e.type === 'case.opened.v1' && (e.data as { reportId: string }).reportId === r.id)!.key
     return caseId
@@ -58,12 +58,12 @@ describe.skipIf(!testDatabaseUrl)('classify in the core loop on Postgres', () =>
 
   beforeAll(async () => {
     t = await createTestDatabase()
-    await migrate(t.ownerUrl, [intakeMigrations, casesMigrations, deliveryMigrations, classifyMigrations, triageMigrations], t.roles)
+    await migrate(t.ownerUrl, [flaggingMigrations, moderationMigrations, deliveryMigrations, classifyMigrations, triageMigrations], t.roles)
     db = createDatabase({ appUrl: t.appUrl, systemUrl: t.systemUrl })
     bus = createPgBus(db, { retryDelayMs: () => 0, contract: eventContract })
     const clock = manualClock('2026-11-06T09:00:00Z')
     const storage = memoryStorage()
-    intake = { run: pgIntakeRunner(db, bus), storage, clock, newReportId: () => `rpt_${++n}` }
+    flagging = { run: pgFlaggingRunner(db, bus), storage, clock, newReportId: () => `rpt_${++n}` }
     const policy = pgClassifyPolicyCopy(db)
     classify = classifyDepsWithPolicy(
       {
@@ -82,7 +82,7 @@ describe.skipIf(!testDatabaseUrl)('classify in the core loop on Postgres', () =>
       newDecisionId: () => `dec_${++n}`,
       newActionRequestId: () => `acr_${++n}`,
       newEventId: () => `evt_${++n}`,
-      cases: { uow: pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx) })), policy: pgCasesPolicyCopy(db) },
+      cases: { uow: pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx) })), policy: pgModerationPolicyCopy(db) },
       delivery: pgDeliveryDeps(db, bus, { clock, newActionRequestId: () => `acr_${++n}`, newEventId: () => `evt_${++n}` }),
       triage: pgTriageDeps(db, bus),
       classify: { classify, policy },
