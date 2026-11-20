@@ -1,5 +1,5 @@
 -- Reports as received. The evidence itself is in object storage under snapshot_key; this row keeps
--- what intake needs to find a report, answer for it and replay an idempotent request. App-scoped:
+-- what flagging needs to find a report, answer for it and replay an idempotent request. App-scoped:
 -- row-level security limits the app role to the apps and mode of the current transaction.
 
 CREATE SCHEMA intake;
@@ -19,10 +19,15 @@ CREATE TABLE intake.reports (
   received_at timestamptz NOT NULL,
   case_id text,
   joined_existing_case boolean,
+  -- When the report's account was erased: its evidence snapshot is deleted and the erased account's
+  -- id replaced by a tombstone, so the evidence answers 410 from then on.
+  erased_at timestamptz,
   PRIMARY KEY (app_id, id),
   UNIQUE (app_id, livemode, idempotency_key),
   CHECK ((case_id IS NULL) = (joined_existing_case IS NULL))
 );
+CREATE INDEX reports_by_reporter ON intake.reports (app_id, livemode, reporter_external_id);
+CREATE INDEX reports_by_reported ON intake.reports (app_id, livemode, reported_external_id);
 
 ALTER TABLE intake.reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE intake.reports FORCE ROW LEVEL SECURITY;

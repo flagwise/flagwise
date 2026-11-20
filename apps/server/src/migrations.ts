@@ -13,10 +13,8 @@ import { triageMigrations } from '@flagwise/triage'
 
 export const ALL_MIGRATIONS: readonly MigrationSet[] = [
   tenancyMigrations,
-  // After tenancy: it takes over tenancy's config tables.
   policyMigrations,
   flaggingMigrations,
-  // Each policy copy starts from the policy heads on an upgrade, so after policy.
   moderationMigrations,
   deliveryMigrations,
   classifyMigrations,

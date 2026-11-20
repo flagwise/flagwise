@@ -1,7 +1,6 @@
 // Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
 import { manualClock, type AppRef } from '@flagwise/kernel'
 import { sql } from 'drizzle-orm'
-import pg from 'pg'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createDatabase, createPgBus, migrate, runInRequest, withApps, type BusEvent, type Database, type EventContract, type PgBus, type PgBusOptions } from '../src/index.ts'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '../src/testing/pg.ts'
@@ -489,35 +488,4 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
     })
   })
 
-  it('moves events and consumer groups from before the event contracts to major 1', async () => {
-    const owner = new pg.Client({ connectionString: t.ownerUrl })
-    await owner.connect()
-    try {
-      // Back to before 0005: no schema versions, types without majors.
-      await owner.query("DELETE FROM platform.schema_migrations WHERE module = 'platform' AND id = '0005_event_contracts'")
-      await owner.query('ALTER TABLE platform.events DROP COLUMN schema_version')
-      await owner.query('ALTER TABLE platform.events NO FORCE ROW LEVEL SECURITY')
-      await owner.query(`INSERT INTO platform.events (id, type, key, data, app_id, livemode) VALUES
-        ('e1', 'case.opened', 'k', '{}', 'app_a', true), ('e2', 'case.claimed.v2', 'k', '{}', 'app_a', true)`)
-      await owner.query('ALTER TABLE platform.events FORCE ROW LEVEL SECURITY')
-      await owner.query(`INSERT INTO platform.consumer_groups (name, types, max_attempts, since_seq) VALUES
-        ('g1', '{case.opened,case.claimed.v2,case.decided}', 5, 0), ('g2', NULL, 5, 0)`)
-      expect(await migrate(t.ownerUrl, [], t.roles)).toEqual(['platform/0005_event_contracts'])
-      const forced = await owner.query("SELECT relforcerowsecurity AS forced FROM pg_class WHERE oid = 'platform.events'::regclass")
-      expect(forced.rows).toEqual([{ forced: true }])
-      await owner.query('ALTER TABLE platform.events NO FORCE ROW LEVEL SECURITY')
-      const events = await owner.query('SELECT id, type, schema_version FROM platform.events ORDER BY seq')
-      expect(events.rows).toEqual([
-        { id: 'e1', type: 'case.opened.v1', schema_version: '1.0.0' },
-        { id: 'e2', type: 'case.claimed.v2', schema_version: null },
-      ])
-      const groups = await owner.query('SELECT name, types FROM platform.consumer_groups ORDER BY name')
-      expect(groups.rows).toEqual([
-        { name: 'g1', types: ['case.opened.v1', 'case.claimed.v2', 'case.decided.v1'] },
-        { name: 'g2', types: null },
-      ])
-    } finally {
-      await owner.end()
-    }
-  })
 })

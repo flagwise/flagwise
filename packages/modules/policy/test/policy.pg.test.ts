@@ -1,7 +1,6 @@
 // Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
-import { DEFAULT_POLICY } from '@flagwise/contracts'
 import { manualClock, type ManualClock, type AppRef } from '@flagwise/kernel'
-import { createDatabase, migrate, withSystem, withApps, type Database } from '@flagwise/platform'
+import { createDatabase, migrate, withApps, type Database } from '@flagwise/platform'
 import { createTestDatabase, schemaDrift, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { createApp, pgTenancyStore, tenancyMigrations } from '@flagwise/tenancy'
 import { sql } from 'drizzle-orm'
@@ -141,67 +140,5 @@ describe.skipIf(!testDatabaseUrl)('the policy on Postgres', () => {
       const head = await inApp(true, (appRef, deps) => deps.stores.heads.lock(appRef))
       expect(head).toEqual({ version: start + 3, policy: { categories: PRESETS.community, actionKeys: keysOf([warn]), llm: { rulesOnly: true, fallbackToRules: false } } })
     })
-  })
-})
-
-describe.skipIf(!testDatabaseUrl)('upgrading to the policy service', () => {
-  let t: TestDatabase
-  let db: Database
-
-  beforeAll(async () => {
-    t = await createTestDatabase()
-    db = createDatabase({ appUrl: t.appUrl, systemUrl: t.systemUrl })
-  })
-  afterAll(async () => {
-    await db?.close()
-    await t?.drop()
-  })
-
-  it("moves an app's config from tenancy and starts its policy at version 1 with what it set", async () => {
-    await migrate(t.ownerUrl, [tenancyMigrations], t.roles)
-    await seedApps(db, manualClock('2026-11-18T09:00:00Z'))
-    // What a release before the policy service stored, through the app role.
-    await withApps(db, { appIds: ['app_a'], livemode: true }, async (tx) => {
-      await tx.execute(sql`INSERT INTO tenancy.categories (app_id, livemode, key, position, label_en, label_id, maps_to, severity, sla_hours, enabled, updated_at, removed_at) VALUES
-        ('app_a', true, 'scam', 1, 'Scam', 'Penipuan', '{scams_fraud}', NULL, NULL, true, now(), NULL),
-        ('app_a', true, 'fake_sugar_daddy', 0, 'Fake sugar daddy', NULL, '{scams_fraud.romance_scam}', 'P1', 12, false, now(), NULL),
-        ('app_a', true, 'gone', 2, 'Gone', NULL, '{}', NULL, NULL, true, now(), now())`)
-      await tx.execute(sql`INSERT INTO tenancy.action_keys (app_id, livemode, key, position, label_en, label_id, description, reverse_key, auto_allowed, categories, updated_at, removed_at) VALUES
-        ('app_a', true, 'warn', 0, 'Warn', NULL, 'A warning', NULL, false, '{*}', now(), NULL)`)
-    })
-    await withApps(db, { appIds: ['app_b'], livemode: false }, (tx) =>
-      tx.execute(sql`INSERT INTO tenancy.llm_settings (app_id, livemode, rules_only, fallback_to_rules, updated_at) VALUES ('app_b', false, true, false, now())`),
-    )
-
-    expect(await migrate(t.ownerUrl, [tenancyMigrations, policyMigrations], t.roles)).toEqual(['policy/0001_policy'])
-
-    const headOf = (appRef: AppRef) => withApps(db, { appIds: [appRef.appId], livemode: appRef.livemode }, (tx) => pgPolicyStores(tx).heads.lock(appRef))
-    expect(await headOf(A)).toEqual({
-      version: 1,
-      policy: {
-        categories: [
-          { key: 'fake_sugar_daddy', label: { en: 'Fake sugar daddy', id: null }, mapsTo: ['scams_fraud.romance_scam'], severity: 'P1', slaHours: 12, enabled: false },
-          { key: 'scam', label: { en: 'Scam', id: 'Penipuan' }, mapsTo: ['scams_fraud'], severity: null, slaHours: null, enabled: true },
-        ],
-        actionKeys: [{ key: 'warn', label: { en: 'Warn', id: null }, description: 'A warning', reverseKey: null, autoAllowed: false, categories: ['*'] }],
-        llm: DEFAULT_POLICY.llm,
-      },
-    })
-    expect(await headOf({ appId: 'app_b', livemode: false })).toEqual({ version: 1, policy: { ...DEFAULT_POLICY, llm: { rulesOnly: true, fallbackToRules: false } } })
-    // An app that set nothing has no version yet.
-    expect(await headOf({ appId: 'app_b', livemode: true })).toBeNull()
-    // The moved config reads as before, through the policy's stores.
-    expect((await withApps(db, { appIds: ['app_a'], livemode: true }, (tx) => pgActionKeyStore(tx).list(A))).map((k) => k.key)).toEqual(['warn'])
-
-    // Row-level security is forced again on every table.
-    const { rows } = await withSystem(db, (tx) =>
-      tx.execute(sql`SELECT c.relname, c.relforcerowsecurity AS forced FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'policy' AND c.relkind = 'r' ORDER BY c.relname`),
-    )
-    expect(rows).toEqual([
-      { relname: 'action_keys', forced: true },
-      { relname: 'categories', forced: true },
-      { relname: 'heads', forced: true },
-      { relname: 'llm_settings', forced: true },
-    ])
   })
 })

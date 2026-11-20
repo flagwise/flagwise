@@ -35,8 +35,10 @@ export const platformMigrations: MigrationSet = {
   module: 'platform',
   migrations: [
     {
-      id: '0001_tenant_context',
+      id: '0001_platform',
       sql: `
+-- Defaults every module relies on, and the functions row-level security policies read: the apps
+-- and mode of the current transaction, NULL when none is set.
 ALTER DEFAULT PRIVILEGES GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {{app}};
 ALTER DEFAULT PRIVILEGES GRANT USAGE, SELECT ON SEQUENCES TO {{app}};
 GRANT USAGE ON SCHEMA platform TO {{app}}, {{system}};
@@ -44,14 +46,14 @@ CREATE FUNCTION platform.app_ids() RETURNS text[] LANGUAGE sql STABLE
   AS $$ SELECT string_to_array(NULLIF(current_setting('app.app_ids', true), ''), ',') $$;
 CREATE FUNCTION platform.livemode() RETURNS boolean LANGUAGE sql STABLE
   AS $$ SELECT NULLIF(current_setting('app.livemode', true), '')::boolean $$;
-`,
-    },
-    {
-      id: '0002_event_bus',
-      sql: `
+
 -- The event log, which is also the outbox: the app role inserts events in the same transaction as
--- the change they describe and can read its own tenant's events. The system role fans them out to
--- consumer groups and delivers them; the app role cannot touch deliveries.
+-- the change they describe and reads its own apps' events. Each type names its major
+-- (case.triaged.v1) and each event the semver of its schema; request_id and the actor say where
+-- it came from, when it was published during an API request. The system role fans events out to
+-- consumer groups and delivers them, publishes the bus's own facts about tracked events
+-- (bus.event_fanned_out, bus.delivery_dead_lettered) and deletes events past retention; the app
+-- role cannot touch deliveries.
 CREATE TABLE platform.events (
   seq bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   id text NOT NULL UNIQUE CHECK (id <> ''),
@@ -61,9 +63,16 @@ CREATE TABLE platform.events (
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
-  fanned_out boolean NOT NULL DEFAULT false
+  fanned_out boolean NOT NULL DEFAULT false,
+  request_id text,
+  actor_type text,
+  actor_id text,
+  schema_version text CHECK (schema_version ~ '^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$'),
+  tracked boolean NOT NULL DEFAULT false,
+  CHECK ((actor_type IS NULL) = (actor_id IS NULL))
 );
 CREATE INDEX events_to_fan_out ON platform.events (seq) WHERE NOT fanned_out;
+CREATE INDEX events_by_age ON platform.events (created_at) WHERE fanned_out;
 ALTER TABLE platform.events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE platform.events FORCE ROW LEVEL SECURITY;
 REVOKE UPDATE, DELETE ON platform.events FROM {{app}};
@@ -71,7 +80,8 @@ CREATE POLICY app_read ON platform.events FOR SELECT TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 CREATE POLICY app_write ON platform.events FOR INSERT TO {{app}}
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
-GRANT SELECT, UPDATE ON platform.events TO {{system}};
+GRANT SELECT, INSERT, UPDATE, DELETE ON platform.events TO {{system}};
+GRANT USAGE ON SEQUENCE platform.events_seq_seq TO {{system}};
 CREATE POLICY relay ON platform.events FOR ALL TO {{system}} USING (true) WITH CHECK (true);
 
 CREATE TABLE platform.consumer_groups (
@@ -110,19 +120,7 @@ REVOKE ALL ON platform.consumer_groups, platform.deliveries, platform.dead_lette
 REVOKE ALL ON SEQUENCE platform.consumer_groups_position_seq, platform.deliveries_queued_seq, platform.dead_letters_id_seq FROM {{app}};
 GRANT SELECT, INSERT, UPDATE, DELETE ON platform.consumer_groups, platform.deliveries, platform.dead_letters TO {{system}};
 GRANT USAGE, SELECT ON SEQUENCE platform.consumer_groups_position_seq, platform.deliveries_queued_seq, platform.dead_letters_id_seq TO {{system}};
-`,
-    },
-    {
-      id: '0003_event_origin',
-      sql: `
--- Where an event came from: the API request and its actor, when it was published during one.
-ALTER TABLE platform.events ADD COLUMN request_id text, ADD COLUMN actor_type text, ADD COLUMN actor_id text;
-ALTER TABLE platform.events ADD CHECK ((actor_type IS NULL) = (actor_id IS NULL));
-`,
-    },
-    {
-      id: '0004_idempotency_keys',
-      sql: `
+
 -- The first response to each API request's Idempotency-Key, per app and mode; status is NULL
 -- while the request runs.
 CREATE TABLE platform.idempotency_keys (
@@ -142,35 +140,6 @@ ALTER TABLE platform.idempotency_keys FORCE ROW LEVEL SECURITY;
 CREATE POLICY app ON platform.idempotency_keys TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
-`,
-    },
-    {
-      id: '0005_event_contracts',
-      sql: `
--- Every event type carries its major in its name (case.triaged.v1), and every event the semver
--- of the schema its data was published under. Events and consumer groups from before take v1.
--- Row-level security binds the owner too (FORCE), so it is lifted for the rename only.
-ALTER TABLE platform.events ADD COLUMN schema_version text
-  CHECK (schema_version ~ '^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$');
-ALTER TABLE platform.events NO FORCE ROW LEVEL SECURITY;
-UPDATE platform.events SET type = type || '.v1', schema_version = '1.0.0' WHERE type !~ '\\.v[1-9][0-9]*$';
-ALTER TABLE platform.events FORCE ROW LEVEL SECURITY;
-UPDATE platform.consumer_groups g
-   SET types = (SELECT array_agg(CASE WHEN t ~ '\\.v[1-9][0-9]*$' THEN t ELSE t || '.v1' END ORDER BY o)
-                  FROM unnest(g.types) WITH ORDINALITY AS u (t, o))
- WHERE types IS NOT NULL;
-`,
-    },
-    {
-      id: '0006_tracked_events_and_retention',
-      sql: `
--- A tracked event (BusEvent.track): fanning it out, the system role publishes the bus's own facts
--- about it (bus.event_fanned_out, bus.delivery_dead_lettered), and it deletes events past
--- retention, so it may now insert and delete events too.
-ALTER TABLE platform.events ADD COLUMN tracked boolean NOT NULL DEFAULT false;
-GRANT INSERT, DELETE ON platform.events TO {{system}};
-GRANT USAGE ON SEQUENCE platform.events_seq_seq TO {{system}};
-CREATE INDEX events_by_age ON platform.events (created_at) WHERE fanned_out;
 `,
     },
   ],

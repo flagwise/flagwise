@@ -8,9 +8,8 @@ import { manualClock, type AppRef } from '@flagwise/kernel'
 import { createDatabase, createPgBus, migrate, subscribeCopy, withApps, type Database, type DocumentCopy, type PgBus } from '@flagwise/platform'
 import { createTestDatabase, schemaDrift, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { busPolicyEvents, pgPolicy, PRESETS } from '@flagwise/policy'
-import { createApp, pgTenancyStore, tenancyMigrations } from '@flagwise/tenancy'
+import { createApp, pgTenancyStore } from '@flagwise/tenancy'
 import { pgTriagePolicyCopy, triageTables } from '@flagwise/triage'
-import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ALL_MIGRATIONS } from '../src/migrations.ts'
 
@@ -81,34 +80,5 @@ describe.skipIf(!testDatabaseUrl)('policy copies on Postgres', () => {
     // The test mode has its own policy, still the default.
     expect(await versions(copies, { ...A, livemode: false })).toEqual({ classify: null, triage: null, cases: null })
     expect(await bus.deadLetters()).toEqual([])
-  })
-})
-
-describe.skipIf(!testDatabaseUrl)('upgrading to policy copies', () => {
-  let t: TestDatabase
-  let db: Database
-
-  beforeAll(async () => {
-    t = await createTestDatabase()
-    db = createDatabase({ appUrl: t.appUrl, systemUrl: t.systemUrl })
-  })
-  afterAll(async () => {
-    await db?.close()
-    await t?.drop()
-  })
-
-  it('starts every copy from the config the app had set, at version 1', async () => {
-    // A release before the policy service: the config in tenancy's tables.
-    await migrate(t.ownerUrl, [tenancyMigrations], t.roles)
-    await seedApp(db)
-    await withApps(db, { appIds: [A.appId], livemode: true }, (tx) =>
-      tx.execute(sql`INSERT INTO tenancy.llm_settings (app_id, livemode, rules_only, fallback_to_rules, updated_at) VALUES (${A.appId}, true, false, false, now())`),
-    )
-    await migrate(t.ownerUrl, ALL_MIGRATIONS, t.roles)
-    const copies = copiesOf(db)
-    const expected = { version: 1, document: { ...DEFAULT_POLICY, llm: { rulesOnly: false, fallbackToRules: false } } }
-    expect(await copies.classify.get(A)).toEqual(expected)
-    expect(await copies.triage.get(A)).toEqual(expected)
-    expect(await copies.cases.get(A)).toEqual(expected)
   })
 })

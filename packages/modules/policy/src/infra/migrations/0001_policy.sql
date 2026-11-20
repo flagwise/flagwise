@@ -1,14 +1,83 @@
--- The policy service's tables. An app's categories, action keys and LLM settings move here from
--- tenancy as they are, rows, row-level security and grants included. Each app's policy gets a head
--- per mode: the newest version, counting from 1, and the whole policy as of it, as policy.updated
--- carries it. An app that set anything before this release starts at version 1 with what it set.
+-- The policy service's tables: each app's categories, action keys and LLM settings per mode, and
+-- the head of its policy per mode: the newest version, counting from 1, and the whole policy as of
+-- it, as policy.updated carries it. App-scoped: row-level security limits the app role to the apps
+-- and mode of the current transaction.
 
 CREATE SCHEMA policy;
 GRANT USAGE ON SCHEMA policy TO {{app}};
 
-ALTER TABLE tenancy.action_keys SET SCHEMA policy;
-ALTER TABLE tenancy.categories SET SCHEMA policy;
-ALTER TABLE tenancy.llm_settings SET SCHEMA policy;
+-- Each app's action keys per mode, in the order the app lists them. A removed key keeps its row
+-- (removed_at set), so past decisions and their reversal still find it.
+
+CREATE TABLE policy.action_keys (
+  app_id text NOT NULL,
+  livemode boolean NOT NULL,
+  key text NOT NULL CHECK (key ~ '^[a-z][a-z0-9_]{0,63}$'),
+  -- Its place in the app's list, from 0; meaningful only while the key is not removed.
+  position integer NOT NULL CHECK (position >= 0),
+  label_en text NOT NULL CHECK (label_en <> ''),
+  label_id text CHECK (label_id <> ''),
+  description text,
+  reverse_key text,
+  auto_allowed boolean NOT NULL,
+  -- '*', global groups or global category ids.
+  categories text[] NOT NULL CHECK (cardinality(categories) > 0),
+  updated_at timestamptz NOT NULL,
+  removed_at timestamptz,
+  PRIMARY KEY (app_id, livemode, key),
+  CHECK (reverse_key IS NULL OR reverse_key <> key),
+  CHECK (NOT auto_allowed OR reverse_key IS NOT NULL)
+);
+
+ALTER TABLE policy.action_keys ENABLE ROW LEVEL SECURITY;
+ALTER TABLE policy.action_keys FORCE ROW LEVEL SECURITY;
+CREATE POLICY app ON policy.action_keys TO {{app}}
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+
+-- Each app's categories per mode, in the order its report screen lists them, and its LLM settings.
+-- A removed category keeps its row (removed_at set), so past cases still find its label.
+
+CREATE TABLE policy.categories (
+  app_id text NOT NULL,
+  livemode boolean NOT NULL,
+  key text NOT NULL CHECK (key ~ '^[a-z][a-z0-9_]{0,63}$'),
+  -- Its place in the app's list, from 0; meaningful only while the category is not removed.
+  position integer NOT NULL CHECK (position >= 0),
+  label_en text NOT NULL CHECK (label_en <> ''),
+  label_id text CHECK (label_id <> ''),
+  -- Global groups or global category ids; empty when unmapped.
+  maps_to text[] NOT NULL,
+  severity text CHECK (severity IN ('P0', 'P1', 'P2')),
+  sla_hours integer CHECK (sla_hours BETWEEN 1 AND 720),
+  enabled boolean NOT NULL,
+  updated_at timestamptz NOT NULL,
+  removed_at timestamptz,
+  PRIMARY KEY (app_id, livemode, key),
+  -- A custom category (own severity or SLA) has at most one global category.
+  CHECK ((severity IS NULL AND sla_hours IS NULL) OR cardinality(maps_to) <= 1)
+);
+
+CREATE TABLE policy.llm_settings (
+  app_id text NOT NULL,
+  livemode boolean NOT NULL,
+  rules_only boolean NOT NULL,
+  fallback_to_rules boolean NOT NULL,
+  updated_at timestamptz NOT NULL,
+  PRIMARY KEY (app_id, livemode)
+);
+
+ALTER TABLE policy.categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE policy.categories FORCE ROW LEVEL SECURITY;
+CREATE POLICY app ON policy.categories TO {{app}}
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+
+ALTER TABLE policy.llm_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE policy.llm_settings FORCE ROW LEVEL SECURITY;
+CREATE POLICY app ON policy.llm_settings TO {{app}}
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
 
 CREATE TABLE policy.heads (
   app_id text NOT NULL,
@@ -17,50 +86,11 @@ CREATE TABLE policy.heads (
   -- The whole policy: { categories, actionKeys, llm }, as in policy.updated.
   document jsonb NOT NULL,
   updated_at timestamptz NOT NULL,
-  PRIMARY KEY (app_id, livemode),
-  FOREIGN KEY (app_id) REFERENCES tenancy.apps (id)
+  PRIMARY KEY (app_id, livemode)
 );
 
 ALTER TABLE policy.heads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE policy.heads FORCE ROW LEVEL SECURITY;
 CREATE POLICY app ON policy.heads TO {{app}}
   USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
   WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
-
--- Forced row-level security hides every row from the owner running this migration, so it is lifted
--- while the heads are built.
-ALTER TABLE policy.action_keys NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE policy.categories NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE policy.llm_settings NO FORCE ROW LEVEL SECURITY;
-
-WITH set_up AS (
-  SELECT app_id, livemode FROM policy.categories WHERE removed_at IS NULL
-  UNION SELECT app_id, livemode FROM policy.action_keys WHERE removed_at IS NULL
-  UNION SELECT app_id, livemode FROM policy.llm_settings
-)
-INSERT INTO policy.heads (app_id, livemode, version, document, updated_at)
-SELECT a.app_id, a.livemode, 1,
-  jsonb_build_object(
-    'categories', COALESCE((
-      SELECT jsonb_agg(jsonb_build_object(
-          'key', c.key, 'label', jsonb_build_object('en', c.label_en, 'id', c.label_id), 'mapsTo', to_jsonb(c.maps_to),
-          'severity', c.severity, 'slaHours', c.sla_hours, 'enabled', c.enabled) ORDER BY c.position)
-        FROM policy.categories c
-       WHERE c.app_id = a.app_id AND c.livemode = a.livemode AND c.removed_at IS NULL), '[]'::jsonb),
-    'actionKeys', COALESCE((
-      SELECT jsonb_agg(jsonb_build_object(
-          'key', k.key, 'label', jsonb_build_object('en', k.label_en, 'id', k.label_id), 'description', k.description,
-          'reverseKey', k.reverse_key, 'autoAllowed', k.auto_allowed, 'categories', to_jsonb(k.categories)) ORDER BY k.position)
-        FROM policy.action_keys k
-       WHERE k.app_id = a.app_id AND k.livemode = a.livemode AND k.removed_at IS NULL), '[]'::jsonb),
-    'llm', COALESCE((
-      SELECT jsonb_build_object('rulesOnly', s.rules_only, 'fallbackToRules', s.fallback_to_rules)
-        FROM policy.llm_settings s
-       WHERE s.app_id = a.app_id AND s.livemode = a.livemode), '{"rulesOnly": false, "fallbackToRules": true}'::jsonb)
-  ),
-  now()
-FROM set_up a;
-
-ALTER TABLE policy.action_keys FORCE ROW LEVEL SECURITY;
-ALTER TABLE policy.categories FORCE ROW LEVEL SECURITY;
-ALTER TABLE policy.llm_settings FORCE ROW LEVEL SECURITY;
-ALTER TABLE policy.heads FORCE ROW LEVEL SECURITY;

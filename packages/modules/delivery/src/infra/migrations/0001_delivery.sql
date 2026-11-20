@@ -1,5 +1,39 @@
+-- Delivery's tables. App-scoped: row-level security limits the app role to the apps and mode of
+-- the current transaction.
+
+CREATE SCHEMA delivery;
+GRANT USAGE ON SCHEMA delivery TO {{app}};
+
+-- Action requests: one per action key of a decision, settled by the tenant. A moderator can answer
+-- failed requests with new ones: a replaced request stays failed and names the retry that
+-- answered it (replaced_by); the new requests name the retry that made them (retry_id).
+CREATE TABLE delivery.action_requests (
+  app_id text NOT NULL,
+  livemode boolean NOT NULL,
+  id text NOT NULL,
+  case_id text NOT NULL,
+  decision_id text NOT NULL,
+  -- Order within the decision, from 0.
+  position integer NOT NULL CHECK (position >= 0),
+  action_key text NOT NULL CHECK (action_key <> ''),
+  status text NOT NULL CHECK (status IN ('pending', 'confirmed', 'failed')),
+  fail_reason text,
+  retry_id text,
+  replaced_by text,
+  PRIMARY KEY (app_id, id),
+  UNIQUE (app_id, decision_id, position),
+  CHECK ((status = 'failed') = (fail_reason IS NOT NULL)),
+  CHECK (replaced_by IS NULL OR status = 'failed')
+);
+
+ALTER TABLE delivery.action_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE delivery.action_requests FORCE ROW LEVEL SECURITY;
+CREATE POLICY app ON delivery.action_requests TO {{app}}
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+
 -- Tenant webhooks: each app's signing secrets and endpoints per mode, the webhook events, one
--- delivery of each event per endpoint, and every attempt. App-scoped like action_requests. The
+-- delivery of each event per endpoint, and every attempt. The
 -- system role finds and leases due deliveries across apps (the sender) and reseals secrets when
 -- the master key rotates; it never sees an endpoint or an event body.
 
@@ -118,4 +152,3 @@ CREATE POLICY sender_lease ON delivery.webhook_deliveries FOR UPDATE TO {{system
 GRANT SELECT, UPDATE (sealed) ON delivery.webhook_secrets TO {{system}};
 CREATE POLICY reseal ON delivery.webhook_secrets FOR SELECT TO {{system}} USING (true);
 CREATE POLICY reseal_update ON delivery.webhook_secrets FOR UPDATE TO {{system}} USING (true) WITH CHECK (true);
-

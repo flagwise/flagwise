@@ -1,6 +1,7 @@
 -- The audit log: one hash chain per app and mode. The app role appends entries and reads its own
--- app's; it can change only an entry's personal data (pii, pii_salt), which erasure clears, and
--- never delete one. The chain covers seq, at, actor, action, target, facts and pii_digest.
+-- app's; it can change only what erasure clears (pii, pii_salt and the account id entries are
+-- searched by), and never delete one. The chain covers seq, at, actor, action, target, facts and
+-- pii_digest.
 
 CREATE SCHEMA audit;
 GRANT USAGE ON SCHEMA audit TO {{app}};
@@ -45,7 +46,9 @@ CREATE TABLE audit.checkpoints (
 );
 
 REVOKE UPDATE, DELETE ON audit.entries FROM {{app}};
-GRANT UPDATE (pii, pii_salt) ON audit.entries TO {{app}};
+-- Erasure clears an entry's personal data and replaces the account id it is searched by (neither
+-- is covered by the chain).
+GRANT UPDATE (pii, pii_salt, subject_external_id) ON audit.entries TO {{app}};
 REVOKE INSERT, UPDATE, DELETE ON audit.checkpoints FROM {{app}};
 
 ALTER TABLE audit.entries ENABLE ROW LEVEL SECURITY;
