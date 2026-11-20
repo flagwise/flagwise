@@ -30,6 +30,7 @@ export const ENFORCED: readonly string[] = [
   'erasure-acks', // item 9
   'service-routes', // renames and routes
   'no-org', // no org in the core
+  'auth-apps-split', // tenancy split into auth and apps
 ]
 
 export const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
@@ -324,6 +325,35 @@ function noOrg(): CheckResult {
   }
 }
 
+/**
+ * 11. Tenancy is split: auth (API keys, members, the Caller) and apps (the registry and its
+ * lifecycle). Apps publishes facts and never knows auth; auth keeps its own copy of the apps from
+ * app.created, app.deletion_requested and app.restored, in one consumer group so they stay in order.
+ */
+function authAppsSplit(): CheckResult {
+  const names = services()
+  const problems: string[] = []
+  if (names.includes('tenancy')) problems.push('a tenancy service still exists')
+  for (const n of ['auth', 'apps']) if (!names.includes(n)) problems.push(`no ${n} service`)
+  for (const file of sourceFiles(join(MODULES_DIR, 'apps', 'src'))) {
+    if (/@flagwise\/auth|\bauth\.[a-z_]+|api_?key/i.test(read(file))) problems.push(`${rel(file)} knows auth`)
+  }
+  const seen = readSeen()
+  if (seen.installs === 0) problems.push('no consumer groups seen yet: run the scenarios first')
+  else {
+    const facts = ['app.created.v1', 'app.deletion_requested.v1', 'app.restored.v1']
+    const copies = Object.entries(seen.groups).some(([g, types]) => g.startsWith('auth.') && facts.every((f) => (types ?? []).includes(f)))
+    if (!copies) problems.push(`no auth group subscribes to ${facts.join(', ')}`)
+  }
+  return {
+    id: 'auth-apps-split',
+    title: 'Tenancy is split into auth and apps; apps never knows auth, auth copies the apps from their facts',
+    items: 'split',
+    green: problems.length === 0,
+    detail: problems.length === 0 ? 'auth keeps its copy of the apps from app facts' : `${problems.length} problems: ${list(problems, 3)}`,
+  }
+}
+
 /** The services that read the policy: classify (categories, LLM settings), triage (category rules, fallback to rules), moderation (action keys). */
 const POLICY_READERS = ['classify', 'triage', 'moderation']
 
@@ -331,5 +361,5 @@ const POLICY_READERS = ['classify', 'triage', 'moderation']
 const GROUP_PREFIX: Readonly<Record<string, string>> = { moderation: 'cases', flagging: 'intake' }
 
 export async function runChecks(): Promise<readonly CheckResult[]> {
-  return [noServiceImports(), bootsAlone(), ownTablesOnly(), compositionOnly(), await eventCatalog(), erasureAcks(), await notificationClears(), policyCopies(), serviceRoutes(), noOrg()]
+  return [noServiceImports(), bootsAlone(), ownTablesOnly(), compositionOnly(), await eventCatalog(), erasureAcks(), await notificationClears(), policyCopies(), serviceRoutes(), noOrg(), authAppsSplit()]
 }

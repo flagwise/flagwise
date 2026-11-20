@@ -99,6 +99,9 @@ const SPECS: Readonly<Record<string, Spec>> = {
   'api_key.issued': { target: ['api_key', 'keyId'], facts: { scopes: 'scopes' } },
   'api_key.rotated': { target: ['api_key', 'keyId'], facts: { replaced_by: 'replacedBy', expires_at: 'expiresAt' } },
   'api_key.revoked': { target: ['api_key', 'keyId'], facts: {} },
+  'app.created': { target: ['app', 'appId'], facts: { name: 'name' } },
+  'app.deletion_requested': { target: ['app', 'appId'], facts: { purge_at: 'purgeAt' } },
+  'app.restored': { target: ['app', 'appId'], facts: {} },
 }
 
 /** The event types the audit log records. */

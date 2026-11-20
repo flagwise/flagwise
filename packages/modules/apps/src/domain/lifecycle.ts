@@ -1,4 +1,4 @@
-// App lifecycle: a deleted app is kept for a grace period, while it can be restored, and is then
+// An app's lifecycle: a deleted app is kept for a grace period, while it can be restored, and is then
 // due to be purged.
 
 /** How long a deleted app can be restored before it is due to be purged. */

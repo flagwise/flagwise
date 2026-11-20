@@ -2,7 +2,6 @@
 import { manualClock, type ManualClock, type AppRef } from '@flagwise/kernel'
 import { createDatabase, migrate, withApps, type Database } from '@flagwise/platform'
 import { createTestDatabase, schemaDrift, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
-import { createApp, pgTenancyStore, tenancyMigrations } from '@flagwise/tenancy'
 import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
@@ -21,19 +20,6 @@ import {
 } from '../src/index.ts'
 
 const A: AppRef = { appId: 'app_a', livemode: true }
-
-/** Creates app A and app B. */
-async function seedApps(db: Database, clock: ManualClock) {
-  let n = 0
-  const asApp = (appId: string, fn: (d: Parameters<typeof createApp>[0]) => Promise<void>) =>
-    withApps(db, { appIds: [appId], livemode: true }, (tx) => fn({ store: pgTenancyStore(tx), clock, newId: (p: string) => `${p}_${++n}` }))
-  await asApp('app_a', async (d) => {
-    await createApp(d, { id: 'app_a', name: 'Jane Doe Dating iOS' })
-  })
-  await asApp('app_b', async (d) => {
-    await createApp(d, { id: 'app_b', name: 'John Doe Market' })
-  })
-}
 
 const keysOf = (input: unknown[]): readonly ActionKey[] => {
   const parsed = parseActionKeys(input)
@@ -56,10 +42,9 @@ describe.skipIf(!testDatabaseUrl)('the policy on Postgres', () => {
 
   beforeAll(async () => {
     t = await createTestDatabase()
-    await migrate(t.ownerUrl, [tenancyMigrations, policyMigrations], t.roles)
+    await migrate(t.ownerUrl, [policyMigrations], t.roles)
     db = createDatabase({ appUrl: t.appUrl, systemUrl: t.systemUrl })
     clock = manualClock('2026-11-18T09:00:00Z')
-    await seedApps(db, clock)
   })
   afterAll(async () => {
     await db?.close()

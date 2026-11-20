@@ -54,7 +54,7 @@ export interface AppealRepository {
   update(record: AppealRecord, expectedVersion: number): Promise<void>
 }
 
-/** The reverse of each tenant action key (e.g. suspend_7d -> unsuspend), from tenancy config. */
+/** The reverse of each tenant action key (e.g. suspend_7d -> unsuspend), from the policy. */
 export interface ReverseKeys {
   reverseOf(appRef: AppRef, actionKey: string): Promise<string | null>
 }

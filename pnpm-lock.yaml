@@ -29,9 +29,15 @@ importers:
       '@flagwise/analytics':
         specifier: workspace:*
         version: link:../../packages/modules/analytics
+      '@flagwise/apps':
+        specifier: workspace:*
+        version: link:../../packages/modules/apps
       '@flagwise/audit':
         specifier: workspace:*
         version: link:../../packages/modules/audit
+      '@flagwise/auth':
+        specifier: workspace:*
+        version: link:../../packages/modules/auth
       '@flagwise/classify':
         specifier: workspace:*
         version: link:../../packages/modules/classify
@@ -71,9 +77,6 @@ importers:
       '@flagwise/scoring':
         specifier: workspace:*
         version: link:../../packages/modules/scoring
-      '@flagwise/tenancy':
-        specifier: workspace:*
-        version: link:../../packages/modules/tenancy
       '@flagwise/triage':
         specifier: workspace:*
         version: link:../../packages/modules/triage
@@ -101,6 +104,21 @@ importers:
         specifier: workspace:*
         version: link:../../kernel
 
+  packages/modules/apps:
+    dependencies:
+      '@flagwise/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
+      '@flagwise/kernel':
+        specifier: workspace:*
+        version: link:../../kernel
+      '@flagwise/platform':
+        specifier: workspace:*
+        version: link:../../platform
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)
+
   packages/modules/audit:
     dependencies:
       '@flagwise/contracts':
@@ -118,6 +136,21 @@ importers:
       hono:
         specifier: ^4.13.16
         version: 4.13.16
+
+  packages/modules/auth:
+    dependencies:
+      '@flagwise/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
+      '@flagwise/kernel':
+        specifier: workspace:*
+        version: link:../../kernel
+      '@flagwise/platform':
+        specifier: workspace:*
+        version: link:../../platform
+      drizzle-orm:
+        specifier: ^0.45.4
+        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)
 
   packages/modules/classify:
     dependencies:
@@ -229,10 +262,6 @@ importers:
       hono:
         specifier: ^4.13.16
         version: 4.13.16
-    devDependencies:
-      '@flagwise/tenancy':
-        specifier: workspace:*
-        version: link:../tenancy
 
   packages/modules/privacy:
     dependencies:
@@ -257,24 +286,6 @@ importers:
       '@flagwise/kernel':
         specifier: workspace:*
         version: link:../../kernel
-
-  packages/modules/tenancy:
-    dependencies:
-      '@flagwise/contracts':
-        specifier: workspace:*
-        version: link:../../contracts
-      '@flagwise/kernel':
-        specifier: workspace:*
-        version: link:../../kernel
-      '@flagwise/platform':
-        specifier: workspace:*
-        version: link:../../platform
-      drizzle-orm:
-        specifier: ^0.45.4
-        version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)
-      hono:
-        specifier: ^4.13.16
-        version: 4.13.16
 
   packages/modules/triage:
     dependencies:

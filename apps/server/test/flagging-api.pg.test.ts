@@ -1,4 +1,4 @@
-// The flagging API end to end: API keys from the tenancy registry, flagging on Postgres and object
+// The flagging API end to end: API keys from auth, flagging on Postgres and object
 // storage, and the cases module putting reports in cases through the bus.
 // Runs against a real Postgres (TEST_DATABASE_URL) and S3-compatible store (TEST_S3_URL); skipped without them.
 import { manualClock, type ManualClock } from '@flagwise/kernel'
@@ -9,8 +9,7 @@ import { moderationMigrations, pgCaseRepository, pgModerationPolicyCopy } from '
 import { deliveryMigrations, pgDeliveryDeps } from '@flagwise/delivery'
 import { flaggingMigrations, pgFlaggingRunner, subscribeFlagging, type FlaggingDeps } from '@flagwise/flagging'
 import { pgTriageDeps, triageMigrations } from '@flagwise/triage'
-import { createApp as createOrgApp, issueApiKey, pgTenancyStore, revokeApiKey, tenancyMigrations } from '@flagwise/tenancy'
-import { sql } from 'drizzle-orm'
+import { authMigrations, issueApiKey, pgAppCopies, pgKeyStore, revokeApiKey, type KeyDeps } from '@flagwise/auth'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createApp, pgKeyResolver, type ApiDeps } from '../src/index.ts'
 import { composeServices } from './support/services.ts'
@@ -49,15 +48,17 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
   beforeAll(async () => {
     t = await createTestDatabase()
     bucket = await createTestBucket()
-    await migrate(t.ownerUrl, [tenancyMigrations, flaggingMigrations, moderationMigrations, deliveryMigrations, triageMigrations], t.roles)
+    await migrate(t.ownerUrl, [authMigrations, flaggingMigrations, moderationMigrations, deliveryMigrations, triageMigrations], t.roles)
     db = createDatabase({ appUrl: t.appUrl, systemUrl: t.systemUrl })
     bus = createPgBus(db, { retryDelayMs: () => 0, contract: eventContract })
     clock = manualClock(T0)
 
-    const registry = <R>(appIds: string[], fn: (d: Parameters<typeof createOrgApp>[0]) => Promise<R>) =>
-      withApps(db, { appIds, livemode: true }, (tx) => fn({ store: pgTenancyStore(tx), clock, newId: (p) => `${p}_${++n}` }))
+    // Auth's copy of the apps, as it keeps it from the apps service's facts.
+    const apps = pgAppCopies(db)
+    for (const id of ['app_a', 'app_b', 'app_gone']) await apps.created(id)
+    const registry = <R>(appIds: string[], fn: (d: KeyDeps) => Promise<R>) =>
+      withApps(db, { appIds, livemode: true }, (tx) => fn({ store: pgKeyStore(tx), clock, newKeyId: () => `key_${++n}` }))
     await registry(['app_a', 'app_b', 'app_gone'], async (d) => {
-      for (const id of ['app_a', 'app_b', 'app_gone']) await createOrgApp(d, { id, name: id })
       const issue = async (appId: string, livemode: boolean, scopes: string[]) => (await issueApiKey(d, { appId, livemode, scopes })).key
       keys.live = await issue('app_a', true, ['flagging'])
       keys.test = await issue('app_a', false, ['flagging'])
@@ -68,7 +69,7 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
       await revokeApiKey(d, { appId: 'app_a', keyId: revoked.record.id })
       keys.revoked = revoked.key
     })
-    await withApps(db, { appIds: ['app_gone'], livemode: true }, (tx) => tx.execute(sql`UPDATE tenancy.apps SET deleted_at = now() WHERE id = 'app_gone'`))
+    await apps.setDeletedAt('app_gone', clock.now())
 
     const flagging: FlaggingDeps = { run: pgFlaggingRunner(db, bus), storage: bucket.storage, clock, newReportId: () => `rpt_${++n}` }
     composeServices({

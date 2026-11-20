@@ -2,7 +2,7 @@
 
 Open-source (Apache-2.0) report triage backend for apps with user-generated content. An in-app user report goes in; an LLM classifies the case once, deterministic rules triage it, a human decides it, and a signed webhook asks your backend to carry out the sanction. Notices, appeals, audit log, erasure and DSA export are built in.
 
-Status: early development, not usable yet. The core rules are implemented and tested: case lifecycle, triage, scoring, webhooks and retries, privacy (identifier hashing, erasure, retention, evidence packages), PII redaction, tenancy, audit chain, notifications, analytics and disputes (appeals), plus an in-memory event bus that runs the report-to-action flow end to end. Not built yet: Postgres persistence, the HTTP API (only `/healthz` and `/readyz` exist), LLM adapters, workers and the dashboard.
+Status: early development, not usable yet. The core rules are implemented and tested: case lifecycle, triage, scoring, webhooks and retries, privacy (identifier hashing, erasure, retention, evidence packages), PII redaction, apps and auth (API keys), audit chain, notifications, analytics and disputes (appeals), plus an in-memory event bus that runs the report-to-action flow end to end. Not built yet: Postgres persistence, the HTTP API (only `/healthz` and `/readyz` exist), LLM adapters, workers and the dashboard.
 
 ## Layout
 
@@ -14,7 +14,7 @@ packages/
   plugin-api/           the seam cloud/Pro plugins implement
   platform/             drivers: event bus, storage, rate limit; db + unit of work; outbox
   modules/              one package and one Postgres schema per module:
-    tenancy policy flagging classify triage moderation scoring
+    apps auth policy flagging classify triage moderation scoring
     delivery disputes privacy notifications audit analytics
 spec/                   MIT: openapi.json + webhook JSON Schemas, generated per release
 .env.example            server configuration

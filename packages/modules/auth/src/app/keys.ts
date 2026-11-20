@@ -1,14 +1,14 @@
-// The tenancy registry: the install's apps and their API keys. Keys are managed inside a tenant
-// transaction; resolving a key on an incoming request goes through the key directory, which the
-// system role reads because no tenant is known until the key is resolved.
+// API keys: issued, rotated and revoked inside an app transaction; resolving a key on an incoming
+// request goes through the key directory, which the system role reads because no app is known
+// until the key is resolved. Auth keeps its own copy of the apps (from the apps service's facts),
+// so a key is issued only for an app that exists and a deleted app's keys answer 410.
 
 import { FlagwiseError, type ApiKeyScope, type Clock, type Caller, type AppRef } from '@flagwise/kernel'
 import { generateApiKey, isKeyActive, maskApiKey, normalizeScopes, parseApiKey, rotationExpiry, verifyApiKey } from '../domain/api-keys.ts'
 
-export interface App {
+/** Auth's copy of an app: whether it exists and when it was deleted. */
+export interface AppCopy {
   readonly id: string
-  readonly name: string
-  readonly createdAt: Date
   readonly deletedAt: Date | null
 }
 
@@ -25,10 +25,9 @@ export interface ApiKeyRecord {
   readonly revokedAt: Date | null
 }
 
-/** Registry access inside one app transaction: every method sees only its apps. */
-export interface TenancyStore {
-  insertApp(app: App): Promise<void>
-  findApp(appId: string): Promise<App | null>
+/** Key storage inside one app transaction: every method sees only its apps. */
+export interface KeyStore {
+  findApp(appId: string): Promise<AppCopy | null>
   /** False, writing nothing, when another key already has this lookup prefix. */
   insertApiKey(key: ApiKeyRecord): Promise<boolean>
   findApiKey(appId: string, keyId: string): Promise<ApiKeyRecord | null>
@@ -39,13 +38,21 @@ export interface TenancyStore {
   endApiKey(appId: string, keyId: string, end: { revokedAt: Date } | { expiresAt: Date }, now: Date): Promise<boolean>
 }
 
+/** Auth's copy of the apps, written from the apps service's facts; every write can be repeated. */
+export interface AppCopies {
+  /** An app was created: recorded as active unless auth already has it. */
+  created(appId: string): Promise<void>
+  /** An app was deleted (`deletedAt`) or restored (null). */
+  setDeletedAt(appId: string, deletedAt: Date | null): Promise<void>
+}
+
 /** What resolving a key needs: the key, and whether its app is deleted. */
 export interface DirectoryEntry {
   readonly key: ApiKeyRecord
   readonly appDeletedAt: Date | null
 }
 
-/** Read by the system role: finds a key by its lookup prefix across every tenant. */
+/** Read by the system role: finds a key by its lookup prefix across every app. */
 export interface KeyDirectory {
   findByLookup(lookup: string): Promise<DirectoryEntry | null>
 }
@@ -56,32 +63,23 @@ const refOf = (k: ApiKeyRecord): AppRef => ({ appId: k.appId, livemode: k.livemo
 /** The key's lifetime in the form isKeyActive takes. */
 const lifetime = (k: ApiKeyRecord) => ({ createdAt: k.createdAt, revokedAt: k.revokedAt ?? undefined, expiresAt: k.expiresAt ?? undefined })
 
-/** What tenancy publishes when a key changes; ids and scopes only, never a key. */
-export type TenancyEvent =
+/** What auth publishes when a key changes; ids and scopes only, never a key. */
+export type KeyEvent =
   | { readonly type: 'api_key.issued'; readonly appRef: AppRef; readonly keyId: string; readonly scopes: readonly ApiKeyScope[]; readonly occurredAt: Date }
   | { readonly type: 'api_key.rotated'; readonly appRef: AppRef; readonly keyId: string; readonly replacedBy: string; readonly expiresAt: Date; readonly occurredAt: Date }
   | { readonly type: 'api_key.revoked'; readonly appRef: AppRef; readonly keyId: string; readonly occurredAt: Date }
 
-export interface TenancyEventPublisher {
+export interface KeyEventPublisher {
   /** Publishes in the same transaction as the change. */
-  publish(event: TenancyEvent): Promise<void>
+  publish(event: KeyEvent): Promise<void>
 }
 
-export interface RegistryDeps {
-  readonly store: TenancyStore
+export interface KeyDeps {
+  readonly store: KeyStore
   readonly clock: Clock
-  readonly newId: (prefix: 'app' | 'key') => string
+  readonly newKeyId: () => string
   /** Where key changes are published (for the audit log); left out, nothing is. */
-  readonly events?: TenancyEventPublisher
-}
-
-/** Creates an app. */
-export async function createApp(deps: RegistryDeps, input: { readonly id?: string; readonly name: string }): Promise<App> {
-  const name = input.name.trim()
-  if (!name) throw new FlagwiseError('invalid_request', 'An app needs a name')
-  const app: App = { id: input.id ?? deps.newId('app'), name, createdAt: deps.clock.now(), deletedAt: null }
-  await deps.store.insertApp(app)
-  return app
+  readonly events?: KeyEventPublisher
 }
 
 export interface IssuedApiKey {
@@ -97,7 +95,7 @@ export interface IssuedApiKey {
  * 'not_found' for an app that does not exist or is deleted.
  */
 export async function issueApiKey(
-  deps: RegistryDeps,
+  deps: KeyDeps,
   input: { readonly appId: string; readonly livemode: boolean; readonly scopes: readonly string[] },
 ): Promise<IssuedApiKey> {
   const scopes = normalizeScopes(input.scopes)
@@ -110,7 +108,7 @@ export async function issueApiKey(
     const generated = generateApiKey(input.livemode)
     const record: ApiKeyRecord = {
       appId: input.appId,
-      id: deps.newId('key'),
+      id: deps.newKeyId(),
       livemode: input.livemode,
       lookup: generated.lookup,
       hash: generated.hash,
@@ -133,7 +131,7 @@ export async function issueApiKey(
  * exist or no longer works.
  */
 export async function rotateApiKey(
-  deps: RegistryDeps,
+  deps: KeyDeps,
   input: { readonly appId: string; readonly keyId: string; readonly overlapMs: number },
 ): Promise<IssuedApiKey> {
   const now = deps.clock.now()
@@ -148,7 +146,7 @@ export async function rotateApiKey(
 }
 
 /** Revokes a key at once. 'not_found' when the key does not exist; revoking an ended key changes nothing. */
-export async function revokeApiKey(deps: RegistryDeps, input: { readonly appId: string; readonly keyId: string }): Promise<void> {
+export async function revokeApiKey(deps: KeyDeps, input: { readonly appId: string; readonly keyId: string }): Promise<void> {
   const now = deps.clock.now()
   const key = await deps.store.findApiKey(input.appId, input.keyId)
   if (!key) throw new FlagwiseError('not_found', `No API key ${input.keyId}`)
@@ -165,7 +163,7 @@ export type KeyResolution =
   | { readonly ok: false; readonly reason: 'malformed' | 'unknown' | 'inactive' | 'app_deleted' }
 
 /**
- * Resolves the bearer key of a request to its tenant: the key's one app, its mode and an
+ * Resolves the bearer key of a request to its caller: the key's one app, its mode and an
  * API-key actor with the key's scopes. A key whose hash does not match is 'unknown', the same as a
  * key that does not exist, so a caller cannot tell a guessed prefix from a real one.
  */

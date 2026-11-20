@@ -8,7 +8,6 @@ import { manualClock, type AppRef } from '@flagwise/kernel'
 import { createDatabase, createPgBus, migrate, subscribeCopy, withApps, type Database, type DocumentCopy, type PgBus } from '@flagwise/platform'
 import { createTestDatabase, schemaDrift, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { busPolicyEvents, pgPolicy, PRESETS } from '@flagwise/policy'
-import { createApp, pgTenancyStore } from '@flagwise/tenancy'
 import { pgTriagePolicyCopy, triageTables } from '@flagwise/triage'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { ALL_MIGRATIONS } from '../src/migrations.ts'
@@ -16,11 +15,6 @@ import { ALL_MIGRATIONS } from '../src/migrations.ts'
 const A: AppRef = { appId: 'app_jane', livemode: true }
 const clock = manualClock('2026-11-18T09:00:00Z')
 
-const seedApp = (db: Database) =>
-  withApps(db, { appIds: [A.appId], livemode: true }, async (tx) => {
-    const deps = { store: pgTenancyStore(tx), clock, newId: (p: string) => `${p}_1` }
-    await createApp(deps, { id: A.appId, name: 'Jane Doe Dating iOS' })
-  })
 interface PolicyCopies {
   readonly classify: DocumentCopy<Policy>
   readonly triage: DocumentCopy<Policy>
@@ -53,7 +47,6 @@ describe.skipIf(!testDatabaseUrl)('policy copies on Postgres', () => {
     copies = copiesOf(db)
     subscribePolicyCopies(bus, copies)
     await bus.drain()
-    await seedApp(db)
   })
   afterAll(async () => {
     await bus?.stop()

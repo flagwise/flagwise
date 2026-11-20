@@ -11,7 +11,7 @@ import { deliveryRoutes, type ActionRequestRoutesDeps } from '@flagwise/delivery
 import { flaggingRoutes, type FlaggingDeps } from '@flagwise/flagging'
 import { policyRoutes, type PolicyRoutesDeps } from '@flagwise/policy'
 import { privacyRoutes, type PrivacyRoutesDeps } from '@flagwise/privacy'
-import { pgKeyDirectory, resolveApiKey, type KeyResolution } from '@flagwise/tenancy'
+import { pgKeyDirectory, resolveApiKey, type KeyResolution } from '@flagwise/auth'
 import { Hono, type Context } from 'hono'
 
 export interface ApiDeps {

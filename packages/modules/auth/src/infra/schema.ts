@@ -1,14 +1,13 @@
-// Drizzle definitions of the tenancy tables; they must match migrations/ (a test checks it).
+// Drizzle definitions of the auth tables; they must match migrations/ (a test checks it).
 
 import { boolean, pgSchema, text, timestamp } from 'drizzle-orm/pg-core'
 
-const schema = pgSchema('tenancy')
+const schema = pgSchema('auth')
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' })
 
+/** Auth's copy of the apps. */
 export const appsTable = schema.table('apps', {
   id: text('id').notNull(),
-  name: text('name').notNull(),
-  createdAt: ts('created_at').notNull(),
   deletedAt: ts('deleted_at'),
 })
 
@@ -24,4 +23,4 @@ export const apiKeysTable = schema.table('api_keys', {
   revokedAt: ts('revoked_at'),
 })
 
-export const tenancyTables = [appsTable, apiKeysTable] as const
+export const authTables = [appsTable, apiKeysTable] as const

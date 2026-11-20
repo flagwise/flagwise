@@ -1,7 +1,9 @@
 // Puts the server together from its config: the database, the event bus, object storage, the
 // public API (MODE api or all) and the event handlers (MODE worker or all).
 
+import { subscribeApps } from '@flagwise/apps'
 import { auditReads, pgAuditDeps, subscribeAudit } from '@flagwise/audit'
+import { pgAppCopies, subscribeAuth } from '@flagwise/auth'
 import { moderationService, pgCaseReads, pgModerationDeps, subscribeModeration, type ModerationRoutesDeps } from '@flagwise/moderation'
 import { classifyDepsWithPolicy, pgClassifyPolicyCopy, pgClassifyRunner, subscribeClassify, type ClassifyDeps } from '@flagwise/classify'
 import { eventContract } from '@flagwise/contracts'
@@ -39,7 +41,6 @@ import {
 import type { FlagwisePlugin } from '@flagwise/plugin-api'
 import { busPolicyEvents, pgPolicy, subscribePolicy } from '@flagwise/policy'
 import { pgPrivacyDeps, privacyService, subscribePrivacy } from '@flagwise/privacy'
-import { subscribeTenancy } from '@flagwise/tenancy'
 import { pgTriageDeps, subscribeTriage } from '@flagwise/triage'
 import { sql } from 'drizzle-orm'
 import { createApp, type App } from './app.ts'
@@ -153,7 +154,8 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
   subscribeAudit(bus, auditLog)
   subscribePrivacy(bus, privacy)
   subscribePolicy(bus, { clock })
-  subscribeTenancy(bus, { clock })
+  subscribeApps(bus, { clock })
+  subscribeAuth(bus, { apps: pgAppCopies(db), clock })
 
   const caseWork = moderationService(moderation)
   const cases: ModerationRoutesDeps = { read: pgCaseReads(db), ...caseWork, clock }

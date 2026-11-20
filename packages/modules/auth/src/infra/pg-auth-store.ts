@@ -1,13 +1,14 @@
-// The tenancy registry on Postgres: the store works inside an app transaction (row-level
-// security limits it to its apps); the key directory reads as the system role.
+// Auth on Postgres: the key store works inside an app transaction (row-level security limits it to
+// its apps); the key directory reads as the system role; the app copies each write in their own app
+// transaction.
 
 import type { ApiKeyScope } from '@flagwise/kernel'
-import { loadMigrations, type MigrationSet, type SystemTx, type AppTx } from '@flagwise/platform'
+import { loadMigrations, withApps, type AppTx, type Database, type MigrationSet, type SystemTx } from '@flagwise/platform'
 import { and, eq, gt, isNull, lt, or, sql } from 'drizzle-orm'
-import type { ApiKeyRecord, KeyDirectory, TenancyStore } from '../app/registry.ts'
+import type { ApiKeyRecord, AppCopies, KeyDirectory, KeyStore } from '../app/keys.ts'
 import { apiKeysTable as keys, appsTable as apps } from './schema.ts'
 
-export const tenancyMigrations: MigrationSet = loadMigrations('tenancy', new URL('./migrations/', import.meta.url))
+export const authMigrations: MigrationSet = loadMigrations('auth', new URL('./migrations/', import.meta.url))
 
 const toKey = (r: typeof keys.$inferSelect): ApiKeyRecord => ({
   appId: r.appId,
@@ -21,14 +22,10 @@ const toKey = (r: typeof keys.$inferSelect): ApiKeyRecord => ({
   revokedAt: r.revokedAt,
 })
 
-/** A TenancyStore on the given app transaction; reads and writes also filter by app. */
-export function pgTenancyStore(tx: AppTx): TenancyStore {
+/** A KeyStore on the given app transaction; reads and writes also filter by app. */
+export function pgKeyStore(tx: AppTx): KeyStore {
   const keyOf = (appId: string, keyId: string) => and(eq(keys.appId, appId), eq(keys.id, keyId))
   return {
-    async insertApp(app) {
-      await tx.insert(apps).values(app)
-    },
-
     async findApp(appId) {
       const [row] = await tx.select().from(apps).where(eq(apps.id, appId))
       return row ?? null
@@ -82,3 +79,12 @@ export function pgKeyDirectory(tx: SystemTx): KeyDirectory {
   }
 }
 
+/** Auth's copy of the apps on `db`; each write is its own transaction for that app. */
+export function pgAppCopies(db: Database): AppCopies {
+  const forApp = (appId: string, fn: (tx: AppTx) => Promise<unknown>) => withApps(db, { appIds: [appId], livemode: true }, async (tx) => void (await fn(tx)))
+  return {
+    created: (appId) => forApp(appId, (tx) => tx.insert(apps).values({ id: appId, deletedAt: null }).onConflictDoNothing()),
+    setDeletedAt: (appId, deletedAt) =>
+      forApp(appId, (tx) => tx.insert(apps).values({ id: appId, deletedAt }).onConflictDoUpdate({ target: apps.id, set: { deletedAt } })),
+  }
+}

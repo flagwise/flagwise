@@ -20,8 +20,5 @@
   "scripts": {
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
-  },
-  "devDependencies": {
-    "@flagwise/tenancy": "workspace:*"
   }
 }

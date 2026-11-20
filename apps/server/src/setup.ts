@@ -19,7 +19,8 @@ import {
 } from '@flagwise/delivery'
 import type { AppRef } from '@flagwise/kernel'
 import { busPolicyEvents, pgPolicy, PRESETS, type PresetName } from '@flagwise/policy'
-import { busTenancyEvents, createApp as createRegistryApp, issueApiKey, pgTenancyStore, type App } from '@flagwise/tenancy'
+import { busAppEvents, createApp as createRegisteredApp, pgAppStore, type App } from '@flagwise/apps'
+import { busKeyEvents, issueApiKey, pgKeyStore } from '@flagwise/auth'
 import { envReader, type Env } from './config/env.ts'
 import type { ServerConfig } from './config/server.ts'
 import { ALL_MIGRATIONS } from './migrations.ts'
@@ -134,21 +135,23 @@ async function bootstrapAsOperator(config: ServerConfig, input: BootstrapInput, 
     await server.bus.drain()
     const appId = newId('app', { clock })
     const scopes = ['flagging', 'actions']
+    const app = await withApps(server.db, { appIds: [appId], livemode: true }, (tx) =>
+      createRegisteredApp(
+        { store: pgAppStore(tx), clock, newAppId: () => appId, events: busAppEvents(server.bus, tx, () => newId('evt', { clock })) },
+        { id: appId, name: input.appName },
+      ),
+    )
+    // Auth keeps its own copy of the app, from app.created: deliver it before issuing the keys.
+    await server.bus.drain()
     // Each mode in its own transaction: a key's event is written in its own mode.
-    const live = await withApps(server.db, { appIds: [appId], livemode: true }, async (tx) => {
-      const deps = registryDeps(server, tx, clock)
-      const app = await createRegistryApp(deps, { id: appId, name: input.appName })
-      return { app, key: (await issueApiKey(deps, { appId, livemode: true, scopes })).key }
-    })
-    const test = await withApps(server.db, { appIds: [appId], livemode: false }, async (tx) => {
-      return issueApiKey(registryDeps(server, tx, clock), { appId, livemode: false, scopes })
-    })
+    const live = await withApps(server.db, { appIds: [appId], livemode: true }, (tx) => issueApiKey(keyDeps(server, tx, clock), { appId, livemode: true, scopes }))
+    const test = await withApps(server.db, { appIds: [appId], livemode: false }, (tx) => issueApiKey(keyDeps(server, tx, clock), { appId, livemode: false, scopes }))
     // The preset is the policy service's to apply, in its own transaction per mode.
     if (input.preset) {
       const policy = pgPolicy(server.db, { clock, events: (tx) => busPolicyEvents(server.bus, tx, () => newId('evt', { clock })) })
       for (const livemode of [true, false]) await policy.replaceCategories({ appId, livemode }, PRESETS[input.preset])
     }
-    return { app: live.app, liveKey: live.key, testKey: test.key }
+    return { app, liveKey: live.key, testKey: test.key }
   } finally {
     await server.stop()
   }
@@ -184,7 +187,7 @@ async function createKeyAsOperator(
   try {
     await server.prepare()
     return await withApps(server.db, { appIds: [input.appId], livemode: input.livemode }, async (tx) => {
-      const issued = await issueApiKey(registryDeps(server, tx, clock), { appId: input.appId, livemode: input.livemode, scopes: input.scopes })
+      const issued = await issueApiKey(keyDeps(server, tx, clock), { appId: input.appId, livemode: input.livemode, scopes: input.scopes })
       return { key: issued.key, id: issued.record.id, scopes: issued.record.scopes, livemode: issued.record.livemode }
     })
   } finally {
@@ -198,13 +201,13 @@ const OPERATOR = { type: 'operator', id: 'cli' } as const
 /** Runs `fn` with the operator as the actor of every event it publishes. */
 const asOperator = <T>(fn: () => Promise<T>): Promise<T> => runInRequest({ actor: OPERATOR }, fn)
 
-/** The registry's deps on `tx`, publishing key changes in it. */
-function registryDeps(server: Server, tx: AppTx, clock: Clock) {
+/** Auth's key deps on `tx`, publishing key changes in it. */
+function keyDeps(server: Server, tx: AppTx, clock: Clock) {
   return {
-    store: pgTenancyStore(tx),
+    store: pgKeyStore(tx),
     clock,
-    newId: (prefix: 'app' | 'key') => newId(prefix, { clock }),
-    events: busTenancyEvents(server.bus, tx, () => newId('evt', { clock })),
+    newKeyId: () => newId('key', { clock }),
+    events: busKeyEvents(server.bus, tx, () => newId('evt', { clock })),
   }
 }
 
