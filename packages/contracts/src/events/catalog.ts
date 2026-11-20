@@ -292,18 +292,10 @@ const SPECS = [
   }),
   spec({
     name: 'api_key.issued',
-    major: 1,
-    version: '1.0.0',
-    owner: 'auth',
-    meaning: 'An API key was issued with its scopes.',
-    schema: z.strictObject({ keyId: id, scopes: z.array(z.enum(['ingest', 'actions', 'admin'])), occurredAt: time }),
-  }),
-  spec({
-    name: 'api_key.issued',
     major: 2,
     version: '2.0.0',
     owner: 'auth',
-    meaning: 'An API key was issued with its scopes; the scope for sending reports is named flagging, after its service (ingest in v1).',
+    meaning: 'An API key was issued with its scopes (major 2: the scope for sending reports is flagging, named ingest in major 1, which is no longer published).',
     schema: z.strictObject({ keyId: id, scopes: z.array(z.enum(['flagging', 'actions', 'admin'])), occurredAt: time }),
   }),
   spec({

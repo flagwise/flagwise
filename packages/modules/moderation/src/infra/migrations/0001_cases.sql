@@ -45,21 +45,16 @@ CREATE INDEX cases_queue ON cases.cases (app_id, livemode, state);
 -- An account's cases, latest first.
 CREATE INDEX cases_by_subject_recent ON cases.cases (app_id, livemode, subject_external_id, opened_at DESC, id DESC);
 
--- The reports of each case. The account columns are what each report said, kept only until its
--- account is erased; moderation no longer reads them.
+-- The reports of each case, in the order they joined it.
 CREATE TABLE cases.case_reports (
   app_id text NOT NULL,
   livemode boolean NOT NULL,
   report_id text NOT NULL,
   case_id text NOT NULL,
   position integer NOT NULL CHECK (position >= 0),
-  reporter_external_id text,
-  reporter_account_created_at timestamptz,
-  reported_account_created_at timestamptz,
   PRIMARY KEY (app_id, report_id),
   UNIQUE (app_id, case_id, position),
-  FOREIGN KEY (app_id, case_id) REFERENCES cases.cases (app_id, id) ON DELETE CASCADE,
-  CHECK (reporter_external_id IS NOT NULL OR (reporter_account_created_at IS NULL AND reported_account_created_at IS NULL))
+  FOREIGN KEY (app_id, case_id) REFERENCES cases.cases (app_id, id) ON DELETE CASCADE
 );
 
 -- A decision, with the reports it was made on: the ones shown to the moderator.

@@ -9,7 +9,7 @@ import { scopeOfApp, withApps } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
-import { bootstrap, createKey, createServer, initDatabaseFromEnv, migrateFromEnv, serverConfigFromEnv, type Bootstrapped, type Server } from '../src/index.ts'
+import { bootstrap, createKey, createServer, deleteApp, initDatabaseFromEnv, migrateFromEnv, restoreApp, serverConfigFromEnv, type Bootstrapped, type Server } from '../src/index.ts'
 
 /** Sends a report from the key, runs the handlers, and returns the case it landed in. */
 async function reportToCase(server: Server, installed: Bootstrapped) {
@@ -80,6 +80,25 @@ describe.skipIf(!testDatabaseUrl)('the install path on Postgres', () => {
     // The reporter's own category is outside the taxonomy, so triage treats it as other.
     expect(opened).toMatchObject({ state: 'open', triage: { severity: 'P2' } })
     expect(await server.bus.deadLetters()).toEqual([])
+  })
+
+  it('deletes an app from the CLI, so its keys answer 410, and restores it', async () => {
+    const config = await serverConfigFromEnv(env)
+    const flag = () =>
+      server.app.http.request('/v1/flagging/reports', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${installed.liveKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ reporter: { external_id: 'u_jane_doe' }, reported: { external_id: 'u_john_doe' }, category: 'spam', evidence: { kind: 'message', content: ['buy now'] } }),
+      })
+    const deleted = await deleteApp(config, installed.app.id)
+    expect(deleted.deletedAt).not.toBeNull()
+    // Auth stops the keys once the worker delivers app.deletion_requested.
+    await server.bus.drain()
+    expect((await flag()).status).toBe(410)
+    expect((await restoreApp(config, installed.app.id)).deletedAt).toBeNull()
+    await server.bus.drain()
+    expect((await flag()).status).toBe(202)
+    await expect(deleteApp(config, 'app_unknown')).rejects.toThrow('No app app_unknown')
   })
 })
 

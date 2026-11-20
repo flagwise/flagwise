@@ -219,18 +219,7 @@ export function pgCaseRepository(tx: AppTx): CaseRepository & CaseReader {
           .set({ publicReason: null, internalNote: null })
           .where(and(eq(decisionsTable.appId, appRef.appId), eq(decisionsTable.livemode, appRef.livemode), inArray(decisionsTable.caseId, ids)))
       }
-      const reports = await tx
-        .update(caseReportsTable)
-        .set({ reporterExternalId: null, reporterAccountCreatedAt: null, reportedAccountCreatedAt: null })
-        .where(
-          and(
-            reportsOf(appRef),
-            isNotNull(caseReportsTable.reporterExternalId),
-            ids.length > 0 ? or(eq(caseReportsTable.reporterExternalId, externalId), inArray(caseReportsTable.caseId, ids)) : eq(caseReportsTable.reporterExternalId, externalId),
-          ),
-        )
-        .returning({ id: caseReportsTable.reportId })
-      return ids.length + reports.length
+      return ids.length
     },
 
     async addActionFailure(appRef, caseId, actionRequestId, at) {
@@ -265,9 +254,6 @@ export function pgCaseRepository(tx: AppTx): CaseRepository & CaseReader {
 }
 
 const appColumns = (t: AppRef) => ({ appId: t.appId, livemode: t.livemode })
-
-const reportsOf = (t: AppRef) =>
-  and(eq(caseReportsTable.appId, t.appId), eq(caseReportsTable.livemode, t.livemode))
 
 /** The columns a change sets; fields not in the change are left out. */
 function changeColumns(c: CaseChange) {

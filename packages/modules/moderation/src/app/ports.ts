@@ -127,9 +127,7 @@ export interface CaseRepository {
   lockSubject(appRef: AppRef, subjectExternalId: string): Promise<void>
   /**
    * Erases an account: the cases about it take `erasedId` as their subject and their decisions
-   * lose the free text (public reason, internal note); the report rows it filed, and those of its
-   * cases, lose what they said about the accounts. Returns how many cases and report rows it
-   * changed.
+   * lose the free text (public reason, internal note). Returns how many cases it changed.
    */
   eraseAccount(appRef: AppRef, externalId: string, erasedId: string): Promise<number>
   insert(record: CaseRecord): Promise<void>

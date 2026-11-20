@@ -19,7 +19,7 @@ import {
 } from '@flagwise/delivery'
 import type { AppRef } from '@flagwise/kernel'
 import { busPolicyEvents, pgPolicy, PRESETS, type PresetName } from '@flagwise/policy'
-import { busAppEvents, createApp as createRegisteredApp, pgAppStore, type App } from '@flagwise/apps'
+import { busAppEvents, createApp as createRegisteredApp, deleteApp as deleteRegisteredApp, pgAppStore, restoreApp as restoreRegisteredApp, type App, type AppDeps } from '@flagwise/apps'
 import { busKeyEvents, issueApiKey, pgKeyStore } from '@flagwise/auth'
 import { envReader, type Env } from './config/env.ts'
 import type { ServerConfig } from './config/server.ts'
@@ -190,6 +190,33 @@ async function createKeyAsOperator(
       const issued = await issueApiKey(keyDeps(server, tx, clock), { appId: input.appId, livemode: input.livemode, scopes: input.scopes })
       return { key: issued.key, id: issued.record.id, scopes: issued.record.scopes, livemode: issued.record.livemode }
     })
+  } finally {
+    await server.stop()
+  }
+}
+
+/**
+ * `flagwise apps:delete`: deletes an app; it can be restored for 30 days. Its API keys stop working
+ * (410) once a worker delivers app.deletion_requested to auth. Deleting a deleted app changes nothing.
+ * Pending migrations throw, as in bootstrap.
+ */
+export function deleteApp(config: ServerConfig, appId: string, clock: Clock = systemClock): Promise<App> {
+  return asOperator(() => withAppDeps(config, appId, clock, (deps) => deleteRegisteredApp(deps, appId)))
+}
+
+/** `flagwise apps:restore`: restores a deleted app within its 30 days; its keys work again once a worker delivers app.restored. */
+export function restoreApp(config: ServerConfig, appId: string, clock: Clock = systemClock): Promise<App> {
+  return asOperator(() => withAppDeps(config, appId, clock, (deps) => restoreRegisteredApp(deps, appId)))
+}
+
+/** Runs `fn` with the apps service's deps for one app, on a prepared server, publishing its facts in the same transaction. */
+async function withAppDeps<T>(config: ServerConfig, appId: string, clock: Clock, fn: (deps: AppDeps) => Promise<T>): Promise<T> {
+  const server = createServer({ ...config, mode: 'api' }, { clock })
+  try {
+    await server.prepare()
+    return await withApps(server.db, { appIds: [appId], livemode: true }, (tx) =>
+      fn({ store: pgAppStore(tx), clock, newAppId: () => appId, events: busAppEvents(server.bus, tx, () => newId('evt', { clock })) }),
+    )
   } finally {
     await server.stop()
   }

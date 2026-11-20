@@ -37,11 +37,6 @@ export const caseReportsTable = schema.table('case_reports', {
   reportId: text('report_id').notNull(),
   caseId: text('case_id').notNull(),
   position: integer('position').notNull(),
-  // What the reports said about the accounts, from before triage kept it itself: written and read
-  // no more, kept only for triage's upgrade migration to start from; drop them in a later release.
-  reporterExternalId: text('reporter_external_id'),
-  reporterAccountCreatedAt: ts('reporter_account_created_at'),
-  reportedAccountCreatedAt: ts('reported_account_created_at'),
 })
 
 export const decisionsTable = schema.table('decisions', {

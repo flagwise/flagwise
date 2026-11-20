@@ -40,7 +40,7 @@ pnpm dev                # server with reload on http://localhost:3000 (try /read
 | --- | --- |
 | `pnpm dev` | Server in `MODE=all`, restarted on every change under `apps/server/src` and `packages/` |
 | `pnpm start` | Server without reload |
-| `pnpm flagwise <command>` | `bootstrap`: the first org, app and API keys (ingest and actions). `keys:create --org --app --scope admin`: a key for the case endpoints. `webhooks:add`, `webhooks:list`, `webhooks:remove`, `webhooks:roll-secret`: an app's webhook endpoints and signing secret (needs `SECRETS_ENCRYPTION_KEY`). `secrets:new-key`, `secrets:rewrap`: the master key for secrets at rest and its rotation. `db:init`, `db:migrate`: the database roles and migrations, for the strict setup with separate role URLs (see `.env.example`); with `DATABASE_URL` alone the server does both as it starts |
+| `pnpm flagwise <command>` | `bootstrap`: an app and its API keys (flagging and actions). `keys:create --app --scope admin`: a key for the case endpoints. `apps:delete`, `apps:restore`: delete an app (its keys answer 410) and restore it within 30 days. `webhooks:add`, `webhooks:list`, `webhooks:remove`, `webhooks:roll-secret`: an app's webhook endpoints and signing secret (needs `SECRETS_ENCRYPTION_KEY`). `secrets:new-key`, `secrets:rewrap`: the master key for secrets at rest and its rotation. `db:init`, `db:migrate`: the database roles and migrations, for the strict setup with separate role URLs (see `.env.example`); with `DATABASE_URL` alone the server does both as it starts |
 | `pnpm test` | Every package's tests (Vitest) |
 | `pnpm typecheck` | `tsc --noEmit` in every package |
 | `pnpm lint:deps` | Module boundary check (dependency-cruiser) |

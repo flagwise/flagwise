@@ -2,6 +2,7 @@
 // server (.env through the package script).
 
 import { parseArgs } from 'node:util'
+import { GRACE_DAYS } from '@flagwise/apps'
 import { newKeyringEntry } from '@flagwise/platform'
 import { PRESET_NAMES, type PresetName } from '@flagwise/policy'
 import { serverConfigFromEnv } from './config/server.ts'
@@ -9,10 +10,12 @@ import {
   addWebhookEndpoint,
   bootstrap,
   createKey,
+  deleteApp,
   initDatabaseFromEnv,
   listWebhookEndpoints,
   migrateFromEnv,
   removeWebhookEndpoint,
+  restoreApp,
   rewrapSecrets,
   rollWebhookSecret,
 } from './setup.ts'
@@ -30,6 +33,9 @@ const USAGE = `Usage: flagwise <command>
   keys:create --app <app_id> --scope <scopes> [--test]
                                    Issue an API key for the app; scopes are comma-separated
                                    (flagging, actions, admin). Live mode unless --test.
+  apps:delete --app <app_id>       Delete an app: its API keys stop working (410) and it can be
+                                   restored for 30 days.
+  apps:restore --app <app_id>      Restore a deleted app within its 30 days.
 
   Webhooks (each for one app and mode: --app <app_id>, live unless --test):
   webhooks:add --url <https url> [--events <types>]
@@ -100,6 +106,23 @@ These keys are shown only once. Store them now.`)
 ${created.key}
 
 This key is shown only once. Store it now.`)
+      return 0
+    }
+    case 'apps:delete':
+    case 'apps:restore': {
+      if (!values.app) {
+        console.error(`${positionals[0]} needs --app <app_id>`)
+        return 2
+      }
+      const config = await serverConfigFromEnv(process.env)
+      if (positionals[0] === 'apps:delete') {
+        const app = await deleteApp(config, values.app)
+        const purgeAt = new Date(app.deletedAt!.getTime() + GRACE_DAYS * 86_400_000)
+        console.log(`Deleted app ${app.id} (${app.name}). It can be restored until ${purgeAt.toISOString()} with apps:restore.`)
+      } else {
+        const app = await restoreApp(config, values.app)
+        console.log(`Restored app ${app.id} (${app.name}).`)
+      }
       return 0
     }
     case 'webhooks:add':
