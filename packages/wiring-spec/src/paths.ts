@@ -21,6 +21,8 @@ export const PATHS = {
   evidence: (reportId: string) => `/flagging/reports/${reportId}/evidence`,
   erase: (externalId: string) => `/privacy/subjects/${externalId}/erase`,
   erasure: (id: string) => `/privacy/erasures/${id}`,
+  notifications: (states?: string) => `/notifications/notifications${states ? `?state=${states}` : ''}`,
+  acknowledge: (id: string) => `/notifications/notifications/${id}/acknowledge`,
 } as const
 
 /** Facts on the event bus, read as a passive consumer of the contracts. */

@@ -2,7 +2,7 @@
 // other's facts, each on its own unit of work; a fixed classifier stands in for classify.
 import { manualClock, type ManualClock, type AppRef } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
-import { createMemoryBus, memoryDocumentCopy, memoryUnitOfWork, type MemoryBus } from '@flagwise/platform'
+import { createMemoryBus, memoryDocumentCopy, memoryScheduler, memoryUnitOfWork, type MemoryBus } from '@flagwise/platform'
 import type { CaseRecord, CaseRepository } from '@flagwise/moderation'
 import type { ActionRequest, ActionRequestStore, StoredEvent, StoredSecret, WebhookEndpoint, WebhookStore } from '@flagwise/delivery'
 import type { Policy } from '@flagwise/contracts'
@@ -129,6 +129,7 @@ let flow: Services
 let classifyCalls: string[]
 let classification: Classification
 let seq: Record<string, number>
+let scheduler: ReturnType<typeof memoryScheduler>
 
 beforeEach(async () => {
   bus = createMemoryBus({ contract: eventContract })
@@ -143,15 +144,17 @@ beforeEach(async () => {
   const next = (p: string) => () => `${p}_${++seq[p]!}`
   const casesPolicy = memoryDocumentCopy<Policy>()
   for (const t of [appRef, { ...appRef, appId: 'app_b' }]) await casesPolicy.keep(t, 1, POLICY)
+  scheduler = memoryScheduler()
   flow = composeServices({
     bus,
+    scheduler,
     clock,
     newCaseId: next('case'),
     newDecisionId: next('dec'),
     newActionRequestId: next('acr'),
     newEventId: next('evt'),
-    cases: { uow: memoryUnitOfWork(bus, { cases }), policy: casesPolicy },
-    delivery: { uow: memoryUnitOfWork(bus, { requests, webhooks }) },
+    cases: { uow: memoryUnitOfWork(bus, { cases, timers: scheduler.timers('moderation') }), policy: casesPolicy },
+    delivery: { uow: memoryUnitOfWork(bus, { requests, webhooks, timers: scheduler.timers('delivery') }) },
     triage: { uow: memoryUnitOfWork(bus, { cases: triageCases }), policy: memoryDocumentCopy<Policy>() },
     classify: async (_t, caseId) => (classifyCalls.push(caseId), classification),
   })
@@ -388,6 +391,84 @@ describe('a correction across services', () => {
     await flow.correct({ appRef, caseId: 'case_1', memberId: 'mem_jane', categoryId: 'child_safety.grooming' })
     await flow.drain()
     expect(cases.rows.get('case_1')).toMatchObject({ classification: { categoryId: 'child_safety.grooming' }, triage: { severity: 'P0', slaDueAt: new Date(T0.getTime() + H) } })
+  })
+})
+
+describe('notifications from the core loop', () => {
+  /** The notification facts on the bus, as `fact type:about`. */
+  const notes = () =>
+    bus
+      .log()
+      .filter((l) => l.event.type.startsWith('notification.'))
+      .map((l) => `${l.event.type === 'notification.raised.v1' ? 'raised' : 'cleared'} ${l.event.key}`)
+  const fire = (ms: number) => (clock.advance(ms), scheduler.fireDue(clock.now()))
+
+  it('raises new_p0 when a P0 case opens, and clears it when someone claims it', async () => {
+    classification = { ...classification, categoryId: 'child_safety.underage_user', signals: ['minor_involved'] }
+    await flow.submitReport(report('rpt_1', 'u_5531', true))
+    await flow.drain()
+    expect(notes()).toEqual(['raised new_p0:case_1'])
+    await flow.claim({ appRef, caseId: 'case_1', memberId: 'mem_jane' })
+    await flow.drain()
+    expect(notes()).toEqual(['raised new_p0:case_1', 'cleared new_p0:case_1'])
+  })
+
+  it('raises new_p0 when triage makes a case P0 the pre-rules did not', async () => {
+    classification = { ...classification, categoryId: 'child_safety.underage_user', signals: ['minor_involved'] }
+    await flow.submitReport(report('rpt_1'))
+    await flow.drain()
+    expect(cases.rows.get('case_1')).toMatchObject({ band: 'standard', triage: { severity: 'P0' } })
+    expect(notes()).toEqual(['raised new_p0:case_1'])
+  })
+
+  it("raises the SLA warning and breach of an undecided case, and clears them at its decision", async () => {
+    await flow.submitReport(report('rpt_1'))
+    await flow.drain()
+    const c = cases.rows.get('case_1')!
+    const span = c.triage!.slaDueAt.getTime() - c.openedAt.getTime()
+    await fire(Math.floor((span * 3) / 4) - 1)
+    await flow.drain()
+    expect(notes()).toEqual([])
+    await fire(1)
+    await flow.drain()
+    expect(notes()).toEqual(['raised sla_75:case_1'])
+    await fire(span)
+    await flow.drain()
+    expect(notes()).toEqual(['raised sla_75:case_1', 'raised sla_breach:case_1'])
+    await flow.claim({ appRef, caseId: 'case_1', memberId: 'mem_jane' })
+    await flow.decide(decideInput([]))
+    await flow.drain()
+    expect(notes()).toEqual(['raised sla_75:case_1', 'raised sla_breach:case_1', 'cleared sla_75:case_1', 'cleared sla_breach:case_1'])
+  })
+
+  it('raises nothing for a case decided in time, and its timers are gone', async () => {
+    await flow.submitReport(report('rpt_1'))
+    await flow.drain()
+    await flow.claim({ appRef, caseId: 'case_1', memberId: 'mem_jane' })
+    await flow.decide(decideInput(['suspend_7d']))
+    await flow.drain()
+    await flow.confirmAction(appRef, 'acr_1')
+    await flow.drain()
+    await fire(30 * 24 * H)
+    await flow.drain()
+    expect(notes()).toEqual([])
+    expect(scheduler.list()).toEqual([])
+  })
+
+  it('raises action_overdue for a request unanswered for 24 hours, and clears it at the answer', async () => {
+    await flow.submitReport(report('rpt_1'))
+    await flow.drain()
+    await flow.claim({ appRef, caseId: 'case_1', memberId: 'mem_jane' })
+    await flow.decide(decideInput(['suspend_7d', 'hide_content']))
+    await flow.drain()
+    await flow.confirmAction(appRef, 'acr_1')
+    await flow.drain()
+    await fire(24 * H)
+    await flow.drain()
+    expect(notes().filter((x) => x.includes('action_overdue'))).toEqual(['raised action_overdue:acr_2'])
+    await flow.failAction(appRef, 'acr_2', 'account not found')
+    await flow.drain()
+    expect(notes().filter((x) => x.includes('action_overdue'))).toEqual(['raised action_overdue:acr_2', 'cleared action_overdue:acr_2'])
   })
 })
 

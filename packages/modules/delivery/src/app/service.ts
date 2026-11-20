@@ -1,9 +1,9 @@
 // Delivery as a service: settling action requests, each in one transaction of its own with its
 // events, and its reactions on the bus, reading and writing only its own tables.
 
-import { currentType, erasedId, erasureAnswer, type EventData } from '@flagwise/contracts'
+import { currentType, erasedId, erasureAnswer, notificationCleared, notificationRaised, type EventData } from '@flagwise/contracts'
 import type { Clock, AppRef } from '@flagwise/kernel'
-import { appOf, type BusEvent, type EventBus, type UnitOfWork, type Work } from '@flagwise/platform'
+import { appOf, type BusEvent, type EventBus, type Scheduler, type Timers, type UnitOfWork, type Work } from '@flagwise/platform'
 import type { InternalEvent } from '../domain/webhooks.ts'
 import { requestActions, retryFailedActions, settleAction, type ActionRequestStore, type DeliveryDeps, type DeliveryEvent, type RequestedBy } from './action-requests.ts'
 import { enqueueWebhook, type WebhookStore } from './webhooks.ts'
@@ -11,7 +11,12 @@ import { enqueueWebhook, type WebhookStore } from './webhooks.ts'
 export interface DeliveryStores {
   readonly requests: ActionRequestStore
   readonly webhooks: WebhookStore
+  /** Delivery's timers: each pending action request's deadline. */
+  readonly timers: Timers
 }
+
+/** How long the app's systems have to answer an action request before people hear of it. */
+export const ACTION_ANSWER_MS = 24 * 3_600_000
 
 export interface DeliveryServiceDeps {
   readonly uow: UnitOfWork<DeliveryStores>
@@ -34,6 +39,13 @@ const workOf = (deps: DeliveryServiceDeps, w: Work<DeliveryStores>): DeliveryDep
       const { type, appRef: _appRef, ...data } = event
       const id = type === 'decision.actions_confirmed' ? `${type}:${event.decisionId}` : `${type}:${event.actionRequestId}`
       await w.publish({ id, type: currentType(type), key: event.caseId, data })
+      // A request waits for its answer for ACTION_ANSWER_MS; an answer after that clears action_overdue.
+      const timers = w.stores.timers
+      if (event.type === 'action.requested') {
+        await timers.set(event.appRef, `action_overdue:${event.actionRequestId}`, new Date(deps.clock.now().getTime() + ACTION_ANSWER_MS), { actionRequestId: event.actionRequestId })
+      } else if (event.type !== 'decision.actions_confirmed' && !(await timers.cancel(event.appRef, `action_overdue:${event.actionRequestId}`))) {
+        await w.publish(notificationCleared('action_overdue', event.actionRequestId, event.type, deps.clock.now()))
+      }
     },
   },
 })
@@ -58,12 +70,24 @@ export function actionSettlement(deps: DeliveryServiceDeps): ActionSettlement {
  *   taken it, so a case a moderator claimed meanwhile sends nothing. One caused by a moderator's
  *   correction sends none either: the tenant hears of the case again at its decision.
  *   erasure.completed -> subject.erased.
+ * - Timers of 'delivery': an action request still pending ACTION_ANSWER_MS after it was made ->
+ *   action_overdue; its answer (confirmed or failed) clears it.
  * - 'delivery.erasure': subject.erasure_requested -> the account's id replaced in the webhook
  *   bodies that name it (action requests keep no account id); answers erased, or nothing_held.
  * The decider of an action becomes its `requested_by`: an API key (`key_` ids), Flagwise itself
  * (`system`), else a member.
  */
-export function subscribeDelivery(bus: EventBus, deps: DeliveryServiceDeps): void {
+export function subscribeDelivery(bus: EventBus, deps: DeliveryServiceDeps, scheduler: Scheduler): void {
+  scheduler.on('delivery', async (timer) => {
+    const id = timer.data['actionRequestId']
+    if (!id) return
+    await deps.uow.run(timer.appRef, async (w) => {
+      const request = await w.stores.requests.findById(timer.appRef, id)
+      if (request?.status !== 'pending') return
+      await w.publish(notificationRaised('action_overdue', id, { actionRequestId: id, caseId: request.caseId, actionKey: request.actionKey }, deps.clock.now()))
+    })
+  })
+
   bus.subscribe('delivery', ['case.decided.v1', 'case.actions_retried.v1'], async (event) => {
     const appRef = appOf(event)
     if (event.type === 'case.decided.v1') {

@@ -2,7 +2,7 @@
 // scripted LLM. Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
 import { manualClock, type AppRef } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
-import { createDatabase, createPgBus, memoryStorage, migrate, pgUnitOfWork, scopeOfApp, withApps, type Database, type PgBus } from '@flagwise/platform'
+import { createDatabase, createPgBus, createPgScheduler, pgTimers, memoryStorage, migrate, pgUnitOfWork, scopeOfApp, withApps, type Database, type PgBus } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { moderationMigrations, pgCaseRepository, pgModerationPolicyCopy } from '@flagwise/moderation'
 import {
@@ -77,12 +77,13 @@ describe.skipIf(!testDatabaseUrl)('classify in the core loop on Postgres', () =>
     )
     composeServices({
       bus,
+      scheduler: createPgScheduler(db, { clock }),
       clock,
       newCaseId: () => `case_${++n}`,
       newDecisionId: () => `dec_${++n}`,
       newActionRequestId: () => `acr_${++n}`,
       newEventId: () => `evt_${++n}`,
-      cases: { uow: pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx) })), policy: pgModerationPolicyCopy(db) },
+      cases: { uow: pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx), timers: pgTimers(tx, 'moderation') })), policy: pgModerationPolicyCopy(db) },
       delivery: pgDeliveryDeps(db, bus, { clock, newActionRequestId: () => `acr_${++n}`, newEventId: () => `evt_${++n}` }),
       triage: pgTriageDeps(db, bus),
       classify: { classify, policy },

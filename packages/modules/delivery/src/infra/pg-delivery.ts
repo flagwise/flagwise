@@ -2,7 +2,7 @@
 // transaction of its own, the read side of its routes, and the webhook sender's deps.
 
 import type { AppRef } from '@flagwise/kernel'
-import { pgUnitOfWork, scopeOfApp, withSystem, withApps, type Database, type EventBus } from '@flagwise/platform'
+import { pgTimers, pgUnitOfWork, scopeOfApp, withSystem, withApps, type Database, type EventBus } from '@flagwise/platform'
 import type { ActionRequestStore } from '../app/action-requests.ts'
 import type { SenderDeps } from '../app/send-webhooks.ts'
 import type { DeliveryServiceDeps } from '../app/service.ts'
@@ -10,7 +10,7 @@ import { pgActionRequestStore } from './pg-action-request-store.ts'
 import { pgWebhookOutbox, pgWebhookStore } from './pg-webhook-store.ts'
 
 export function pgDeliveryDeps(db: Database, bus: EventBus, options: Omit<DeliveryServiceDeps, 'uow'>): DeliveryServiceDeps {
-  return { ...options, uow: pgUnitOfWork(db, bus, (tx) => ({ requests: pgActionRequestStore(tx), webhooks: pgWebhookStore(tx) })) }
+  return { ...options, uow: pgUnitOfWork(db, bus, (tx) => ({ requests: pgActionRequestStore(tx), webhooks: pgWebhookStore(tx), timers: pgTimers(tx, 'delivery') })) }
 }
 
 /** Runs `fn` with the action request store in an app transaction. */

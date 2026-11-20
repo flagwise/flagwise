@@ -8,7 +8,7 @@ import { subscribeClassify, type ClassifyServiceDeps } from '@flagwise/classify'
 import { currentType, DEFAULT_POLICY, type EventData, type Policy, type PolicyActionKey } from '@flagwise/contracts'
 import { actionSettlement, subscribeDelivery, type DeliveryServiceDeps } from '@flagwise/delivery'
 import type { Clock, AppRef } from '@flagwise/kernel'
-import { appOf, type EventBus } from '@flagwise/platform'
+import { appOf, type EventBus, type Scheduler } from '@flagwise/platform'
 import { erasedFromCase, subscribeTriage, type TriageCase, type TriageCaseStore, type TriageDeps } from '@flagwise/triage'
 
 /** What a fixed classifier says about a case. */
@@ -52,6 +52,8 @@ export interface ServicesOptions {
   readonly cases: Pick<ModerationServiceDeps, 'uow' | 'policy'>
   readonly delivery: Pick<DeliveryServiceDeps, 'uow'>
   readonly triage: TriageDeps
+  /** Moderation's and delivery's timers. */
+  readonly scheduler: Scheduler
   /** The classify service, or a fixed classifier in its place: case.opened -> case.classified with what it says. */
   readonly classify: ClassifyServiceDeps | ((appRef: AppRef, caseId: string, reportId: string) => Promise<Classification>)
 }
@@ -72,9 +74,9 @@ export function composeServices(o: ServicesOptions): Services {
   }
   subscribeTriage(bus, o.triage)
   const cases: ModerationServiceDeps = { ...o.cases, clock, newCaseId: o.newCaseId, newDecisionId: o.newDecisionId, newEventId: o.newEventId }
-  subscribeModeration(bus, cases)
+  subscribeModeration(bus, cases, o.scheduler)
   const delivery: DeliveryServiceDeps = { ...o.delivery, clock, newActionRequestId: o.newActionRequestId, newEventId: o.newEventId }
-  subscribeDelivery(bus, delivery)
+  subscribeDelivery(bus, delivery, o.scheduler)
   const work = moderationService(cases)
   const settlement = actionSettlement(delivery)
   return {

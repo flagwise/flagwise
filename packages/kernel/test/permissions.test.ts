@@ -81,6 +81,7 @@ describe('app actions', () => {
     ['support_bundle.send', true, true, false, true],
     ['audit.read', true, true, false, true],
     ['metrics.read', true, true, true, true],
+    ['notification.read', true, true, true, true],
     ['categories.read', true, true, true, true],
   ]
 
@@ -217,6 +218,7 @@ describe('API keys', () => {
         'subject.erase',
         'audit.read',
         'metrics.read',
+        'notification.read',
       ],
     ],
   ]

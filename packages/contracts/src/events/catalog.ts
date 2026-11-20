@@ -405,6 +405,30 @@ const SPECS = [
     schema: z.strictObject({ erasureId: id, subjectExternalId: id, heldItems: z.int().min(0), occurredAt: time }),
   }),
   spec({
+    name: 'notification.raised',
+    major: 1,
+    version: '1.0.0',
+    owner: 'any',
+    meaning: 'A service raised a notification to people about its own facts; one per key, so raising it again while it is open changes nothing.',
+    schema: z.strictObject({
+      /** One per notification: its type and what it is about. */
+      key: id,
+      /** A type of NOTIFICATION_TYPES. */
+      type: id,
+      /** The facts the notification shows, by name. */
+      values: z.record(z.string(), z.string()),
+      occurredAt: time,
+    }),
+  }),
+  spec({
+    name: 'notification.cleared',
+    major: 1,
+    version: '1.0.0',
+    owner: 'any',
+    meaning: 'The service that raised a notification cleared it on one of its clearing facts; a clear that comes first also stops an older raise.',
+    schema: z.strictObject({ key: id, type: id, fact: id, occurredAt: time }),
+  }),
+  spec({
     name: 'bus.event_fanned_out',
     major: 1,
     version: '1.0.0',

@@ -3,7 +3,7 @@
 // Runs against a real Postgres through TEST_DATABASE_URL; skipped without it.
 import { manualClock, type AppRef } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
-import { createDatabase, createPgBus, migrate, pgUnitOfWork, scopeOfApp, withApps, type Database, type PgBus } from '@flagwise/platform'
+import { createDatabase, createPgBus, createPgScheduler, pgTimers, migrate, pgUnitOfWork, scopeOfApp, withApps, type Database, type PgBus } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { moderationMigrations, moderationTables, pgCaseRepository, pgModerationPolicyCopy } from '@flagwise/moderation'
 import { deliveryMigrations, deliveryTables, pgActionRequestStore, pgDeliveryDeps } from '@flagwise/delivery'
@@ -62,12 +62,13 @@ describe.skipIf(!testDatabaseUrl)('core flow on Postgres', () => {
     const clock = manualClock(T0)
     flow = composeServices({
       bus,
+      scheduler: createPgScheduler(db, { clock }),
       clock,
       newCaseId: () => `case_${++n}`,
       newDecisionId: () => `dec_${++n}`,
       newActionRequestId: () => `acr_${++n}`,
       newEventId: () => `evt_${++n}`,
-      cases: { uow: pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx) })), policy },
+      cases: { uow: pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx), timers: pgTimers(tx, 'moderation') })), policy },
       delivery: pgDeliveryDeps(db, bus, { clock, newActionRequestId: () => `acr_${++n}`, newEventId: () => `evt_${++n}` }),
       triage: pgTriageDeps(db, bus),
       classify: async () => classification,
@@ -145,7 +146,7 @@ describe.skipIf(!testDatabaseUrl)('core flow on Postgres', () => {
 
   it('rolls back a run that throws: no writes, no events', async () => {
     const before = (await bus.log()).length
-    const uow = pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx) }))
+    const uow = pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx), timers: pgTimers(tx, 'moderation') }))
     await expect(
       uow.run(A, async (w) => {
         await w.stores.cases.insert({ id: 'case_x', appRef: A, subjectExternalId: 'u_john_doe', band: 'standard', state: 'classifying', reportIds: ['rpt_x'], openedAt: T0 })

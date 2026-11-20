@@ -2,16 +2,19 @@
 // and its reactions to other services' facts on the bus. It reads only its own tables and its copy
 // of the app's policy.
 
-import { allowedActionKeys, currentType, erasedId, erasureAnswer, policyIn, type EventData, type Policy } from '@flagwise/contracts'
-import type { Clock } from '@flagwise/kernel'
-import { subscribeCopy, appOf, type DocumentCopy, type EventBus, type UnitOfWork, type Work } from '@flagwise/platform'
+import { allowedActionKeys, currentType, erasedId, erasureAnswer, notificationCleared, notificationRaised, policyIn, type EventData, type Policy } from '@flagwise/contracts'
+import type { AppRef, Clock } from '@flagwise/kernel'
+import { subscribeCopy, appOf, type DocumentCopy, type EventBus, type Scheduler, type Timers, type UnitOfWork, type Work } from '@flagwise/platform'
 import { nextState } from '../domain/case-state.ts'
+import { slaWarningAt } from '../domain/sla.ts'
 import type { ActionCatalog, CaseClassification, CaseRecord, CaseRepository, CaseTriage, CaseWorkDeps, ModerationEvent, Decision, Severity } from './ports.ts'
 import { receiveReport, type ReportReceived } from './receive-report.ts'
 import { claimCase, correctCase, decideCase, releaseCase, retryActions, type CaseRef, type CorrectInput, type DecideInput, type RetryActionsInput } from './work-case.ts'
 
 export interface ModerationStores {
   readonly cases: CaseRepository
+  /** Moderation's timers: each case's SLA warning and breach. */
+  readonly timers: Timers
 }
 
 export interface ModerationServiceDeps {
@@ -48,17 +51,51 @@ const workOf = (deps: ModerationServiceDeps, w: Work<ModerationStores>): CaseWor
     async publish(event: ModerationEvent) {
       const { type, appRef: _appRef, ...data } = event
       await w.publish({ id: casesEventId(event, deps.newEventId), type: currentType(type), key: event.caseId, data })
+      // The pre-rules found a P0 signal: people hear of the case at once, before it is classified.
+      if (event.type === 'case.opened' && event.band === 'p0') await w.publish(notificationRaised('new_p0', event.caseId, { caseId: event.caseId }, event.occurredAt))
     },
   },
 })
 
-/** claimCase, releaseCase, decideCase, correctCase and retryActions, each in one transaction with its events. */
+const isP0 = (c: CaseRecord) => c.band === 'p0' || c.triage?.severity === 'P0'
+const slaKeys = (caseId: string) => [`sla_75:${caseId}`, `sla_breach:${caseId}`] as const
+
+/**
+ * Sets the case's SLA timers from its triage: the warning at 75% (slaWarningAt) and the breach at
+ * the due time. Setting them again moves them.
+ */
+async function setSlaTimers(timers: Timers, appRef: AppRef, record: CaseRecord, triage: CaseTriage): Promise<void> {
+  const [warning, breach] = slaKeys(record.id)
+  await timers.set(appRef, warning, slaWarningAt(record.openedAt, triage.slaDueAt), { caseId: record.id })
+  await timers.set(appRef, breach, triage.slaDueAt, { caseId: record.id })
+}
+
+/**
+ * claimCase, releaseCase, decideCase, correctCase and retryActions, each in one transaction with
+ * its events. Claiming a P0 case clears its new_p0 notification. Deciding a case cancels its SLA
+ * timers and clears the SLA notifications of those that fired already (cancel says which).
+ */
 export function moderationService(deps: ModerationServiceDeps): ModerationService {
   const { uow } = deps
   return {
-    claim: (input) => uow.run(input.appRef, (w) => claimCase(workOf(deps, w), input)),
+    claim: (input) =>
+      uow.run(input.appRef, async (w) => {
+        const claimed = await claimCase(workOf(deps, w), input)
+        if (isP0(claimed)) await w.publish(notificationCleared('new_p0', claimed.id, 'case.claimed', deps.clock.now()))
+        return claimed
+      }),
     release: (input) => uow.run(input.appRef, (w) => releaseCase(workOf(deps, w), input)),
-    decide: (input) => uow.run(input.appRef, (w) => decideCase(workOf(deps, w), input)),
+    decide: (input) =>
+      uow.run(input.appRef, async (w) => {
+        const decision = await decideCase(workOf(deps, w), input)
+        const record = await w.stores.cases.findById(input.appRef, input.caseId)
+        if (record?.triage) {
+          const [warning, breach] = slaKeys(record.id)
+          if (!(await w.stores.timers.cancel(input.appRef, warning))) await w.publish(notificationCleared('sla_75', record.id, 'case.decided', decision.decidedAt))
+          if (!(await w.stores.timers.cancel(input.appRef, breach))) await w.publish(notificationCleared('sla_breach', record.id, 'case.decided', decision.decidedAt))
+        }
+        return decision
+      }),
     correct: (input) => uow.run(input.appRef, (w) => correctCase(workOf(deps, w), input)),
     retryActions: (input) => uow.run(input.appRef, (w) => retryActions(workOf(deps, w), input)),
   }
@@ -78,14 +115,28 @@ export function moderationService(deps: ModerationServiceDeps): ModerationServic
  *   One caused by a correction: an undecided case (claimed or open) still in the corrected
  *   category takes its triage; an older correction's, for a category corrected again since, is
  *   left for the newer one's.
+ *   A case that takes a triage (re)sets its SLA timers; one that opens or takes a new triage
+ *   unclaimed raises new_p0 when triage made it P0 (a P0 band case raised it when it opened).
+ * - Timers of 'moderation': a case's SLA warning or breach came -> sla_75 or sla_breach, when the
+ *   case has a triage and no decision.
  * - 'cases.erasure': subject.erasure_requested -> under the subject's lock, eraseAccount; answers
  *   erased, or nothing_held.
  * - 'cases.actions': action.failed -> notes the failure; a new one moves a decided case to
  *   action_failed. decision.actions_confirmed -> a decided or action_failed case with that
  *   decision is actioned.
  */
-export function subscribeModeration(bus: EventBus, deps: ModerationServiceDeps): void {
+export function subscribeModeration(bus: EventBus, deps: ModerationServiceDeps, scheduler: Scheduler): void {
   const { uow } = deps
+  scheduler.on('moderation', async (timer) => {
+    const caseId = timer.data['caseId']
+    if (!caseId) return
+    await uow.run(timer.appRef, async (w) => {
+      const record = await w.stores.cases.findById(timer.appRef, caseId)
+      if (!record?.triage || record.decision) return
+      const type = timer.key.startsWith('sla_75:') ? 'sla_75' : 'sla_breach'
+      await w.publish(notificationRaised(type, caseId, { caseId, slaDueAt: record.triage.slaDueAt.toISOString() }, deps.clock.now()))
+    })
+  })
   subscribeCopy(bus, 'cases.policy', 'policy.updated.v1', deps.policy, (d) => {
     const u = d as EventData<'policy.updated.v1'>
     return { version: u.version, document: u.policy }
@@ -130,19 +181,25 @@ export function subscribeModeration(bus: EventBus, deps: ModerationServiceDeps):
       }
       if (d.cause === 'correction') {
         if ((record.state === 'claimed' || record.state === 'open') && record.classification?.categoryId === d.categoryId) {
-          await cases.change(appRef, d.caseId, { states: [record.state], claimedBy: record.claim?.memberId ?? null }, { triage })
+          if (await cases.change(appRef, d.caseId, { states: [record.state], claimedBy: record.claim?.memberId ?? null }, { triage })) await setSlaTimers(w.stores.timers, appRef, record, triage)
         }
         return
       }
       const classification = classificationOf(d)
       let taken = false
+      let opened = false
       if (record.state === 'classifying') {
-        await cases.change(appRef, d.caseId, { states: ['classifying'] }, { state: nextState('classifying', { type: 'triaged' }), triage, classification })
+        opened = await cases.change(appRef, d.caseId, { states: ['classifying'] }, { state: nextState('classifying', { type: 'triaged' }), triage, classification })
       } else if (record.state === 'untriaged') {
         const state = nextState(nextState('untriaged', { type: 'classify_retried' }), { type: 'triaged' })
         taken = await cases.change(appRef, d.caseId, { states: ['untriaged'] }, { state, triage, classification })
       } else if (record.state === 'open' && record.triage) {
         taken = await cases.change(appRef, d.caseId, { states: ['open'], claimedBy: null }, { triage, classification })
+      }
+      if (opened || taken) {
+        await setSlaTimers(w.stores.timers, appRef, record, triage)
+        // Triage found a P0 the pre-rules did not (a P0 band case was raised when it opened).
+        if (triage.severity === 'P0' && record.band !== 'p0') await w.publish(notificationRaised('new_p0', d.caseId, { caseId: d.caseId }, deps.clock.now()))
       }
       if (taken && d.cause === 'llm_retry') {
         const { cause: _cause, ...retriaged } = d

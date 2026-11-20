@@ -3,7 +3,7 @@
 // Runs against a real Postgres (TEST_DATABASE_URL) and S3-compatible store (TEST_S3_URL); skipped without them.
 import { manualClock, type ManualClock } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
-import { createDatabase, createPgBus, memoryRateLimiter, migrate, pgUnitOfWork, withApps, type Database, type ObjectStorage, type PgBus } from '@flagwise/platform'
+import { createDatabase, createPgBus, createPgScheduler, pgTimers, memoryRateLimiter, migrate, pgUnitOfWork, withApps, type Database, type ObjectStorage, type PgBus } from '@flagwise/platform'
 import { createTestBucket, createTestDatabase, testDatabaseUrl, testS3Url, type TestBucket, type TestDatabase } from '@flagwise/platform/testing'
 import { moderationMigrations, pgCaseRepository, pgModerationPolicyCopy } from '@flagwise/moderation'
 import { deliveryMigrations, pgDeliveryDeps } from '@flagwise/delivery'
@@ -74,12 +74,13 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
     const flagging: FlaggingDeps = { run: pgFlaggingRunner(db, bus), storage: bucket.storage, clock, newReportId: () => `rpt_${++n}` }
     composeServices({
       bus,
+      scheduler: createPgScheduler(db, { clock }),
       clock,
       newCaseId: () => `case_${++n}`,
       newDecisionId: () => `dec_${++n}`,
       newActionRequestId: () => `acr_${++n}`,
       newEventId: () => `evt_${++n}`,
-      cases: { uow: pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx) })), policy: pgModerationPolicyCopy(db) },
+      cases: { uow: pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx), timers: pgTimers(tx, 'moderation') })), policy: pgModerationPolicyCopy(db) },
       delivery: pgDeliveryDeps(db, bus, { clock, newActionRequestId: () => `acr_${++n}`, newEventId: () => `evt_${++n}` }),
       triage: pgTriageDeps(db, bus),
       classify: async () => ({ categoryId: 'scams_fraud.romance_scam', signals: [], injectionSuspected: false, preRuleP0: false, classifiedBy: 'llm' }),

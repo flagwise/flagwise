@@ -6,7 +6,7 @@ import { systemClock, type Clock } from './clock.ts'
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 const BODY = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/
 
-export const ID_PREFIXES = ['app', 'mem', 'key', 'rpt', 'case', 'dec', 'acr', 'apl', 'ers', 'evt', 'whe'] as const
+export const ID_PREFIXES = ['app', 'mem', 'key', 'rpt', 'case', 'dec', 'acr', 'apl', 'ers', 'evt', 'whe', 'ntf'] as const
 export type IdPrefix = (typeof ID_PREFIXES)[number]
 export type Id<P extends IdPrefix = IdPrefix> = `${P}_${string}`
 

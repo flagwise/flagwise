@@ -2,7 +2,7 @@
 // an app transaction of its own, and the read side of its routes.
 
 import type { AppRef } from '@flagwise/kernel'
-import { pgUnitOfWork, scopeOfApp, withApps, type Database, type EventBus } from '@flagwise/platform'
+import { pgTimers, pgUnitOfWork, scopeOfApp, withApps, type Database, type EventBus } from '@flagwise/platform'
 import type { CaseReader } from '../app/ports.ts'
 import type { ModerationServiceDeps } from '../app/service.ts'
 import { pgCaseRepository } from './pg-case-repository.ts'
@@ -11,7 +11,7 @@ import { pgModerationPolicyCopy } from './pg-policy-copy.ts'
 export type PgModerationOptions = Omit<ModerationServiceDeps, 'uow' | 'policy'>
 
 export function pgModerationDeps(db: Database, bus: EventBus, options: PgModerationOptions): ModerationServiceDeps {
-  return { ...options, uow: pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx) })), policy: pgModerationPolicyCopy(db) }
+  return { ...options, uow: pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx), timers: pgTimers(tx, 'moderation') })), policy: pgModerationPolicyCopy(db) }
 }
 
 /** Runs `fn` with the case reader in an app transaction. */

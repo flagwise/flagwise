@@ -121,6 +121,35 @@ REVOKE ALL ON SEQUENCE platform.consumer_groups_position_seq, platform.deliverie
 GRANT SELECT, INSERT, UPDATE, DELETE ON platform.consumer_groups, platform.deliveries, platform.dead_letters TO {{system}};
 GRANT USAGE, SELECT ON SEQUENCE platform.consumer_groups_position_seq, platform.deliveries_queued_seq, platform.dead_letters_id_seq TO {{system}};
 
+-- Timers: a service's reminder to itself (a case's SLA, an action request's deadline), set in the
+-- transaction of the change that needs it. The app role sets and cancels its apps' timers; the
+-- system role fires the due ones to their owner and deletes each once handled. A setting gets a
+-- new revision, so firing deletes only the setting it fired.
+CREATE SEQUENCE platform.timer_revisions;
+CREATE TABLE platform.timers (
+  app_id text NOT NULL,
+  livemode boolean NOT NULL,
+  owner text NOT NULL CHECK (owner <> ''),
+  key text NOT NULL CHECK (key <> ''),
+  due_at timestamptz NOT NULL,
+  data jsonb NOT NULL,
+  revision bigint NOT NULL DEFAULT nextval('platform.timer_revisions'),
+  attempt integer NOT NULL DEFAULT 0,
+  -- After a failed attempt, the timer fires again from then on.
+  retry_at timestamptz,
+  leased_until timestamptz,
+  last_error text,
+  PRIMARY KEY (app_id, livemode, owner, key)
+);
+CREATE INDEX timers_due ON platform.timers (owner, (COALESCE(retry_at, due_at)));
+ALTER TABLE platform.timers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE platform.timers FORCE ROW LEVEL SECURITY;
+CREATE POLICY app ON platform.timers TO {{app}}
+  USING (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode())
+  WITH CHECK (app_id = ANY (platform.app_ids()) AND livemode = platform.livemode());
+GRANT SELECT, UPDATE, DELETE ON platform.timers TO {{system}};
+CREATE POLICY fire ON platform.timers FOR ALL TO {{system}} USING (true) WITH CHECK (true);
+
 -- The first response to each API request's Idempotency-Key, per app and mode; status is NULL
 -- while the request runs.
 CREATE TABLE platform.idempotency_keys (

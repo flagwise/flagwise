@@ -9,6 +9,7 @@ import { moderationRoutes, type ModerationRoutesDeps } from '@flagwise/moderatio
 import { classifyRoutes, type ClassifyDeps } from '@flagwise/classify'
 import { deliveryRoutes, type ActionRequestRoutesDeps } from '@flagwise/delivery'
 import { flaggingRoutes, type FlaggingDeps } from '@flagwise/flagging'
+import { notificationsRoutes, type NotificationsRoutesDeps } from '@flagwise/notifications'
 import { policyRoutes, type PolicyRoutesDeps } from '@flagwise/policy'
 import { privacyRoutes, type PrivacyRoutesDeps } from '@flagwise/privacy'
 import { pgKeyDirectory, resolveApiKey, type KeyResolution } from '@flagwise/auth'
@@ -34,6 +35,8 @@ export interface ApiDeps {
   readonly audit?: AuditRoutesDeps
   /** The erasure routes; left out, they answer 404. */
   readonly privacy?: PrivacyRoutesDeps
+  /** The notification routes; left out, they answer 404. */
+  readonly notifications?: NotificationsRoutesDeps
   /** Where Idempotency-Keys of POST requests are kept; left out, the header is ignored. */
   readonly idempotency?: IdempotencyStore
   /** Called with errors that become a 500, for logging; default writes a JSON line to stderr. */
@@ -137,6 +140,7 @@ export function createApi(deps: ApiDeps): Hono<ApiEnv> {
   if (deps.config) api.route('/', policyRoutes(deps.config))
   if (deps.audit) api.route('/', auditRoutes(deps.audit))
   if (deps.privacy) api.route('/', privacyRoutes(deps.privacy))
+  if (deps.notifications) api.route('/', notificationsRoutes(deps.notifications))
   api.all('*', () => {
     throw new FlagwiseError('not_found', 'No such endpoint')
   })

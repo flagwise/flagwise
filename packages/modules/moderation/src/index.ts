@@ -5,6 +5,7 @@ import { defineModule } from '@flagwise/kernel'
 export const moderationModule = defineModule({ name: 'moderation' })
 
 export * from './domain/case-state.ts'
+export * from './domain/sla.ts'
 export * from './app/ports.ts'
 export { receiveReport, type ReportReceived, type ReceiveReportResult } from './app/receive-report.ts'
 export {

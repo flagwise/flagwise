@@ -20,10 +20,12 @@ import {
   type WebhookSender,
 } from '@flagwise/delivery'
 import { pgFlaggingRunner, subscribeFlagging, type FlaggingDeps } from '@flagwise/flagging'
+import { notificationsService, pgNotificationsDeps, subscribeNotifications } from '@flagwise/notifications'
 import { newId, systemClock, type Clock } from '@flagwise/kernel'
 import {
   createDatabase,
   createPgBus,
+  createPgScheduler,
   DatabaseSetupError,
   DEFAULT_ROLES,
   fileStorage,
@@ -37,6 +39,7 @@ import {
   type Database,
   type ObjectStorage,
   type PgBus,
+  type PgScheduler,
 } from '@flagwise/platform'
 import type { FlagwisePlugin } from '@flagwise/plugin-api'
 import { busPolicyEvents, pgPolicy, subscribePolicy } from '@flagwise/policy'
@@ -68,6 +71,8 @@ export interface Server {
   readonly app: App
   readonly db: Database
   readonly bus: PgBus
+  /** The services' timers; fired from start() in MODE worker or all. */
+  readonly scheduler: PgScheduler
   readonly storage: ObjectStorage
   /**
    * Makes sure the database is ready, then starts handling events (MODE worker or all); serving HTTP
@@ -113,7 +118,7 @@ export function storageOf(config: StorageConfig): ObjectStorage {
  * of its own, and reads only its own tables and copies.
  * - api, all: the public API, reading API keys through the system role; the routes call the
  *   services' use cases, whose events the workers handle.
- * - worker, all: every service's handlers on the event bus, with classify on the install's LLM,
+ * - worker, all: every service's handlers on the event bus and its timers, with classify on the install's LLM,
  *   and delivery's webhook sender, when the config has master keys (without them no endpoint can
  *   be added, so nothing is queued).
  *
@@ -127,6 +132,7 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
   const retryMs = options.retryMs ?? 2_000
   const db = databaseOf(config.database, onError)
   const bus = createPgBus(db, { onError, contract: eventContract, ...(options.clock && { clock: options.clock }) })
+  const scheduler = createPgScheduler(db, { onError, ...(options.clock && { clock: options.clock }) })
   const storage = storageOf(config.storage)
   const api = config.mode !== 'worker'
   const worker = config.mode !== 'api'
@@ -144,13 +150,15 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
   const delivery = pgDeliveryDeps(db, bus, { clock, newActionRequestId: () => newId('acr', { clock }), newEventId: eventId })
   const auditLog = pgAuditDeps(db, clock)
   const privacy = pgPrivacyDeps(db, bus, { clock, newErasureId: () => newId('ers', { clock }) })
+  const notifications = pgNotificationsDeps(db, bus, { clock, newNotificationId: () => newId('ntf', { clock }) })
 
   // Each service's handlers; they only run once the bus is started, in MODE worker or all.
   subscribeFlagging(bus, flagging)
   subscribeClassify(bus, { classify, policy: classifyPolicy, ...(options.llmRetryDelaysMs && { llmRetryDelaysMs: options.llmRetryDelaysMs }) })
   subscribeTriage(bus, pgTriageDeps(db, bus))
-  subscribeModeration(bus, moderation)
-  subscribeDelivery(bus, delivery)
+  subscribeModeration(bus, moderation, scheduler)
+  subscribeDelivery(bus, delivery, scheduler)
+  subscribeNotifications(bus, notifications)
   subscribeAudit(bus, auditLog)
   subscribePrivacy(bus, privacy)
   subscribePolicy(bus, { clock })
@@ -201,7 +209,7 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
 
   const app = createApp({
     ...(options.plugins ? { plugins: options.plugins } : {}),
-    ...(api ? { api: { keys: pgKeyResolver(db), limiter: memoryRateLimiter(), rateLimit: config.rateLimit, clock, flagging, cases, classify, actionRequests, config: appConfig, audit, privacy: erasures, idempotency: pgIdempotencyStore(db) } } : {}),
+    ...(api ? { api: { keys: pgKeyResolver(db), limiter: memoryRateLimiter(), rateLimit: config.rateLimit, clock, flagging, cases, classify, actionRequests, config: appConfig, audit, privacy: erasures, notifications: notificationsService(notifications), idempotency: pgIdempotencyStore(db) } } : {}),
     ready: async () => {
       if (!prepared) throw new Error('The database is not ready yet')
       await Promise.all([db.app.execute(sql`SELECT 1`), db.system.execute(sql`SELECT 1`)])
@@ -212,19 +220,21 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
     app,
     db,
     bus,
+    scheduler,
     storage,
     prepare,
     async start() {
       await prepare({ wait: true })
       if (worker && !stopped) {
         bus.start()
+        scheduler.start()
         sender?.start()
       }
     },
     async stop() {
       stopped = true
       wake?.()
-      await Promise.all([bus.stop(), sender?.stop()])
+      await Promise.all([bus.stop(), scheduler.stop(), sender?.stop()])
       await db.close()
     },
   }

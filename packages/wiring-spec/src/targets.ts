@@ -31,6 +31,7 @@ export const ENFORCED: readonly string[] = [
   'service-routes', // renames and routes
   'no-org', // no org in the core
   'auth-apps-split', // tenancy split into auth and apps
+  'notification-clears', // item 10
 ]
 
 export const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
@@ -223,16 +224,29 @@ function erasureAcks(): CheckResult {
   }
 }
 
-/** 7. Every notification type that clears by fact names its clearing fact. */
+/**
+ * 7. Every notification type that clears by fact names its clearing facts, each a catalogued fact
+ * of the service that raises it: only the owner of a notification clears it.
+ */
 async function notificationClears(): Promise<CheckResult> {
   const contracts = (await import('@flagwise/contracts')) as Record<string, unknown>
-  const types = contracts['NOTIFICATION_TYPES'] as Readonly<Record<string, { clears: string; clearedBy?: readonly string[] }>> | undefined
+  const types = contracts['NOTIFICATION_TYPES'] as Readonly<Record<string, { owner: string; clears: string; clearedBy?: readonly string[] }>> | undefined
+  const catalog = contracts['EVENT_CATALOG'] as Readonly<Record<string, { name: string; owner: string }>> | undefined
   const title = 'Every by_fact notification type names a clearing fact from the same service'
   if (!types) return { id: 'notification-clears', title, items: '10', green: false, detail: 'no NOTIFICATION_TYPES in @flagwise/contracts yet' }
-  const missing = Object.entries(types)
-    .filter(([, t]) => t.clears === 'by_fact' && !(t.clearedBy && t.clearedBy.length > 0))
-    .map(([k]) => k)
-  return { id: 'notification-clears', title, items: '10', green: missing.length === 0, detail: missing.length === 0 ? `${Object.keys(types).length} types` : `no clearing fact: ${list(missing)}` }
+  const ownerOf = new Map(Object.values(catalog ?? {}).map((e) => [e.name, e.owner]))
+  const problems: string[] = []
+  for (const [type, t] of Object.entries(types)) {
+    if (!services().includes(t.owner)) problems.push(`${type}: owner ${t.owner} is no service`)
+    if (t.clears !== 'by_fact') continue
+    if (!t.clearedBy || t.clearedBy.length === 0) problems.push(`${type}: no clearing fact`)
+    for (const fact of t.clearedBy ?? []) {
+      const owner = ownerOf.get(fact)
+      if (owner === undefined) problems.push(`${type}: ${fact} is not catalogued`)
+      else if (owner !== t.owner) problems.push(`${type}: ${fact} is ${owner}'s, not ${t.owner}'s`)
+    }
+  }
+  return { id: 'notification-clears', title, items: '10', green: problems.length === 0, detail: problems.length === 0 ? `${Object.keys(types).length} types` : list(problems, 3) }
 }
 
 /**

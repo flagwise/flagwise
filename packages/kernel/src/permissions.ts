@@ -28,6 +28,7 @@ export type AppAction =
   | 'support_bundle.send'
   | 'audit.read'
   | 'metrics.read'
+  | 'notification.read' // list notifications, acknowledge them
   | 'categories.read' // report-screen labels
   // Tenant backend calls (API keys only)
   | 'report.create'
@@ -88,6 +89,7 @@ const APP_ACTIONS: Readonly<Record<AppAction, AppRule>> = {
   'support_bundle.send': { roles: CASES, scope: null },
   'audit.read': { roles: CASES, scope: 'admin' },
   'metrics.read': { roles: ALL, scope: 'admin' },
+  'notification.read': { roles: ALL, scope: 'admin' },
   'categories.read': { roles: ALL, scope: 'flagging' },
   'report.create': { roles: {}, scope: 'flagging', apiOnly: true },
   'identifiers.check': { roles: {}, scope: 'flagging', apiOnly: true },
