@@ -19,6 +19,9 @@ export type LlmAnswer =
 export interface Webhook {
   readonly type: string
   readonly data: Record<string, any>
+  /** As posted, for checking the signature as the tenant does. */
+  readonly headers: Readonly<Record<string, string>>
+  readonly body: string
 }
 
 export interface FakeNet {
@@ -68,8 +71,8 @@ export function fakeNet(): FakeNet {
         return new Response(JSON.stringify(completion), { status: 200, headers: { 'content-type': 'application/json' } })
       }
       if (url === WEBHOOK_URL) {
-        const parsed = JSON.parse(body) as Webhook
-        received.push({ type: parsed.type, data: parsed.data })
+        const parsed = JSON.parse(body) as { type: string; data: Record<string, any> }
+        received.push({ type: parsed.type, data: parsed.data, headers: Object.fromEntries(new Headers(init?.headers).entries()), body })
         return new Response('ok', { status: 200 })
       }
       return new Response('not found', { status: 404 })

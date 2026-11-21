@@ -6,7 +6,7 @@
 import type { AppRef } from '@flagwise/kernel'
 import { newKeyringEntry } from '@flagwise/platform'
 import { createTestDatabase, testStorageEnv, type TestDatabase } from '@flagwise/platform/testing'
-import { addWebhookEndpoint, bootstrap, createKey, createServer, migrateFromEnv, serverConfigFromEnv, type Server } from '@flagwise/server'
+import { addWebhookEndpoint, bootstrap, createKey, createServer, migrateFromEnv, serverConfigFromEnv, type Server, type ServerConfig } from '@flagwise/server'
 import { skippingClock, type SkippingClock } from './clock.ts'
 import { fakeNet, LLM_BASE_URL, WEBHOOK_URL, type FakeNet } from './net.ts'
 
@@ -23,17 +23,29 @@ export interface Fact {
   readonly schemaVersion: string | null
 }
 
+export interface InstallOptions {
+  /** The categories the app starts with, as `flagwise bootstrap --preset` gives them. */
+  readonly preset?: 'dating' | 'marketplace' | 'community'
+}
+
 export interface Install {
   readonly clock: SkippingClock
   readonly net: FakeNet
   readonly appRef: AppRef
   /** The app's live flagging key, as the tenant's backend holds it. */
   readonly flaggingKey: string
+  /** The app's test-mode flagging key. */
+  readonly testKey: string
+  /** The webhook endpoint's signing secret, as the tenant keeps it to check signatures. */
+  readonly webhookSecret: string
+  /** The operator's settings and the config read from them, for the CLI's setup commands. */
+  readonly env: Readonly<Record<string, string>>
+  readonly config: ServerConfig
   /** Two moderators with admin keys. */
   readonly jane: Member
   readonly john: Member
   /** Calls the public API under /v1 and returns the status and the JSON body. */
-  call(key: string, path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }): Promise<{ status: number; body: any }>
+  call(key: string, path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }): Promise<{ status: number; body: any; headers: Headers }>
   /** The facts published so far, in order. */
   facts(): Promise<readonly Fact[]>
   /** Stops the server and drops the database. */
@@ -41,7 +53,7 @@ export interface Install {
 }
 
 /** Starts an install. */
-export async function startInstall(): Promise<Install> {
+export async function startInstall(options: InstallOptions = {}): Promise<Install> {
   const db: TestDatabase = await createTestDatabase()
   let server: Server | undefined
   try {
@@ -55,14 +67,17 @@ export async function startInstall(): Promise<Install> {
       LLM_PROVIDER: 'openai-compatible',
       LLM_BASE_URL,
       LLM_MODEL: 'small',
+      // Scenarios poll the API while waiting; the rate limit has its own test (apps/server).
+      API_RATE_PER_SECOND: '1000',
+      API_RATE_BURST: '1000',
     }
     await migrateFromEnv({ DATABASE_OWNER_URL: db.ownerUrl, DATABASE_APP_URL: `postgres://${db.roles.app}@x/x`, DATABASE_SYSTEM_URL: `postgres://${db.roles.system}@x/x` })
     const config = await serverConfigFromEnv(env, { fetch: net.fetch })
-    const installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' }, clock)
+    const installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS', ...(options.preset && { preset: options.preset }) }, clock)
     const appRef: AppRef = { appId: installed.app.id, livemode: true }
     const jane = await createKey(config, { ...appRef, scopes: ['admin'] })
     const john = await createKey(config, { ...appRef, scopes: ['admin'] })
-    await addWebhookEndpoint(config, appRef, { url: WEBHOOK_URL }, clock)
+    const endpoint = await addWebhookEndpoint(config, appRef, { url: WEBHOOK_URL }, clock)
     server = createServer(config, { clock, fetch: net.fetch, onError: () => {} })
     await server.start()
     const running = server
@@ -72,6 +87,10 @@ export async function startInstall(): Promise<Install> {
       net,
       appRef,
       flaggingKey: installed.liveKey,
+      testKey: installed.testKey,
+      webhookSecret: endpoint.secret!,
+      env,
+      config,
       jane: { id: jane.id, key: jane.key },
       john: { id: john.id, key: john.key },
       async call(key, path, init = {}) {
@@ -81,7 +100,7 @@ export async function startInstall(): Promise<Install> {
           ...(init.body !== undefined && { body: JSON.stringify(init.body) }),
         })
         const text = await res.text()
-        return { status: res.status, body: text ? JSON.parse(text) : null }
+        return { status: res.status, body: text ? JSON.parse(text) : null, headers: res.headers }
       },
       async facts() {
         return (await running.bus.log()).map(({ seq, event }) => ({ seq, type: event.type, key: event.key, data: event.data, schemaVersion: event.schemaVersion ?? null }))

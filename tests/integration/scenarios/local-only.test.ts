@@ -1,25 +1,19 @@
-// The whole loop with nothing outside the machine: the fake LLM, evidence on local disk, a master
-// key from the environment and a webhook receiver on loopback over http:, with the real fetch.
-// Only Postgres is needed (TEST_DATABASE_URL); skipped without it.
+// Local development with nothing outside the machine: the built-in fake LLM, evidence on local
+// disk, a master key from the environment, and the real fetch posting to a webhook receiver on
+// loopback over http:. Only Postgres is needed; skipped without TEST_DATABASE_URL.
 import { mkdtempSync } from 'node:fs'
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { verify } from '@flagwise/delivery'
 import { newKeyringEntry } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
+import { addWebhookEndpoint, bootstrap, createKey, createServer, migrateFromEnv, serverConfigFromEnv, type Bootstrapped, type Server } from '@flagwise/server'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { addWebhookEndpoint, bootstrap, createKey, createServer, migrateFromEnv, serverConfigFromEnv, type Bootstrapped, type Server } from '../src/index.ts'
-
-async function eventually<T>(check: () => Promise<T | undefined> | T | undefined): Promise<T> {
-  for (let i = 0; i < 300; i++) {
-    const value = await check()
-    if (value !== undefined) return value
-    await new Promise((r) => setTimeout(r, 50))
-  }
-  throw new Error('Timed out waiting')
-}
+import { eventually } from '../src/install.ts'
+import type { Webhook } from '../src/net.ts'
+import { PATHS } from '../src/paths.ts'
+import { signedWith } from '../src/signature.ts'
 
 describe.skipIf(!testDatabaseUrl)('local development with no outside service', () => {
   let t: TestDatabase
@@ -28,16 +22,14 @@ describe.skipIf(!testDatabaseUrl)('local development with no outside service', (
   let installed: Bootstrapped
   let admin: { key: string }
   let secret: string
-  const hooks: { headers: Record<string, string>; body: string }[] = []
-  const call = (key: string, path: string, init: { method?: string; body?: unknown } = {}) =>
-    server.app.http.request(`/v1${path}`, {
+  const hooks: Webhook[] = []
+  const call = async (key: string, path: string, init: { method?: string; body?: unknown } = {}) => {
+    const res = await server.app.http.request(`/v1${path}`, {
       method: init.method ?? 'GET',
       headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
       ...(init.body !== undefined && { body: JSON.stringify(init.body) }),
     })
-  const got = async (key: string, path: string) => {
-    const res = await call(key, path)
-    return res.ok ? ((await res.json()) as Record<string, any>) : undefined
+    return { status: res.status, body: res.ok ? ((await res.json()) as Record<string, any>) : undefined }
   }
 
   beforeAll(async () => {
@@ -45,7 +37,8 @@ describe.skipIf(!testDatabaseUrl)('local development with no outside service', (
       let body = ''
       req.on('data', (c) => (body += c))
       req.on('end', () => {
-        hooks.push({ headers: req.headers as Record<string, string>, body })
+        const parsed = JSON.parse(body) as { type: string; data: Record<string, any> }
+        hooks.push({ type: parsed.type, data: parsed.data, headers: req.headers as Record<string, string>, body })
         res.end('ok')
       })
     })
@@ -58,10 +51,12 @@ describe.skipIf(!testDatabaseUrl)('local development with no outside service', (
       DATABASE_APP_URL: t.appUrl,
       DATABASE_SYSTEM_URL: t.systemUrl,
       STORAGE_DRIVER: 'local',
-      STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')),
+      STORAGE_DIR: mkdtempSync(join(tmpdir(), 'integration-evidence-')),
       LLM_PROVIDER: 'fake',
       SECRETS_ENCRYPTION_KEY: newKeyringEntry('dev'),
       WEBHOOKS_ALLOW_HTTP: 'true',
+      API_RATE_PER_SECOND: '1000',
+      API_RATE_BURST: '1000',
     })
     installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' })
     const appRef = { appId: installed.app.id, livemode: true }
@@ -77,22 +72,23 @@ describe.skipIf(!testDatabaseUrl)('local development with no outside service', (
   })
 
   it('classifies with the fake LLM, keeps the evidence on disk and posts a signed webhook to a local receiver', async () => {
-    const post = await call(installed.liveKey, '/flagging/reports', {
+    const post = await call(installed.liveKey, PATHS.reports(), {
       method: 'POST',
       body: { reporter: { external_id: 'u_jane_doe' }, reported: { external_id: 'u_john_doe' }, category: 'asking_for_money', evidence: { kind: 'message', content: ['invest in my crypto coin'] } },
     })
     expect(post.status).toBe(202)
-    const reportId = ((await post.json()) as { id: string }).id
-    const caseId = await eventually(async () => ((await got(installed.liveKey, `/flagging/reports/${reportId}`))?.case_id as string | null) ?? undefined)
+    const reportId = post.body!['id'] as string
+    const caseId = await eventually(async () => ((await call(installed.liveKey, PATHS.report(reportId))).body?.['case_id'] as string | null) ?? undefined, 'a case')
     const c = await eventually(async () => {
-      const now = await got(admin.key, `/moderation/cases/${caseId}`)
-      return now && now.state !== 'classifying' ? now : undefined
-    })
+      const now = (await call(admin.key, PATHS.case(caseId))).body
+      return now && now['state'] !== 'classifying' ? now : undefined
+    }, 'classified')
     expect(c).toMatchObject({ state: 'open', classified_by: 'llm', category_id: 'scams_fraud.investment_scam' })
-    expect(await got(admin.key, `/classify/classifications/${caseId}`)).toMatchObject({ summary: 'Fake classification of 1 message(s).' })
+    expect((await call(admin.key, PATHS.classification(caseId))).body).toMatchObject({ summary: 'Fake classification of 1 message(s).' })
+    expect((await call(admin.key, PATHS.evidence(reportId))).status).toBe(200)
 
-    const hook = await eventually(() => hooks.find((h) => h.body.includes('"report.triaged"')))
-    expect(verify(secret, hook.headers, hook.body).ok).toBe(true)
-    expect(JSON.parse(hook.body)).toMatchObject({ data: { case_id: caseId, classified_by: 'llm' } })
+    const hook = await eventually(() => hooks.find((h) => h.type === 'report.triaged'), 'report.triaged')
+    expect(signedWith(secret, hook)).toBe(true)
+    expect(hook.data).toMatchObject({ case_id: caseId, classified_by: 'llm' })
   })
 })

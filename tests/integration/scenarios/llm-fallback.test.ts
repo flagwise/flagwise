@@ -37,10 +37,17 @@ describe.skipIf(!testDatabaseUrl)('the LLM failing and coming back', () => {
     const retried = await caseWhen(i, open.id, (c) => c.classified_by === 'llm', 'classified by the LLM')
     expect(retried).toMatchObject({ state: 'open', category_id: 'scams_fraud.investment_scam' })
     expect(i.net.llmCalls()).toBeGreaterThan(calls)
+    const trail = await eventually(async () => {
+      const page = (await i.call(i.jane.key, PATHS.audit(open.id))).body
+      return page?.data?.some((e: { action: string }) => e.action === 'case.reclassified') ? page.data : undefined
+    }, 'the reclassification on the audit trail')
+    expect(trail.find((e: { action: string }) => e.action === 'case.reclassified')).toMatchObject({ facts: { category_id: 'scams_fraud.investment_scam', classified_by: 'llm' } })
 
     await reclassified(held.id)
     const kept = (await i.call(i.jane.key, PATHS.case(held.id))).body
     expect(kept).toMatchObject({ state: 'claimed', classified_by: 'rules', category_id: held.category_id, triage: { severity: held.triage.severity } })
+    // Classify keeps the LLM's answer for the moderator to see.
+    expect((await i.call(i.jane.key, PATHS.classification(held.id))).body).toMatchObject({ classified_by: 'llm', category_id: 'scams_fraud.investment_scam' })
   })
 
   it('leaves the case untriaged without the fallback, and triages it once the LLM answers', async () => {
@@ -54,5 +61,22 @@ describe.skipIf(!testDatabaseUrl)('the LLM failing and coming back', () => {
     const triaged = await caseWhen(i, waiting.id, (c) => c.state === 'open', 'open')
     expect(triaged).toMatchObject({ classified_by: 'llm', category_id: 'scams_fraud.investment_scam' })
     expect(triaged.triage.severity).toMatch(/^P[012]$/)
+  })
+
+  it('gives up quietly once the retries run out', async () => {
+    i.net.llm = () => 'down'
+    const left = await triagedCase(i, { reported: 'u_jeff_doe' })
+    expect(left).toMatchObject({ state: 'untriaged' })
+    // Six retries, 5 minutes to 160 minutes apart; skip past each and see it call the LLM.
+    for (const minutes of [5, 10, 20, 40, 80, 160]) {
+      const calls = i.net.llmCalls()
+      i.clock.advance(minutes * 1.25 * MINUTE)
+      await eventually(() => (i.net.llmCalls() > calls ? true : undefined), `the retry after ${minutes} minutes`)
+    }
+    const calls = i.net.llmCalls()
+    i.clock.advance(24 * 60 * MINUTE)
+    await new Promise((r) => setTimeout(r, 1_000))
+    expect(i.net.llmCalls()).toBe(calls)
+    expect((await i.call(i.jane.key, PATHS.case(left.id))).body).toMatchObject({ state: 'untriaged' })
   })
 })
