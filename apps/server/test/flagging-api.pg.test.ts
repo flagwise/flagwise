@@ -1,10 +1,13 @@
-// The flagging API end to end: API keys from auth, flagging on Postgres and object
-// storage, and the cases module putting reports in cases through the bus.
-// Runs against a real Postgres (TEST_DATABASE_URL) and S3-compatible store (TEST_S3_URL); skipped without them.
+// The flagging API end to end: API keys from auth, flagging on Postgres with evidence in local
+// storage, and the cases module putting reports in cases through the bus. Runs against a real
+// Postgres (TEST_DATABASE_URL); skipped without it. The S3 driver is tested on its own in platform.
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { manualClock, type ManualClock } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
-import { createDatabase, createPgBus, createPgScheduler, pgTimers, memoryRateLimiter, migrate, pgUnitOfWork, withApps, withSystem, type Database, type ObjectStorage, type PgBus } from '@flagwise/platform'
-import { createTestBucket, createTestDatabase, testDatabaseUrl, testS3Url, type TestBucket, type TestDatabase } from '@flagwise/platform/testing'
+import { createDatabase, createPgBus, createPgScheduler, fileStorage, pgTimers, memoryRateLimiter, migrate, pgUnitOfWork, withApps, withSystem, type Database, type ObjectStorage, type PgBus } from '@flagwise/platform'
+import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
 import { moderationMigrations, pgCaseRepository, pgModerationPolicyCopy } from '@flagwise/moderation'
 import { deliveryMigrations, pgDeliveryDeps } from '@flagwise/delivery'
 import { flaggingMigrations, flaggingRoutes, pgFlaggingRunner, subscribeFlagging, type FlaggingDeps } from '@flagwise/flagging'
@@ -25,9 +28,9 @@ const report = (over: Record<string, unknown> = {}) =>
     ...over,
   })
 
-describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and object storage', () => {
+describe.skipIf(!testDatabaseUrl)('flagging API on Postgres', () => {
   let t: TestDatabase
-  let bucket: TestBucket
+  let storage: ObjectStorage
   let db: Database
   let bus: PgBus
   let clock: ManualClock
@@ -48,7 +51,7 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
 
   beforeAll(async () => {
     t = await createTestDatabase()
-    bucket = await createTestBucket()
+    storage = fileStorage({ dir: mkdtempSync(join(tmpdir(), 'evidence-')) })
     await migrate(t.ownerUrl, [authMigrations, flaggingMigrations, moderationMigrations, deliveryMigrations, triageMigrations], t.roles)
     db = createDatabase({ appUrl: t.appUrl, systemUrl: t.systemUrl })
     bus = createPgBus(db, { retryDelayMs: () => 0, contract: eventContract })
@@ -72,7 +75,7 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
     })
     await apps.setDeletedAt('app_gone', clock.now())
 
-    flagging = { run: pgFlaggingRunner(db, bus), storage: bucket.storage, clock, newReportId: () => `rpt_${++n}` }
+    flagging = { run: pgFlaggingRunner(db, bus), storage, clock, newReportId: () => `rpt_${++n}` }
     composeServices({
       bus,
       scheduler: createPgScheduler(db, { clock }),
@@ -97,7 +100,6 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
     await bus?.stop()
     await db?.close()
     await t?.drop()
-    await bucket?.drop()
   })
 
   it('accepts a report, stores its snapshot, and shows its case once cases has picked one', async () => {
@@ -106,7 +108,7 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
     const accepted = await res.json() as any
     expect(accepted).toEqual({ id: expect.stringMatching(/^rpt_/), object: 'report', status: 'received', case_id: null, livemode: true, received_at: T0 })
     expect(res.headers.get('idempotent-replayed')).toBeNull()
-    const snapshot = JSON.parse(new TextDecoder().decode((await bucket.storage.get(`apps/app_a/${accepted.id}`))!))
+    const snapshot = JSON.parse(new TextDecoder().decode((await storage.get(`apps/app_a/${accepted.id}`))!))
     expect(snapshot).toMatchObject({ format: 'flagwise.report.v1', report_id: accepted.id, report: { reported: { externalId: 'u_john_doe' } } })
 
     // Before the bus runs, the report has no case yet.
@@ -223,7 +225,7 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
 
   it('hides internal errors behind a 500 and reports them to onError', async () => {
     const seen: string[] = []
-    const broken: ObjectStorage = { ...bucket.storage, put: async () => Promise.reject(new Error('disk on fire at /var/secret')) }
+    const broken: ObjectStorage = { ...storage, put: async () => Promise.reject(new Error('disk on fire at /var/secret')) }
     const app = createApp({ api: { ...deps, routes: [flaggingRoutes({ ...flagging, storage: broken })], onError: (err, id) => void seen.push(`${id}: ${(err as Error).message}`) } }).http
     const res = await app.request('/v1/flagging/reports', { method: 'POST', headers: { authorization: `Bearer ${keys.live}`, 'x-request-id': 'req-fire' }, body: report() })
     expect(res.status).toBe(500)
