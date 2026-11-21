@@ -2,17 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { currentType, EVENT_CATALOG, EventContractError, eventContract, factOf } from '../src/index.ts'
 
-// The services, plus the platform (the bus's own facts) and any (an answer every service gives).
-const OWNERS = ['flagging', 'moderation', 'classify', 'triage', 'delivery', 'auth', 'apps', 'policy', 'privacy', 'platform', 'any']
-
 describe('the event catalog', () => {
+  // That each owner is a service (or the platform, or any) is checked where the services boot.
   it('names every type by its fact and major, with a semver of that major, an owner and a meaning', () => {
     for (const [type, s] of Object.entries(EVENT_CATALOG)) {
       expect(type).toBe(`${s.name}.v${s.major}`)
       expect(s.name).toMatch(/^[a-z_]+\.[a-z_]+$/)
       expect(s.version).toMatch(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/)
       expect(Number(s.version.split('.')[0])).toBe(s.major)
-      expect(OWNERS).toContain(s.owner)
+      expect(s.owner.length).toBeGreaterThan(0)
       expect(s.meaning.length).toBeGreaterThan(10)
     }
   })

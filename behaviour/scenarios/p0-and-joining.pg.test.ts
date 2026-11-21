@@ -11,7 +11,7 @@ describe.skipIf(!testDatabaseUrl)('P0 pre-rules and reports joining a case', () 
   let i: Install
 
   beforeAll(async () => {
-    i = await startInstall('p0-and-joining')
+    i = await startInstall()
     expect((await i.call(i.jane.key, PATHS.llmSettings(), { method: 'PUT', body: { rules_only: true, fallback_to_rules: true } })).status).toBe(200)
   })
   afterAll(async () => {

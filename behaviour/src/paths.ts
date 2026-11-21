@@ -44,7 +44,7 @@ export const EVENTS = {
   erased: 'subject.erased.v1',
 } as const
 
-/** Webhook types: the tenant's public contract, which phase 1 does not change. */
+/** Webhook types: the tenant's public contract. */
 export const WEBHOOKS = {
   reportTriaged: 'report.triaged',
   actionRequested: 'action.requested',

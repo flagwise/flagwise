@@ -493,4 +493,5 @@ export const eventContract = {
     if (!result.success) throw new EventContractError(`Event ${type} breaks its schema ${s.version}:\n${z.prettifyError(result.error)}`)
     return s.version
   },
+  knows: (type: string): boolean => Object.hasOwn(EVENT_CATALOG, type),
 }

@@ -13,9 +13,9 @@
     "flagwise": "pnpm --filter @flagwise/server cli",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "lint:deps": "depcruise apps packages --config .dependency-cruiser.cjs",
-    "verify": "pnpm typecheck && pnpm lint:deps && pnpm test",
-    "wiring": "pnpm --filter @flagwise/wiring-spec wiring"
+    "lint:deps": "depcruise apps packages behaviour --config .dependency-cruiser.cjs",
+    "lint:architecture": "node scripts/architecture-lint.ts",
+    "verify": "pnpm typecheck && pnpm lint:deps && pnpm lint:architecture && pnpm test"
   },
   "devDependencies": {
     "@swc/core": "^1.16.21",

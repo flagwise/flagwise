@@ -62,6 +62,15 @@ export function deadLetteredEvent(event: BusEvent, group: string, attempts: numb
 export interface EventContract {
   /** The schema version `type` is published under; throws when the type is unknown or the data breaks its schema. */
   versionOf(type: string, data: unknown): string
+  /** Whether `type` is in the contract; subscribing to one that is not throws. */
+  knows(type: string): boolean
+}
+
+/** Throws when a group subscribes to a type its bus's contract does not know, so a misspelled type fails at boot. */
+export function checkSubscription(group: string, types: readonly string[] | '*', contract: EventContract | undefined): void {
+  if (!contract || types === '*') return
+  const unknown = types.filter((t) => !contract.knows(t))
+  if (unknown.length > 0) throw new TypeError(`Group ${group} subscribes to ${unknown.join(', ')}, not in the event contract`)
 }
 
 /** An event as consumers receive it: its data through JSON, its schema version from the contract when there is one. */
@@ -223,6 +232,7 @@ export function createMemoryBus(opts?: { maxAttempts?: number; contract?: EventC
       if (types !== '*' && (!Array.isArray(types) || types.length === 0)) {
         throw new TypeError("types must be a non-empty array or '*'")
       }
+      checkSubscription(name, types, opts?.contract)
       const group: Group = {
         name,
         types,

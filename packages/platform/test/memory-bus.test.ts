@@ -283,7 +283,14 @@ describe('with a contract', () => {
       if (typeof (data as { orderId?: unknown } | null)?.orderId !== 'string') throw new TypeError('order.placed.v1 needs an orderId')
       return '1.2.0'
     },
+    knows: (type: string) => type === 'order.placed.v1',
   }
+
+  it('refuses a group that subscribes to a type the contract does not know', () => {
+    const checked = createMemoryBus({ contract })
+    expect(() => checked.subscribe('g', ['order.placed.v1', 'order.plaecd.v1'], () => {})).toThrow('Group g subscribes to order.plaecd.v1, not in the event contract')
+    expect(() => checked.subscribe('all', '*', () => {})).not.toThrow()
+  })
 
   it('gives each event its schema version and publishes nothing of a call when one breaks it', async () => {
     const checked = createMemoryBus({ contract })

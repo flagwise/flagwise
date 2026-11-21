@@ -11,7 +11,7 @@ describe.skipIf(!testDatabaseUrl)('erasure', () => {
   let i: Install
 
   beforeAll(async () => {
-    i = await startInstall('erasure')
+    i = await startInstall()
     i.net.llm = () => ({ category_id: 'scams_fraud.investment_scam' })
   })
   afterAll(async () => {

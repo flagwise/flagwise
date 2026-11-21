@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { FlagwisePlugin } from '@flagwise/plugin-api'
 import { createApi, type ApiDeps } from './http/api.ts'
-import { SERVICES } from './modules.ts'
+import { SERVICES } from './services.ts'
 
 export interface CreateAppOptions {
   /** Cloud and Pro plugins, passed at build time. Self-host passes none. */

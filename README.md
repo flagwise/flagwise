@@ -17,12 +17,18 @@ packages/
     apps auth policy flagging classify triage moderation scoring
     delivery disputes privacy notifications audit analytics
 spec/                   MIT: openapi.json + webhook JSON Schemas, generated per release
+behaviour/              black-box scenarios: the product installed and used only from outside
+scripts/                architecture-lint.ts: the architecture rules only the code's text shows
 .env.example            server configuration
 ```
 
-Inside each module: `src/domain/` (pure logic), `src/app/` (use cases), `src/infra/` (repositories, schema, migrations), `src/api/` (HTTP routes), `src/index.ts` (the public facade; the only file other modules may import).
+Inside each module: `src/domain/` (pure logic), `src/app/` (use cases), `src/infra/` (repositories, schema, migrations), `src/api/` (HTTP routes), `src/service.ts` (its composition root: how it boots), `src/index.ts` (the public facade, for the server and tests).
 
-**Boundary rules**, checked by `pnpm lint:deps`: modules import each other only through `index.ts`; `kernel`, `contracts`, `plugin-api` and `platform` never import modules or apps; no cycles.
+**Boundary rules**, checked by `pnpm lint:deps`: no service imports another (only `contracts`, `kernel` and `platform`); `kernel`, `contracts`, `plugin-api` and `platform` never import services or apps; `behaviour` imports no service; every import resolves; no cycles.
+
+**Architecture rules**: beside the boundary rules, `pnpm lint:architecture` checks what only the code's text shows (no service's SQL names another's schema, the server only boots the services, no org), and `apps/server/test/boot.pg.test.ts` boots every service alone on its own tables. Both find the services themselves, so a new service is held to them from its first commit.
+
+**Behaviour scenarios** (`behaviour/`, part of `pnpm test`): they install Flagwise fresh and drive it only from outside, as a tenant and an operator do: the public API, a fake LLM, a webhook receiver, and the bus read without consuming.
 
 ## Development
 
@@ -44,7 +50,8 @@ pnpm dev                # server with reload on http://localhost:3000 (try /read
 | `pnpm test` | Every package's tests (Vitest) |
 | `pnpm typecheck` | `tsc --noEmit` in every package |
 | `pnpm lint:deps` | Module boundary check (dependency-cruiser) |
-| `pnpm verify` | typecheck + lint:deps + test; run it before opening a pull request |
+| `pnpm lint:architecture` | The architecture rules only the code's text shows |
+| `pnpm verify` | typecheck + lint:deps + lint:architecture + test; run it before opening a pull request |
 
 Tests that need PostgreSQL run when `TEST_DATABASE_URL` is set to a user that can create databases and roles (for example `postgres://postgres:postgres@localhost:5432/postgres`). Each test file creates its own database and roles with random names and drops them afterwards. Without the variable those tests are skipped.
 

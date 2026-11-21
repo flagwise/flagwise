@@ -459,6 +459,7 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
         if (typeof (data as { orderId?: unknown } | null)?.orderId !== 'string') throw new TypeError('order.placed.v1 needs an orderId')
         return '1.2.0'
       },
+      knows: (type) => type === 'order.placed.v1',
     }
 
     it('stores each event with its schema version and hands it to handlers with it', async () => {

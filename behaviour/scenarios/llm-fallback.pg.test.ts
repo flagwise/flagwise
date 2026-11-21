@@ -17,7 +17,7 @@ describe.skipIf(!testDatabaseUrl)('the LLM failing and coming back', () => {
     eventually(async () => ((await i.facts()).some((f) => f.type === EVENTS.caseReclassified && f.key === caseId) ? true : undefined), `${caseId} reclassified`)
 
   beforeAll(async () => {
-    i = await startInstall('llm-fallback')
+    i = await startInstall()
   })
   afterAll(async () => {
     await i?.stop()

@@ -7,13 +7,11 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AppRef } from '@flagwise/kernel'
-import pg from 'pg'
 import { newKeyringEntry } from '@flagwise/platform'
 import { createTestDatabase, type TestDatabase } from '@flagwise/platform/testing'
 import { addWebhookEndpoint, bootstrap, createKey, createServer, migrateFromEnv, serverConfigFromEnv, type Server } from '@flagwise/server'
 import { skippingClock, type SkippingClock } from './clock.ts'
 import { fakeNet, LLM_BASE_URL, WEBHOOK_URL, type FakeNet } from './net.ts'
-import { recordSeen } from './seen.ts'
 
 export interface Member {
   readonly id: string
@@ -41,12 +39,12 @@ export interface Install {
   call(key: string, path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }): Promise<{ status: number; body: any }>
   /** The facts published so far, in order. */
   facts(): Promise<readonly Fact[]>
-  /** Stops the server, records the event types and consumer groups seen for the scoreboard, and drops the database. */
+  /** Stops the server and drops the database. */
   stop(): Promise<void>
 }
 
-/** Starts an install named `name` (used for the scoreboard's record of seen event types). */
-export async function startInstall(name: string): Promise<Install> {
+/** Starts an install. */
+export async function startInstall(): Promise<Install> {
   const db: TestDatabase = await createTestDatabase()
   let server: Server | undefined
   try {
@@ -55,7 +53,7 @@ export async function startInstall(name: string): Promise<Install> {
     const env = {
       DATABASE_APP_URL: db.appUrl,
       DATABASE_SYSTEM_URL: db.systemUrl,
-      STORAGE_DIR: mkdtempSync(join(tmpdir(), 'wiring-evidence-')),
+      STORAGE_DIR: mkdtempSync(join(tmpdir(), 'behaviour-evidence-')),
       SECRETS_ENCRYPTION_KEY: newKeyringEntry('k1', () => new Uint8Array(32).fill(7)),
       LLM_PROVIDER: 'openai-compatible',
       LLM_BASE_URL,
@@ -93,17 +91,8 @@ export async function startInstall(name: string): Promise<Install> {
       },
       async stop() {
         try {
-          const events: Record<string, (string | null)[]> = {}
-          for (const { event } of await running.bus.log()) {
-            const versions = (events[event.type] ??= [])
-            if (!versions.includes(event.schemaVersion ?? null)) versions.push(event.schemaVersion ?? null)
-          }
-          const client = new pg.Client({ connectionString: db.systemUrl })
-          await client.connect()
-          const rows = await client.query<{ name: string; types: string[] | null }>('SELECT name, types FROM platform.consumer_groups ORDER BY name').finally(() => client.end())
-          recordSeen(name, { events, groups: Object.fromEntries(rows.rows.map((r) => [r.name, r.types])) })
-        } finally {
           await running.stop()
+        } finally {
           await db.drop()
         }
       },

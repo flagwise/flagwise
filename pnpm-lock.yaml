@@ -90,6 +90,18 @@ importers:
         specifier: ^4.13.16
         version: 4.13.16
 
+  behaviour:
+    dependencies:
+      '@flagwise/kernel':
+        specifier: workspace:*
+        version: link:../packages/kernel
+      '@flagwise/platform':
+        specifier: workspace:*
+        version: link:../packages/platform
+      '@flagwise/server':
+        specifier: workspace:*
+        version: link:../apps/server
+
   packages/contracts:
     dependencies:
       zod:
@@ -350,28 +362,6 @@ importers:
       '@flagwise/kernel':
         specifier: workspace:*
         version: link:../kernel
-
-  packages/wiring-spec:
-    dependencies:
-      '@flagwise/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@flagwise/kernel':
-        specifier: workspace:*
-        version: link:../kernel
-      '@flagwise/platform':
-        specifier: workspace:*
-        version: link:../platform
-      '@flagwise/server':
-        specifier: workspace:*
-        version: link:../../apps/server
-      pg:
-        specifier: ^8.23.1
-        version: 8.23.1
-    devDependencies:
-      '@types/pg':
-        specifier: ^8.23.1
-        version: 8.23.1
 
 packages:
 

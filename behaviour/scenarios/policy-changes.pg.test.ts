@@ -13,7 +13,7 @@ describe.skipIf(!testDatabaseUrl)('policy changes', () => {
   let i: Install
 
   beforeAll(async () => {
-    i = await startInstall('policy-changes')
+    i = await startInstall()
     i.net.llm = () => 'down'
   })
   afterAll(async () => {

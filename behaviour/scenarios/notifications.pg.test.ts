@@ -10,7 +10,7 @@ describe.skipIf(!testDatabaseUrl)('notifications', () => {
   let i: Install
 
   beforeAll(async () => {
-    i = await startInstall('notifications')
+    i = await startInstall()
     expect((await i.call(i.jane.key, PATHS.llmSettings(), { method: 'PUT', body: { rules_only: true, fallback_to_rules: true } })).status).toBe(200)
   })
   afterAll(async () => {

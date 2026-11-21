@@ -1,0 +1,17 @@
+{
+  "name": "@flagwise/behaviour",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Behaviour scenarios: the product installed fresh and used only from outside, as a tenant and an operator use it (black-box)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "@flagwise/kernel": "workspace:*",
+    "@flagwise/platform": "workspace:*",
+    "@flagwise/server": "workspace:*"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  }
+}

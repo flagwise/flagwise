@@ -1,16 +1,13 @@
-// Module boundary rules: modules import each other only through index.ts; shared packages never import modules or apps.
+// Boundary rules: no service imports another; shared packages never import services or apps; the behaviour scenarios see the product only from outside.
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
   forbidden: [
     {
-      name: 'no-module-internals',
-      comment: 'A module may import another module only through its index.ts facade.',
+      name: 'no-service-imports',
+      comment: 'A service imports only contracts, kernel and platform, never another service, so each can boot and change alone.',
       severity: 'error',
       from: { path: '^packages/modules/([^/]+)/' },
-      to: {
-        path: '^packages/modules/[^/]+/src/',
-        pathNot: ['^packages/modules/$1/', '^packages/modules/[^/]+/src/index[.]ts$'],
-      },
+      to: { path: '^packages/modules/', pathNot: '^packages/modules/$1/' },
     },
     {
       name: 'shared-packages-stay-below-modules',
@@ -21,17 +18,24 @@ module.exports = {
     },
     {
       name: 'no-app-imports-from-packages',
-      comment: 'Packages never import from apps/, except the wiring spec, which runs the server from outside.',
+      comment: 'Packages never import from apps/.',
       severity: 'error',
-      from: { path: '^packages/', pathNot: '^packages/wiring-spec/' },
+      from: { path: '^packages/' },
       to: { path: '^apps/' },
     },
     {
-      name: 'wiring-spec-sees-only-the-outside',
-      comment: 'The wiring spec sees Flagwise only from outside: the server, contracts, kernel and platform, never a service. Its scenarios live in scenarios/, not test/, so this rule covers them.',
+      name: 'behaviour-sees-only-the-outside',
+      comment: 'The behaviour scenarios see Flagwise only from outside: the server, kernel and platform, never a service. They live in scenarios/, not test/, so this rule covers them.',
       severity: 'error',
-      from: { path: '^packages/wiring-spec/' },
+      from: { path: '^behaviour/' },
       to: { path: '^(packages/modules|packages/plugin-api)/' },
+    },
+    {
+      name: 'not-to-unresolvable',
+      comment: 'Every import resolves, so the rules above see where it goes: a service importing a package it does not depend on fails here.',
+      severity: 'error',
+      from: {},
+      to: { couldNotResolve: true },
     },
     {
       name: 'no-circular',

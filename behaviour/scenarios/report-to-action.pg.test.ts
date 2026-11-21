@@ -11,7 +11,7 @@ describe.skipIf(!testDatabaseUrl)('from report to action', () => {
   let i: Install
 
   beforeAll(async () => {
-    i = await startInstall('report-to-action')
+    i = await startInstall()
     i.net.llm = () => ({ category_id: 'scams_fraud.investment_scam', confidence: 0.92 })
     await setActionKeys(i)
   })

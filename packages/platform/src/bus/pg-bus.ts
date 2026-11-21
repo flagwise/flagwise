@@ -7,7 +7,7 @@
 import type { Clock, AppRef } from '@flagwise/kernel'
 import { sql } from 'drizzle-orm'
 import { withSystem, withApps, type Database, type SystemTx, type AppTx } from '../db/database.ts'
-import { checkedEvent, deadLetteredEvent, fannedOutEvent, type BusEvent, type DeadLetter, type EventBus, type EventContract, type Handler } from './memory-bus.ts'
+import { checkedEvent, checkSubscription, deadLetteredEvent, fannedOutEvent, type BusEvent, type DeadLetter, type EventBus, type EventContract, type Handler } from './memory-bus.ts'
 import { stampRequest, type EventMeta } from './request-context.ts'
 
 export interface PgBusOptions {
@@ -387,6 +387,7 @@ export function createPgBus(db: Database, opts: PgBusOptions = {}): PgBus {
       if (groups.has(name)) throw new Error(`Group ${name} is already subscribed`)
       if (typeof name !== 'string' || name === '') throw new TypeError('A group needs a non-empty name')
       if (types !== '*' && (!Array.isArray(types) || types.length === 0)) throw new TypeError("types must be '*' or a non-empty array")
+      checkSubscription(name, types, opts.contract)
       const maxAttempts = subOpts?.maxAttempts ?? defaultAttempts
       if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new RangeError('maxAttempts must be an integer >= 1')
       dropped.delete(name)

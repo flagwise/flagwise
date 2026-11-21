@@ -11,7 +11,7 @@ describe.skipIf(!testDatabaseUrl)('correcting a case', () => {
   let i: Install
 
   beforeAll(async () => {
-    i = await startInstall('correction')
+    i = await startInstall()
     i.net.llm = () => ({ category_id: 'scams_fraud.investment_scam' })
   })
   afterAll(async () => {
