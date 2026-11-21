@@ -1,6 +1,6 @@
 // A throwaway database for tests: its own database and roles with random names, dropped afterwards.
-// Needs TEST_DATABASE_URL: a user that can create databases and roles. Tests that need it skip when
-// it is not set.
+// Needs TEST_DATABASE_URL: a user that can create databases and roles. `pnpm test` sets it (its own
+// throwaway Postgres unless given one); tests that need it skip when it is not set.
 
 import { randomBytes } from 'node:crypto'
 import pg from 'pg'

@@ -11,7 +11,7 @@
     "dev": "pnpm --filter @flagwise/server dev",
     "start": "pnpm --filter @flagwise/server start",
     "flagwise": "pnpm --filter @flagwise/server cli",
-    "test": "pnpm -r test",
+    "test": "node scripts/test.ts",
     "typecheck": "pnpm -r typecheck",
     "lint:deps": "depcruise apps packages behaviour --config .dependency-cruiser.cjs",
     "lint:architecture": "node scripts/architecture-lint.ts",
@@ -21,6 +21,7 @@
     "@swc/core": "^1.16.21",
     "@types/node": "^26.6.6",
     "dependency-cruiser": "^18.7.2",
+    "embedded-postgres": "18.7.0-beta.19",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"
   }

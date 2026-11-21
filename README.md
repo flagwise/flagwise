@@ -47,13 +47,13 @@ pnpm dev                # server with reload on http://localhost:3000 (try /read
 | `pnpm dev` | Server in `MODE=all`, restarted on every change under `apps/server/src` and `packages/` |
 | `pnpm start` | Server without reload |
 | `pnpm flagwise <command>` | `bootstrap`: an app and its API keys (flagging and actions). `keys:create --app --scope admin`: a key for the case endpoints. `apps:delete`, `apps:restore`: delete an app (its keys answer 410) and restore it within 30 days. `webhooks:add`, `webhooks:list`, `webhooks:remove`, `webhooks:roll-secret`: an app's webhook endpoints and signing secret (needs `SECRETS_ENCRYPTION_KEY`). `secrets:new-key`, `secrets:rewrap`: the master key for secrets at rest and its rotation. `db:init`, `db:migrate`: the database roles and migrations, for the strict setup with separate role URLs (see `.env.example`); with `DATABASE_URL` alone the server does both as it starts |
-| `pnpm test` | Every package's tests (Vitest) |
+| `pnpm test` | Every package's tests (Vitest), on a throwaway PostgreSQL unless `TEST_DATABASE_URL` is set; `pnpm test --filter <pkg>` for some |
 | `pnpm typecheck` | `tsc --noEmit` in every package |
 | `pnpm lint:deps` | Module boundary check (dependency-cruiser) |
 | `pnpm lint:architecture` | The architecture rules only the code's text shows |
 | `pnpm verify` | typecheck + lint:deps + lint:architecture + test; run it before opening a pull request |
 
-Tests that need PostgreSQL run when `TEST_DATABASE_URL` is set to a user that can create databases and roles (for example `postgres://postgres:postgres@localhost:5432/postgres`). Each test file creates its own database and roles with random names and drops them afterwards. Without the variable those tests are skipped.
+`pnpm test` (and so `pnpm verify`) needs no settings: it starts a throwaway PostgreSQL from the `embedded-postgres` binaries and removes it afterwards. Set `TEST_DATABASE_URL` to a user that can create databases and roles to use your own instead. Each test file creates its own database and roles with random names and drops them afterwards. Running a package's tests directly (`pnpm --filter <pkg> test`) without the variable skips the ones that need PostgreSQL. Tests never reach other infrastructure: the S3 driver is tested against a fake client, the LLM is a fake provider and webhooks go to a local receiver.
 
 `pnpm dev` and `pnpm start` load `.env` when it exists; variables already set in the environment win over it. See `.env.example` for every setting.
 

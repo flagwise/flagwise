@@ -372,6 +372,9 @@ describe.skipIf(!testDatabaseUrl)('Postgres bus', () => {
     const { calls, handler } = recorder()
     const live = newBus({ pollMs: 20 })
     live.subscribe('g', '*', handler())
+    // A group gets only events published after it is stored, as on an install (bootstrap stores
+    // the groups before the first key exists); start() stores it on its first poll, so store it first.
+    await live.drain()
     live.start()
     await live.publish(ev('a', 'k'))
     for (let i = 0; i < 100 && calls.length === 0; i++) await new Promise((r) => setTimeout(r, 20))

@@ -6,3 +6,6 @@ packages:
 ignoredBuiltDependencies:
   # Ships a prebuilt native binary as an optional dependency; its postinstall is not needed.
   - "@swc/core"
+onlyBuiltDependencies:
+  # Its postinstall only recreates the shared-library symlinks the Postgres binaries need (no download).
+  - "@embedded-postgres/linux-x64"
