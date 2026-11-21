@@ -1,13 +1,10 @@
-// The flagging API end to end: API keys from auth, flagging on Postgres with evidence in local
-// storage, and the cases module putting reports in cases through the bus. Runs against a real
-// Postgres (TEST_DATABASE_URL); skipped without it. The S3 driver is tested on its own in platform.
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+// The flagging API end to end: API keys from auth, flagging on Postgres with evidence in the test
+// storage (local files, or the TEST_S3_URL store), and the cases module putting reports in cases
+// through the bus. Runs against a real Postgres (TEST_DATABASE_URL); skipped without it.
 import { manualClock, type ManualClock } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
-import { createDatabase, createPgBus, createPgScheduler, fileStorage, pgTimers, memoryRateLimiter, migrate, pgUnitOfWork, withApps, withSystem, type Database, type ObjectStorage, type PgBus } from '@flagwise/platform'
-import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
+import { createDatabase, createPgBus, createPgScheduler, pgTimers, memoryRateLimiter, migrate, pgUnitOfWork, withApps, withSystem, type Database, type ObjectStorage, type PgBus } from '@flagwise/platform'
+import { createTestDatabase, testDatabaseUrl, testStorage, type TestDatabase } from '@flagwise/platform/testing'
 import { moderationMigrations, pgCaseRepository, pgModerationPolicyCopy } from '@flagwise/moderation'
 import { deliveryMigrations, pgDeliveryDeps } from '@flagwise/delivery'
 import { flaggingMigrations, flaggingRoutes, pgFlaggingRunner, subscribeFlagging, type FlaggingDeps } from '@flagwise/flagging'
@@ -51,7 +48,7 @@ describe.skipIf(!testDatabaseUrl)('flagging API on Postgres', () => {
 
   beforeAll(async () => {
     t = await createTestDatabase()
-    storage = fileStorage({ dir: mkdtempSync(join(tmpdir(), 'evidence-')) })
+    storage = testStorage()
     await migrate(t.ownerUrl, [authMigrations, flaggingMigrations, moderationMigrations, deliveryMigrations, triageMigrations], t.roles)
     db = createDatabase({ appUrl: t.appUrl, systemUrl: t.systemUrl })
     bus = createPgBus(db, { retryDelayMs: () => 0, contract: eventContract })

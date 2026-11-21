@@ -1,11 +1,8 @@
 // Retrying the LLM for cases it failed on, with the server's own wiring on a real Postgres and
 // short retry delays: the install's LLM is down until a test brings it back. Skipped without
 // TEST_DATABASE_URL.
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { classifierPrompt, LlmError, type LlmProvider } from '@flagwise/classify'
-import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
+import { createTestDatabase, testDatabaseUrl, testStorageEnv, type TestDatabase } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { bootstrap, createKey, createServer, migrateFromEnv, serverConfigFromEnv, type Bootstrapped, type Server, type ServerConfig } from '../src/index.ts'
 
@@ -79,7 +76,7 @@ describe.skipIf(!testDatabaseUrl)('LLM retries on the server', () => {
     const base = await serverConfigFromEnv({
       DATABASE_APP_URL: t.appUrl,
       DATABASE_SYSTEM_URL: t.systemUrl,
-      STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')),
+      ...testStorageEnv(),
       // These tests poll the API; the rate limit is tested in flagging-api.
       API_RATE_PER_SECOND: '1000',
       API_RATE_BURST: '1000',

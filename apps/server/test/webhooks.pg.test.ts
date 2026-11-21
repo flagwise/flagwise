@@ -2,12 +2,9 @@
 // through the CLI's setup functions, a report through the API becoming a signed report.triaged post
 // from the running worker, the action request routes, and rotating the signing secret and the
 // master key. Skipped without TEST_DATABASE_URL.
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { pgActionRequestStore, verify } from '@flagwise/delivery'
 import { newKeyringEntry, scopeOfApp, withApps } from '@flagwise/platform'
-import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
+import { createTestDatabase, testDatabaseUrl, testStorageEnv, type TestDatabase } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   addWebhookEndpoint,
@@ -79,7 +76,7 @@ describe.skipIf(!testDatabaseUrl)('webhooks on the server', () => {
 
   beforeAll(async () => {
     t = await createTestDatabase()
-    env = { DATABASE_APP_URL: t.appUrl, DATABASE_SYSTEM_URL: t.systemUrl, STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')), SECRETS_ENCRYPTION_KEY: K1 }
+    env = { DATABASE_APP_URL: t.appUrl, DATABASE_SYSTEM_URL: t.systemUrl, ...testStorageEnv(), SECRETS_ENCRYPTION_KEY: K1 }
     await migrateFromEnv({ DATABASE_OWNER_URL: t.ownerUrl, DATABASE_APP_URL: `postgres://${t.roles.app}@x/x`, DATABASE_SYSTEM_URL: `postgres://${t.roles.system}@x/x` })
     config = await serverConfigFromEnv(env)
     installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' })

@@ -1,12 +1,9 @@
 // The install paths on a real Postgres, with separate role URLs (db:init, db:migrate, bootstrap) and
 // with one DATABASE_URL (bootstrap alone), then a report through the API and the event handlers with
 // the server's own wiring. Skipped without TEST_DATABASE_URL.
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { pgCaseRepository } from '@flagwise/moderation'
 import { scopeOfApp, withApps } from '@flagwise/platform'
-import { createTestDatabase, testDatabaseUrl, type TestDatabase } from '@flagwise/platform/testing'
+import { createTestDatabase, testDatabaseUrl, testStorageEnv, type TestDatabase } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { bootstrap, createKey, createServer, deleteApp, initDatabaseFromEnv, migrateFromEnv, restoreApp, serverConfigFromEnv, type Bootstrapped, type Server } from '../src/index.ts'
@@ -48,7 +45,7 @@ describe.skipIf(!testDatabaseUrl)('the install path on Postgres', () => {
       DATABASE_OWNER_URL: t.ownerUrl,
       DATABASE_APP_URL: t.appUrl,
       DATABASE_SYSTEM_URL: t.systemUrl,
-      STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')),
+      ...testStorageEnv(),
     }
     // The roles exist already; db:init is safe to run again over them.
     await initDatabaseFromEnv(env)
@@ -114,7 +111,7 @@ describe.skipIf(!testDatabaseUrl)('a server deployed before its migrations', () 
   })
 
   it('serves with /readyz at 503 and waits, then starts once a migration job with only the owner URL has run', async () => {
-    const env = { DATABASE_APP_URL: t.appUrl, DATABASE_SYSTEM_URL: t.systemUrl, STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')) }
+    const env = { DATABASE_APP_URL: t.appUrl, DATABASE_SYSTEM_URL: t.systemUrl, ...testStorageEnv() }
     const waiting: string[] = []
     server = createServer(await serverConfigFromEnv(env), { retryMs: 20, onWaiting: (reason) => waiting.push(reason) })
     let started = false
@@ -165,7 +162,7 @@ describe.skipIf(!testDatabaseUrl)('the install path with one DATABASE_URL', () =
   it('bootstraps on an empty database, and runs every query as the app or system role', async () => {
     const url = new URL(testDatabaseUrl!)
     url.pathname = `/${t.database}`
-    const config = await serverConfigFromEnv({ DATABASE_URL: url.toString(), STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')) })
+    const config = await serverConfigFromEnv({ DATABASE_URL: url.toString(), ...testStorageEnv() })
     expect(config.database.setup).toBe('single')
 
     const installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' })
@@ -199,7 +196,7 @@ describe.skipIf(!testDatabaseUrl)('the case API', () => {
 
   beforeAll(async () => {
     t = await createTestDatabase()
-    const env = { DATABASE_APP_URL: t.appUrl, DATABASE_SYSTEM_URL: t.systemUrl, STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')) }
+    const env = { DATABASE_APP_URL: t.appUrl, DATABASE_SYSTEM_URL: t.systemUrl, ...testStorageEnv() }
     const roleNames = { DATABASE_APP_URL: `postgres://${t.roles.app}@x/x`, DATABASE_SYSTEM_URL: `postgres://${t.roles.system}@x/x` }
     await migrateFromEnv({ DATABASE_OWNER_URL: t.ownerUrl, ...roleNames })
     const config = await serverConfigFromEnv(env)

@@ -3,12 +3,9 @@
 // Scenarios use only what a tenant or an operator has: the public API, webhooks, the setup
 // functions of the CLI, and the facts on the bus.
 
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import type { AppRef } from '@flagwise/kernel'
 import { newKeyringEntry } from '@flagwise/platform'
-import { createTestDatabase, type TestDatabase } from '@flagwise/platform/testing'
+import { createTestDatabase, testStorageEnv, type TestDatabase } from '@flagwise/platform/testing'
 import { addWebhookEndpoint, bootstrap, createKey, createServer, migrateFromEnv, serverConfigFromEnv, type Server } from '@flagwise/server'
 import { skippingClock, type SkippingClock } from './clock.ts'
 import { fakeNet, LLM_BASE_URL, WEBHOOK_URL, type FakeNet } from './net.ts'
@@ -53,7 +50,7 @@ export async function startInstall(): Promise<Install> {
     const env = {
       DATABASE_APP_URL: db.appUrl,
       DATABASE_SYSTEM_URL: db.systemUrl,
-      STORAGE_DIR: mkdtempSync(join(tmpdir(), 'behaviour-evidence-')),
+      ...testStorageEnv(),
       SECRETS_ENCRYPTION_KEY: newKeyringEntry('k1', () => new Uint8Array(32).fill(7)),
       LLM_PROVIDER: 'openai-compatible',
       LLM_BASE_URL,
