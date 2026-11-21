@@ -16,8 +16,8 @@ describe('createApp', () => {
     expect(await down.json()).toEqual({ status: 'unavailable' })
   })
 
-  it('wires all fourteen core modules', () => {
-    expect(createApp().modules.map((m) => m.name)).toHaveLength(14)
+  it('has the fourteen core services', () => {
+    expect(createApp().services.map((s) => s.name)).toHaveLength(14)
   })
 
   it('registers every plugin it is given', () => {

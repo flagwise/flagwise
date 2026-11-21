@@ -9,11 +9,11 @@ Status: early development, not usable yet. The core rules are implemented and te
 ```text
 apps/server/            createApp(); MODE=api|worker|all
 packages/
-  kernel/               TenantContext, permissions, IDs, clock, errors, defineModule
+  kernel/               Caller, permissions, IDs, clock, errors
   contracts/            internal Zod schemas for events, API, evidence blobs
   plugin-api/           the seam cloud/Pro plugins implement
-  platform/             drivers: event bus, storage, rate limit; db + unit of work; outbox
-  modules/              one package and one Postgres schema per module:
+  platform/             drivers: event bus, timers, storage, rate limit; db + unit of work; defineService
+  modules/              one package, Postgres schema and src/service.ts per service:
     apps auth policy flagging classify triage moderation scoring
     delivery disputes privacy notifications audit analytics
 spec/                   MIT: openapi.json + webhook JSON Schemas, generated per release

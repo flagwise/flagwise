@@ -3,15 +3,15 @@
 // Runs against a real Postgres (TEST_DATABASE_URL) and S3-compatible store (TEST_S3_URL); skipped without them.
 import { manualClock, type ManualClock } from '@flagwise/kernel'
 import { eventContract } from '@flagwise/contracts'
-import { createDatabase, createPgBus, createPgScheduler, pgTimers, memoryRateLimiter, migrate, pgUnitOfWork, withApps, type Database, type ObjectStorage, type PgBus } from '@flagwise/platform'
+import { createDatabase, createPgBus, createPgScheduler, pgTimers, memoryRateLimiter, migrate, pgUnitOfWork, withApps, withSystem, type Database, type ObjectStorage, type PgBus } from '@flagwise/platform'
 import { createTestBucket, createTestDatabase, testDatabaseUrl, testS3Url, type TestBucket, type TestDatabase } from '@flagwise/platform/testing'
 import { moderationMigrations, pgCaseRepository, pgModerationPolicyCopy } from '@flagwise/moderation'
 import { deliveryMigrations, pgDeliveryDeps } from '@flagwise/delivery'
-import { flaggingMigrations, pgFlaggingRunner, subscribeFlagging, type FlaggingDeps } from '@flagwise/flagging'
+import { flaggingMigrations, flaggingRoutes, pgFlaggingRunner, subscribeFlagging, type FlaggingDeps } from '@flagwise/flagging'
 import { pgTriageDeps, triageMigrations } from '@flagwise/triage'
-import { authMigrations, issueApiKey, pgAppCopies, pgKeyStore, revokeApiKey, type KeyDeps } from '@flagwise/auth'
+import { authMigrations, issueApiKey, pgAppCopies, pgKeyDirectory, pgKeyStore, resolveApiKey, revokeApiKey, type KeyDeps } from '@flagwise/auth'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { createApp, pgKeyResolver, type ApiDeps } from '../src/index.ts'
+import { createApp, type ApiDeps } from '../src/index.ts'
 import { composeServices } from './support/services.ts'
 
 const T0 = '2026-11-06T09:00:00.000Z'
@@ -32,6 +32,7 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
   let bus: PgBus
   let clock: ManualClock
   let deps: ApiDeps
+  let flagging: FlaggingDeps
   let http: ReturnType<typeof createApp>['http']
   const keys = {} as Record<'live' | 'test' | 'actionsOnly' | 'revoked' | 'deletedApp' | 'otherApp', string>
   let n = 0
@@ -71,7 +72,7 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
     })
     await apps.setDeletedAt('app_gone', clock.now())
 
-    const flagging: FlaggingDeps = { run: pgFlaggingRunner(db, bus), storage: bucket.storage, clock, newReportId: () => `rpt_${++n}` }
+    flagging = { run: pgFlaggingRunner(db, bus), storage: bucket.storage, clock, newReportId: () => `rpt_${++n}` }
     composeServices({
       bus,
       scheduler: createPgScheduler(db, { clock }),
@@ -88,7 +89,8 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
     subscribeFlagging(bus, flagging)
     // A consumer group is stored on the first drain and only gets events published after that.
     await bus.drain()
-    deps = { keys: pgKeyResolver(db), limiter: memoryRateLimiter(), rateLimit: { ratePerSecond: 50, burst: 100 }, clock, flagging }
+    const resolver = { resolve: (key: string, now: Date) => withSystem(db, (tx) => resolveApiKey(pgKeyDirectory(tx), key, now)) }
+    deps = { keys: resolver, limiter: memoryRateLimiter(), rateLimit: { ratePerSecond: 50, burst: 100 }, clock, routes: [flaggingRoutes(flagging)] }
     http = createApp({ api: deps }).http
   })
   afterAll(async () => {
@@ -222,7 +224,7 @@ describe.skipIf(!testDatabaseUrl || !testS3Url)('flagging API on Postgres and ob
   it('hides internal errors behind a 500 and reports them to onError', async () => {
     const seen: string[] = []
     const broken: ObjectStorage = { ...bucket.storage, put: async () => Promise.reject(new Error('disk on fire at /var/secret')) }
-    const app = createApp({ api: { ...deps, flagging: { ...deps.flagging, storage: broken }, onError: (err, id) => void seen.push(`${id}: ${(err as Error).message}`) } }).http
+    const app = createApp({ api: { ...deps, routes: [flaggingRoutes({ ...flagging, storage: broken })], onError: (err, id) => void seen.push(`${id}: ${(err as Error).message}`) } }).http
     const res = await app.request('/v1/flagging/reports', { method: 'POST', headers: { authorization: `Bearer ${keys.live}`, 'x-request-id': 'req-fire' }, body: report() })
     expect(res.status).toBe(500)
     expect(await res.json() as any).toEqual({ type: 'https://flagwise.dev/errors/internal_error', title: 'Internal error', status: 500, request_id: 'req-fire' })

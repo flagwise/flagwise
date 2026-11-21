@@ -1,9 +1,8 @@
 // Public facade of the triage module. Other modules import only this file.
 // Owns: Deterministic rules: severity, priority, SLA, suggested action; triaging each case from the
 // cases' and classify's events, publishing case.triaged and case.untriaged.
-import { defineModule } from '@flagwise/kernel'
 
-export const triageModule = defineModule({ name: 'triage' })
+export { triage } from './service.ts'
 
 export * from './domain/triage.ts'
 export * from './domain/global-rules.ts'

@@ -32,6 +32,7 @@ export const ENFORCED: readonly string[] = [
   'no-org', // no org in the core
   'auth-apps-split', // tenancy split into auth and apps
   'notification-clears', // item 10
+  'boots-alone', // item 11
 ]
 
 export const ROOT = fileURLToPath(new URL('../../../', import.meta.url))
@@ -71,23 +72,48 @@ function noServiceImports(): CheckResult {
   }
 }
 
-/** 2. Every service has its own composition root (src/service.ts) and boots with only the bus and its storage. */
+/**
+ * 2. Every service boots alone: its src/service.ts defines it (`export const {name} =
+ * defineService({ name: '{name}', ... })`, booting from the runtime and options of its own) and
+ * its index exports it; apps/server boots each one with `{name}.boot(`, and its server and edge
+ * import nothing else of a service but types. The CLI's setup commands (setup.ts) are not booting.
+ */
 function bootsAlone(): CheckResult {
   const names = services()
-  const missing = names.filter((n) => !existsSync(join(MODULES_DIR, n, 'src/service.ts')))
+  const found: string[] = []
+  for (const n of names) {
+    const file = join(MODULES_DIR, n, 'src/service.ts')
+    if (!existsSync(file)) {
+      found.push(`${n}: no src/service.ts`)
+      continue
+    }
+    if (!new RegExp(`export const ${n} = defineService(<[^>]*>)?\\(\\{\\s*name: '${n}'`).test(read(file))) found.push(`${n}: src/service.ts does not define ${n}`)
+    if (!new RegExp(`export \\{ ${n} \\} from './service.ts'`).test(read(join(MODULES_DIR, n, 'src/index.ts')))) found.push(`${n}: index.ts does not export ${n}`)
+  }
+  const server = read(join(SERVER_SRC, 'server.ts'))
+  for (const n of names) if (!server.includes(`${n}.boot(`)) found.push(`apps/server/src/server.ts: does not boot ${n}`)
+  for (const file of [join(SERVER_SRC, 'server.ts'), ...sourceFiles(join(SERVER_SRC, 'http'))]) {
+    for (const m of read(file).matchAll(/import\s*(type\s*)?\{([^}]*)\}\s*from '@flagwise\/([a-z-]+)'/g)) {
+      const pkg = m[3]!
+      if (m[1] || !names.includes(pkg)) continue
+      const values = m[2]!.split(',').map((x) => x.trim()).filter((x) => x && !x.startsWith('type '))
+      for (const v of values) if (v !== pkg) found.push(`${rel(file)}: ${v} from ${pkg}`)
+    }
+  }
   return {
     id: 'boots-alone',
     title: 'Every service boots alone (own composition root, only the bus and its storage)',
     items: '11',
-    green: missing.length === 0,
-    detail: `${names.length - missing.length} of ${names.length} have src/service.ts`,
+    green: found.length === 0,
+    detail: found.length === 0 ? `${names.length} of ${names.length} boot from src/service.ts` : `${found.length}: ${list(found)}`,
   }
 }
 
 /**
- * 3. No transaction or query touches another service's tables (static proxy until per-service
- * roles): no service's SQL names another service's schema, and every transaction apps/server opens
- * (withApps, withSystem, pgUnitOfWork) uses the pg factories of one service only.
+ * 3. No transaction or query touches another service's tables (static; apps/server's boots-alone
+ * test boots each service on its own tables only, and DB roles per service come with detaching in
+ * phase 2): no service's SQL names another service's schema, and every transaction apps/server
+ * opens (withApps, withSystem, pgUnitOfWork) uses the pg factories of one service only.
  */
 function ownTablesOnly(): CheckResult {
   const names = services()
@@ -124,7 +150,7 @@ function ownTablesOnly(): CheckResult {
   }
   return {
     id: 'own-tables-only',
-    title: "No transaction or query touches another service's tables (static; DB roles per service with 11)",
+    title: "No transaction or query touches another service's tables (static; each boots on its own tables in apps/server's test)",
     items: '4, 6',
     green: found.length === 0,
     detail: found.length === 0 ? 'none' : `${found.length}: ${list(found)}`,

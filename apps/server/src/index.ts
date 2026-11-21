@@ -1,5 +1,5 @@
 export { createApp, type App, type CreateAppOptions } from './app.ts'
-export { createApi, pgKeyResolver, type ApiDeps } from './http/api.ts'
+export { createApi, type ApiDeps } from './http/api.ts'
 export { llmFromEnv, type LlmSettings } from './config/llm.ts'
 export { serverConfigFromEnv, type DatabaseConfig, type ServerConfig, type StorageConfig, type Mode } from './config/server.ts'
 export { createServer, databaseOf, storageOf, type Server, type ServerOptions } from './server.ts'

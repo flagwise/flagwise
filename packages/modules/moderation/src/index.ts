@@ -1,8 +1,7 @@
 // Public facade of the moderation module. Other modules import only this file.
 // Owns: Case merging, queue, claiming, decisions, and the case's state from triage's and delivery's facts.
-import { defineModule } from '@flagwise/kernel'
 
-export const moderationModule = defineModule({ name: 'moderation' })
+export { moderation } from './service.ts'
 
 export * from './domain/case-state.ts'
 export * from './domain/sla.ts'

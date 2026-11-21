@@ -1,8 +1,7 @@
 // Public facade of the delivery module. Other modules import only this file.
 // Owns: Tenant webhooks (outbox, retries, signatures), action results.
-import { defineModule } from '@flagwise/kernel'
 
-export const deliveryModule = defineModule({ name: 'delivery' })
+export { delivery } from './service.ts'
 
 export * from './app/action-requests.ts'
 export * from './app/webhooks.ts'

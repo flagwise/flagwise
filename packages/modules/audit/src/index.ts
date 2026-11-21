@@ -1,8 +1,7 @@
 // Public facade of the audit module. Other modules import only this file.
 // Owns: Append-only, hash-chained log of every event.
-import { defineModule } from '@flagwise/kernel'
 
-export const auditModule = defineModule({ name: 'audit' })
+export { audit } from './service.ts'
 
 export * from './domain/chain.ts'
 export * from './domain/events.ts'

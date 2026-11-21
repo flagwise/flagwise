@@ -1,8 +1,7 @@
 import { Hono } from 'hono'
-import type { ModuleDefinition } from '@flagwise/kernel'
 import type { FlagwisePlugin } from '@flagwise/plugin-api'
 import { createApi, type ApiDeps } from './http/api.ts'
-import { coreModules } from './modules.ts'
+import { SERVICES } from './modules.ts'
 
 export interface CreateAppOptions {
   /** Cloud and Pro plugins, passed at build time. Self-host passes none. */
@@ -15,7 +14,7 @@ export interface CreateAppOptions {
 
 export interface App {
   readonly http: Hono
-  readonly modules: readonly ModuleDefinition[]
+  readonly services: typeof SERVICES
   readonly plugins: readonly FlagwisePlugin[]
 }
 
@@ -37,5 +36,5 @@ export function createApp(opts: CreateAppOptions = {}): App {
     http.route('/v1', createApi(opts.api))
   }
 
-  return { http, modules: coreModules, plugins }
+  return { http, services: SERVICES, plugins }
 }

@@ -1,8 +1,7 @@
 // Public facade of the flagging module. Other modules import only this file.
 // Owns: Taking flagged material in (user reports), evidence snapshots (sole writer to object storage), the pre-rules.
-import { defineModule } from '@flagwise/kernel'
 
-export const flaggingModule = defineModule({ name: 'flagging' })
+export { flagging } from './service.ts'
 
 export * from './domain/validate-report.ts'
 export * from './domain/pre-rules.ts'

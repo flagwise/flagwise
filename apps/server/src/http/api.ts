@@ -1,18 +1,10 @@
 // The public API edge: request ids, API-key authentication, rate limits, problem+json errors and
-// routing to the modules' routes. No business logic lives here.
+// routing to the services' routes. No business logic lives here.
 
 import { createHash, randomUUID } from 'node:crypto'
 import { FlagwiseError, toProblem, type Clock, type Caller } from '@flagwise/kernel'
-import { runInRequest, withSystem, type BucketConfig, type Database, type IdempotencyStore, type RateLimiter } from '@flagwise/platform'
-import { auditRoutes, type AuditRoutesDeps } from '@flagwise/audit'
-import { moderationRoutes, type ModerationRoutesDeps } from '@flagwise/moderation'
-import { classifyRoutes, type ClassifyDeps } from '@flagwise/classify'
-import { deliveryRoutes, type ActionRequestRoutesDeps } from '@flagwise/delivery'
-import { flaggingRoutes, type FlaggingDeps } from '@flagwise/flagging'
-import { notificationsRoutes, type NotificationsRoutesDeps } from '@flagwise/notifications'
-import { policyRoutes, type PolicyRoutesDeps } from '@flagwise/policy'
-import { privacyRoutes, type PrivacyRoutesDeps } from '@flagwise/privacy'
-import { pgKeyDirectory, resolveApiKey, type KeyResolution } from '@flagwise/auth'
+import { runInRequest, type BucketConfig, type IdempotencyStore, type RateLimiter, type ServiceRoutes } from '@flagwise/platform'
+import type { KeyResolution } from '@flagwise/auth'
 import { Hono, type Context } from 'hono'
 
 export interface ApiDeps {
@@ -22,21 +14,8 @@ export interface ApiDeps {
   /** The token bucket of each app (self-host: from config). */
   readonly rateLimit: BucketConfig
   readonly clock: Clock
-  readonly flagging: FlaggingDeps
-  /** The case routes; left out, they answer 404 like any unknown path. */
-  readonly cases?: ModerationRoutesDeps
-  /** The classification route; left out, it answers 404. */
-  readonly classify?: Pick<ClassifyDeps, 'run'>
-  /** The action request routes; left out, they answer 404. */
-  readonly actionRequests?: ActionRequestRoutesDeps
-  /** The app config routes (action keys); left out, they answer 404. */
-  readonly config?: PolicyRoutesDeps
-  /** The audit routes; left out, they answer 404. */
-  readonly audit?: AuditRoutesDeps
-  /** The erasure routes; left out, they answer 404. */
-  readonly privacy?: PrivacyRoutesDeps
-  /** The notification routes; left out, they answer 404. */
-  readonly notifications?: NotificationsRoutesDeps
+  /** The services' routes, each under its own base path. */
+  readonly routes: readonly ServiceRoutes[]
   /** Where Idempotency-Keys of POST requests are kept; left out, the header is ignored. */
   readonly idempotency?: IdempotencyStore
   /** Called with errors that become a 500, for logging; default writes a JSON line to stderr. */
@@ -49,11 +28,6 @@ interface ApiEnv {
 
 const REQUEST_ID = /^[A-Za-z0-9_.-]{1,128}$/
 const IDEMPOTENCY_KEY = /^[\x21-\x7e]{1,255}$/
-
-/** Resolves keys through the key directory, which the system role reads. */
-export function pgKeyResolver(db: Database): ApiDeps['keys'] {
-  return { resolve: (key, now) => withSystem(db, (tx) => resolveApiKey(pgKeyDirectory(tx), key, now)) }
-}
 
 /**
  * The `/v1` API. Every request gets a request id (a valid incoming `X-Request-Id`, else a new
@@ -133,14 +107,7 @@ export function createApi(deps: ApiDeps): Hono<ApiEnv> {
     await deps.idempotency.finish(appRef, key, fingerprint, { status: c.res.status, contentType: c.res.headers.get('content-type') ?? 'application/json', body })
   })
 
-  api.route('/', flaggingRoutes(deps.flagging))
-  if (deps.cases) api.route('/', moderationRoutes(deps.cases))
-  if (deps.classify) api.route('/', classifyRoutes(deps.classify))
-  if (deps.actionRequests) api.route('/', deliveryRoutes(deps.actionRequests))
-  if (deps.config) api.route('/', policyRoutes(deps.config))
-  if (deps.audit) api.route('/', auditRoutes(deps.audit))
-  if (deps.privacy) api.route('/', privacyRoutes(deps.privacy))
-  if (deps.notifications) api.route('/', notificationsRoutes(deps.notifications))
+  for (const routes of deps.routes) api.route('/', routes)
   api.all('*', () => {
     throw new FlagwiseError('not_found', 'No such endpoint')
   })

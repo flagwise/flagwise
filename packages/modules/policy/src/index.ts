@@ -1,8 +1,7 @@
 // Public facade of the policy module. Other modules import only this file.
 // Owns: an app's policy per mode (categories, action keys, LLM settings), its versions and policy.updated.
-import { defineModule } from '@flagwise/kernel'
 
-export const policyModule = defineModule({ name: 'policy' })
+export { policy } from './service.ts'
 
 export * from './domain/action-keys.ts'
 export * from './domain/categories.ts'

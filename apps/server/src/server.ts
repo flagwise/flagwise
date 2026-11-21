@@ -1,27 +1,22 @@
 // Puts the server together from its config: the database, the event bus, object storage, the
 // public API (MODE api or all) and the event handlers (MODE worker or all).
 
-import { subscribeApps } from '@flagwise/apps'
-import { auditReads, pgAuditDeps, subscribeAudit } from '@flagwise/audit'
-import { pgAppCopies, subscribeAuth } from '@flagwise/auth'
-import { moderationService, pgCaseReads, pgModerationDeps, subscribeModeration, type ModerationRoutesDeps } from '@flagwise/moderation'
-import { classifyDepsWithPolicy, pgClassifyPolicyCopy, pgClassifyRunner, subscribeClassify, type ClassifyDeps } from '@flagwise/classify'
+import { analytics } from '@flagwise/analytics'
+import { apps } from '@flagwise/apps'
+import { audit } from '@flagwise/audit'
+import { auth } from '@flagwise/auth'
+import { classify } from '@flagwise/classify'
 import { eventContract } from '@flagwise/contracts'
-import {
-  actionSettlement,
-  createWebhookSender,
-  fetchPost,
-  keyringSealer,
-  pgActionRequestReads,
-  pgDeliveryDeps,
-  pgSenderDeps,
-  subscribeDelivery,
-  type ActionRequestRoutesDeps,
-  type WebhookSender,
-} from '@flagwise/delivery'
-import { pgFlaggingRunner, subscribeFlagging, type FlaggingDeps } from '@flagwise/flagging'
-import { notificationsService, pgNotificationsDeps, subscribeNotifications } from '@flagwise/notifications'
-import { newId, systemClock, type Clock } from '@flagwise/kernel'
+import { delivery } from '@flagwise/delivery'
+import { disputes } from '@flagwise/disputes'
+import { flagging } from '@flagwise/flagging'
+import { moderation } from '@flagwise/moderation'
+import { notifications } from '@flagwise/notifications'
+import { policy } from '@flagwise/policy'
+import { privacy } from '@flagwise/privacy'
+import { scoring } from '@flagwise/scoring'
+import { triage } from '@flagwise/triage'
+import { systemClock, type Clock } from '@flagwise/kernel'
 import {
   createDatabase,
   createPgBus,
@@ -40,15 +35,13 @@ import {
   type ObjectStorage,
   type PgBus,
   type PgScheduler,
+  type RunningService,
+  type ServiceRuntime,
 } from '@flagwise/platform'
 import type { FlagwisePlugin } from '@flagwise/plugin-api'
-import { busPolicyEvents, pgPolicy, subscribePolicy } from '@flagwise/policy'
-import { pgPrivacyDeps, privacyService, subscribePrivacy } from '@flagwise/privacy'
-import { pgTriageDeps, subscribeTriage } from '@flagwise/triage'
 import { sql } from 'drizzle-orm'
 import { createApp, type App } from './app.ts'
 import type { DatabaseConfig, ServerConfig, StorageConfig } from './config/server.ts'
-import { pgKeyResolver } from './http/api.ts'
 import { ALL_MIGRATIONS } from './migrations.ts'
 
 export interface ServerOptions {
@@ -113,14 +106,14 @@ export function storageOf(config: StorageConfig): ObjectStorage {
 }
 
 /**
- * Opens the database pools and wires the server for its mode. The server only puts the services
- * together: each one reacts to the others' facts on the bus with its own handlers, in transactions
- * of its own, and reads only its own tables and copies.
- * - api, all: the public API, reading API keys through the system role; the routes call the
- *   services' use cases, whose events the workers handle.
- * - worker, all: every service's handlers on the event bus and its timers, with classify on the install's LLM,
- *   and delivery's webhook sender, when the config has master keys (without them no endpoint can
- *   be added, so nothing is queued).
+ * Opens the database pools and boots every service from its own composition root, with only the
+ * runtime (database, bus, timers, clock) and options of its own: each reacts to the others' facts
+ * on the bus with its own handlers, in transactions of its own, and reads only its own tables and
+ * copies.
+ * - api, all: the public API, checking API keys through auth, with the services' routes.
+ * - worker, all: every service's handlers on the event bus, its timers, and work of its own
+ *   (delivery's webhook sender, when the config has master keys; without them no endpoint can be
+ *   added, so nothing is queued).
  *
  * /readyz answers 503 until prepare() has succeeded, then checks both database pools. Nothing is
  * polled until start().
@@ -136,46 +129,27 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
   const storage = storageOf(config.storage)
   const api = config.mode !== 'worker'
   const worker = config.mode !== 'api'
-  const eventId = () => newId('evt', { clock })
 
-  const flagging: FlaggingDeps = { run: pgFlaggingRunner(db, bus), storage, clock, newReportId: () => newId('rpt', { clock }) }
-  const classifyPolicy = pgClassifyPolicyCopy(db)
-  const classify: ClassifyDeps = classifyDepsWithPolicy({ run: pgClassifyRunner(db), snapshots: storage, clock, llm: config.llm.llm, redact: config.llm.redact }, classifyPolicy)
-  const moderation = pgModerationDeps(db, bus, {
-    clock,
-    newCaseId: () => newId('case', { clock }),
-    newDecisionId: () => newId('dec', { clock }),
-    newEventId: eventId,
-  })
-  const delivery = pgDeliveryDeps(db, bus, { clock, newActionRequestId: () => newId('acr', { clock }), newEventId: eventId })
-  const auditLog = pgAuditDeps(db, clock)
-  const privacy = pgPrivacyDeps(db, bus, { clock, newErasureId: () => newId('ers', { clock }) })
-  const notifications = pgNotificationsDeps(db, bus, { clock, newNotificationId: () => newId('ntf', { clock }) })
-
-  // Each service's handlers; they only run once the bus is started, in MODE worker or all.
-  subscribeFlagging(bus, flagging)
-  subscribeClassify(bus, { classify, policy: classifyPolicy, ...(options.llmRetryDelaysMs && { llmRetryDelaysMs: options.llmRetryDelaysMs }) })
-  subscribeTriage(bus, pgTriageDeps(db, bus))
-  subscribeModeration(bus, moderation, scheduler)
-  subscribeDelivery(bus, delivery, scheduler)
-  subscribeNotifications(bus, notifications)
-  subscribeAudit(bus, auditLog)
-  subscribePrivacy(bus, privacy)
-  subscribePolicy(bus, { clock })
-  subscribeApps(bus, { clock })
-  subscribeAuth(bus, { apps: pgAppCopies(db), clock })
-
-  const caseWork = moderationService(moderation)
-  const cases: ModerationRoutesDeps = { read: pgCaseReads(db), ...caseWork, clock }
-  const settlement = actionSettlement(delivery)
-  const actionRequests: ActionRequestRoutesDeps = { read: pgActionRequestReads(db), confirm: settlement.confirm, fail: settlement.fail }
-  const appConfig = pgPolicy(db, { clock, events: (tx) => busPolicyEvents(bus, tx, eventId) })
-  const audit = auditReads(auditLog)
-  const erasures = { ...privacyService(privacy), clock }
-  const sender: WebhookSender | undefined =
-    worker && config.secrets
-      ? createWebhookSender(pgSenderDeps(db, { sealer: keyringSealer(config.secrets), clock, post: fetchPost(options.fetch) }), { onError })
-      : undefined
+  // Each service boots from the runtime and options of its own: its handlers and timers run once
+  // the bus and scheduler start (MODE worker or all), its routes are served in MODE api or all.
+  const runtime: ServiceRuntime = { db, bus, scheduler, clock, onError }
+  const authRunning = auth.boot(runtime)
+  const running: readonly RunningService[] = [
+    apps.boot(runtime),
+    authRunning,
+    policy.boot(runtime),
+    flagging.boot(runtime, { storage }),
+    classify.boot(runtime, { storage, llm: config.llm.llm, redact: config.llm.redact, ...(options.llmRetryDelaysMs && { llmRetryDelaysMs: options.llmRetryDelaysMs }) }),
+    triage.boot(runtime),
+    moderation.boot(runtime),
+    scoring.boot(runtime),
+    delivery.boot(runtime, { secrets: config.secrets, ...(options.fetch && { fetch: options.fetch }) }),
+    disputes.boot(runtime),
+    privacy.boot(runtime),
+    notifications.boot(runtime),
+    audit.boot(runtime),
+    analytics.boot(runtime),
+  ]
 
   let prepared = false
   let stopped = false
@@ -209,7 +183,7 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
 
   const app = createApp({
     ...(options.plugins ? { plugins: options.plugins } : {}),
-    ...(api ? { api: { keys: pgKeyResolver(db), limiter: memoryRateLimiter(), rateLimit: config.rateLimit, clock, flagging, cases, classify, actionRequests, config: appConfig, audit, privacy: erasures, notifications: notificationsService(notifications), idempotency: pgIdempotencyStore(db) } } : {}),
+    ...(api ? { api: { keys: authRunning.keys, limiter: memoryRateLimiter(), rateLimit: config.rateLimit, clock, routes: running.flatMap((r) => (r.routes ? [r.routes] : [])), idempotency: pgIdempotencyStore(db) } } : {}),
     ready: async () => {
       if (!prepared) throw new Error('The database is not ready yet')
       await Promise.all([db.app.execute(sql`SELECT 1`), db.system.execute(sql`SELECT 1`)])
@@ -228,13 +202,13 @@ export function createServer(config: ServerConfig, options: ServerOptions = {}):
       if (worker && !stopped) {
         bus.start()
         scheduler.start()
-        sender?.start()
+        for (const r of running) r.start?.()
       }
     },
     async stop() {
       stopped = true
       wake?.()
-      await Promise.all([bus.stop(), scheduler.stop(), sender?.stop()])
+      await Promise.all([bus.stop(), scheduler.stop(), ...running.map((r) => r.stop?.())])
       await db.close()
     },
   }

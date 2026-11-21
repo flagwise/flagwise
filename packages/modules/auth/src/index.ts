@@ -1,8 +1,7 @@
 // Public facade of the auth module. Other modules import only this file.
 // Owns: API keys and the key directory, members and roles, building the Caller; a copy of the apps.
-import { defineModule } from '@flagwise/kernel'
 
-export const authModule = defineModule({ name: 'auth' })
+export { auth } from './service.ts'
 
 export * from './domain/api-keys.ts'
 export * from './domain/invitations.ts'

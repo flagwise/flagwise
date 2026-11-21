@@ -103,6 +103,9 @@ importers:
       '@flagwise/kernel':
         specifier: workspace:*
         version: link:../../kernel
+      '@flagwise/platform':
+        specifier: workspace:*
+        version: link:../../platform
 
   packages/modules/apps:
     dependencies:
@@ -202,6 +205,9 @@ importers:
       '@flagwise/kernel':
         specifier: workspace:*
         version: link:../../kernel
+      '@flagwise/platform':
+        specifier: workspace:*
+        version: link:../../platform
 
   packages/modules/flagging:
     dependencies:
@@ -298,6 +304,9 @@ importers:
       '@flagwise/kernel':
         specifier: workspace:*
         version: link:../../kernel
+      '@flagwise/platform':
+        specifier: workspace:*
+        version: link:../../platform
 
   packages/modules/triage:
     dependencies:
@@ -325,6 +334,9 @@ importers:
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(pg@8.23.1)
+      hono:
+        specifier: ^4.13.16
+        version: 4.13.16
       pg:
         specifier: ^8.23.1
         version: 8.23.1

@@ -1,8 +1,7 @@
 // Public facade of the apps module. Other modules import only this file.
 // Owns: the install's apps and their lifecycle (delete with grace, restore); publishes app facts.
-import { defineModule } from '@flagwise/kernel'
 
-export const appsModule = defineModule({ name: 'apps' })
+export { apps } from './service.ts'
 
 export * from './domain/lifecycle.ts'
 export * from './app/registry.ts'

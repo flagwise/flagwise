@@ -1,9 +1,8 @@
 // Public facade of the classify module. Other modules import only this file.
 // Owns: LLM drivers, post-rules, P0 safety layer, prompt-injection defense. The pre-rules are
 // flagging's; classify keeps a copy of what they found per report (report.received).
-import { defineModule } from '@flagwise/kernel'
 
-export const classifyModule = defineModule({ name: 'classify' })
+export { classify } from './service.ts'
 
 export * from './domain/classification.ts'
 export * from './domain/redact.ts'
