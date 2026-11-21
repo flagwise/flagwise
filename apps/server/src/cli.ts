@@ -16,6 +16,7 @@ import {
   migrateFromEnv,
   removeWebhookEndpoint,
   restoreApp,
+  revokeKey,
   rewrapSecrets,
   rollWebhookSecret,
 } from './setup.ts'
@@ -33,6 +34,8 @@ const USAGE = `Usage: flagwise <command>
   keys:create --app <app_id> --scope <scopes> [--test]
                                    Issue an API key for the app; scopes are comma-separated
                                    (flagging, actions, admin). Live mode unless --test.
+  keys:revoke --app <app_id> --id <key_id> [--test]
+                                   Revoke an API key at once; requests with it answer 401.
   apps:delete --app <app_id>       Delete an app: its API keys stop working (410) and it can be
                                    restored for 30 days.
   apps:restore --app <app_id>      Restore a deleted app within its 30 days.
@@ -106,6 +109,15 @@ These keys are shown only once. Store them now.`)
 ${created.key}
 
 This key is shown only once. Store it now.`)
+      return 0
+    }
+    case 'keys:revoke': {
+      if (!values.app || !values.id) {
+        console.error('keys:revoke needs --app <app_id> and --id <key_id>')
+        return 2
+      }
+      await revokeKey(await serverConfigFromEnv(process.env), { appId: values.app, keyId: values.id, livemode: !values.test })
+      console.log(`Revoked API key ${values.id}.`)
       return 0
     }
     case 'apps:delete':

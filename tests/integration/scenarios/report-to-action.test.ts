@@ -3,8 +3,8 @@
 // another, which replaces it. Skipped without TEST_DATABASE_URL.
 import { testDatabaseUrl } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { startInstall, type Install } from '../src/install.ts'
-import { EVENTS, PATHS, WEBHOOKS } from '../src/paths.ts'
+import { eventually, startInstall, type Install } from '../src/install.ts'
+import { PATHS, WEBHOOKS } from '../src/paths.ts'
 import { signedWith } from '../src/signature.ts'
 import { caseWhen, claim, fileReport, setActionKeys, triagedCase, webhooksOf } from '../src/steps.ts'
 
@@ -51,10 +51,13 @@ describe.skipIf(!testDatabaseUrl)('from report to action', () => {
     expect((await i.call(i.flaggingKey, PATHS.confirmAction(requestId), { method: 'POST' })).status).toBe(200)
     await caseWhen(i, c.id, (x) => x.state === 'actioned', 'actioned')
 
-    const types = (await i.facts()).filter((f) => f.key === c.id || f.data?.caseId === c.id).map((f) => f.type)
-    for (const fact of [EVENTS.caseOpened, EVENTS.caseClassified, EVENTS.caseTriaged, EVENTS.caseClaimed, EVENTS.caseDecided, EVENTS.actionRequested, EVENTS.actionConfirmed]) {
-      expect(types).toContain(fact)
-    }
+    // The case's audit trail shows every step, as an admin reads it.
+    const trail = await eventually(async () => {
+      const page = (await i.call(i.jane.key, PATHS.audit(c.id))).body
+      return page?.data?.some((e: { action: string }) => e.action === 'decision.actions_confirmed') ? (page.data as { action: string }[]) : undefined
+    }, 'the whole story on the audit trail')
+    const steps = trail.map((e) => e.action)
+    for (const step of ['case.opened', 'case.classified', 'case.triaged', 'case.claimed', 'case.decided', 'action.requested', 'action.confirmed']) expect(steps).toContain(step)
   })
 
   it('answers a failed action with another one that replaces it', async () => {
@@ -87,7 +90,8 @@ describe.skipIf(!testDatabaseUrl)('from report to action', () => {
     // The replaced request's failure no longer holds the case back once the new one is confirmed.
     expect((await i.call(i.flaggingKey, PATHS.confirmAction(ban.data.action_request_id), { method: 'POST' })).status).toBe(200)
     await caseWhen(i, c.id, (x) => x.state === 'actioned', 'actioned')
-    expect((await i.facts()).some((f) => f.type === EVENTS.actionsRetried)).toBe(true)
+    const trail = (await i.call(i.jane.key, PATHS.audit(c.id))).body.data as { action: string; facts: Record<string, unknown> }[]
+    expect(trail.find((e) => e.action === 'case.actions_retried')).toMatchObject({ facts: { action_keys: ['ban'] } })
   })
 
   it('decides only on the reports shown, once per Idempotency-Key', async () => {

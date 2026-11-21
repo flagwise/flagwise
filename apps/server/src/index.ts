@@ -14,6 +14,7 @@ export {
   migrateFromEnv,
   removeWebhookEndpoint,
   restoreApp,
+  revokeKey,
   rewrapSecrets,
   rollWebhookSecret,
   type Bootstrapped,

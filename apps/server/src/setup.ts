@@ -20,7 +20,7 @@ import {
 import type { AppRef } from '@flagwise/kernel'
 import { busPolicyEvents, pgPolicy, PRESETS, type PresetName } from '@flagwise/policy'
 import { busAppEvents, createApp as createRegisteredApp, deleteApp as deleteRegisteredApp, pgAppStore, restoreApp as restoreRegisteredApp, type App, type AppDeps } from '@flagwise/apps'
-import { busKeyEvents, issueApiKey, pgKeyStore } from '@flagwise/auth'
+import { busKeyEvents, issueApiKey, pgKeyStore, revokeApiKey } from '@flagwise/auth'
 import { envReader, type Env } from './config/env.ts'
 import type { ServerConfig } from './config/server.ts'
 import { ALL_MIGRATIONS } from './migrations.ts'
@@ -193,6 +193,19 @@ async function createKeyAsOperator(
   } finally {
     await server.stop()
   }
+}
+
+/** `flagwise keys:revoke`: revokes an app's API key at once; 'not_found' for a key the app does not have. Revoking an ended key changes nothing. */
+export function revokeKey(config: ServerConfig, input: { readonly appId: string; readonly keyId: string; readonly livemode: boolean }, clock: Clock = systemClock): Promise<void> {
+  return asOperator(async () => {
+    const server = createServer({ ...config, mode: 'api' }, { clock })
+    try {
+      await server.prepare()
+      await withApps(server.db, { appIds: [input.appId], livemode: input.livemode }, (tx) => revokeApiKey(keyDeps(server, tx, clock), { appId: input.appId, keyId: input.keyId }))
+    } finally {
+      await server.stop()
+    }
+  })
 }
 
 /**

@@ -4,7 +4,7 @@
 import { testDatabaseUrl } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { eventually, startInstall, type Install } from '../src/install.ts'
-import { EVENTS, PATHS } from '../src/paths.ts'
+import { PATHS } from '../src/paths.ts'
 import { caseWhen, claim, triagedCase } from '../src/steps.ts'
 
 const MINUTE = 60_000
@@ -13,8 +13,12 @@ const PAST_FIRST_RETRY = 6.5 * MINUTE
 
 describe.skipIf(!testDatabaseUrl)('the LLM failing and coming back', () => {
   let i: Install
+  /** Classify's answer for the case, once the LLM gave it. */
   const reclassified = async (caseId: string) =>
-    eventually(async () => ((await i.facts()).some((f) => f.type === EVENTS.caseReclassified && f.key === caseId) ? true : undefined), `${caseId} reclassified`)
+    eventually(async () => {
+      const res = await i.call(i.jane.key, PATHS.classification(caseId))
+      return res.body?.classified_by === 'llm' ? res.body : undefined
+    }, `${caseId} reclassified`)
 
   beforeAll(async () => {
     i = await startInstall()

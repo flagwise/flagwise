@@ -1,7 +1,7 @@
 // One Flagwise install for a scenario file: a fresh database, the server as a self-hoster runs it
 // (MODE all, one process), an LLM and a webhook receiver over HTTP, and members with admin keys.
-// Scenarios use only what a tenant or an operator has: the public API, webhooks, the setup
-// functions of the CLI, and the facts on the bus.
+// Scenarios use only what a tenant or an operator has: the public API, webhooks and the setup
+// functions of the CLI.
 
 import type { AppRef } from '@flagwise/kernel'
 import { newKeyringEntry } from '@flagwise/platform'
@@ -15,17 +15,11 @@ export interface Member {
   readonly key: string
 }
 
-export interface Fact {
-  readonly seq: number
-  readonly type: string
-  readonly key: string
-  readonly data: any
-  readonly schemaVersion: string | null
-}
-
 export interface InstallOptions {
   /** The categories the app starts with, as `flagwise bootstrap --preset` gives them. */
   readonly preset?: 'dating' | 'marketplace' | 'community'
+  /** Each app's token bucket; default one the scenarios' polling never empties. */
+  readonly rateLimit?: { readonly perSecond: number; readonly burst: number }
 }
 
 export interface Install {
@@ -44,10 +38,11 @@ export interface Install {
   /** Two moderators with admin keys. */
   readonly jane: Member
   readonly john: Member
-  /** Calls the public API under /v1 and returns the status and the JSON body. */
-  call(key: string, path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }): Promise<{ status: number; body: any; headers: Headers }>
-  /** The facts published so far, in order. */
-  facts(): Promise<readonly Fact[]>
+  /**
+   * Calls the public API under /v1 with `key` as the bearer key (none when null) and returns the
+   * status, the JSON body and the headers; `raw` sends a body as given instead of as JSON.
+   */
+  call(key: string | null, path: string, init?: { method?: string; body?: unknown; raw?: string; headers?: Record<string, string> }): Promise<{ status: number; body: any; headers: Headers }>
   /** Stops the server and drops the database. */
   stop(): Promise<void>
 }
@@ -67,9 +62,9 @@ export async function startInstall(options: InstallOptions = {}): Promise<Instal
       LLM_PROVIDER: 'openai-compatible',
       LLM_BASE_URL,
       LLM_MODEL: 'small',
-      // Scenarios poll the API while waiting; the rate limit has its own test (apps/server).
-      API_RATE_PER_SECOND: '1000',
-      API_RATE_BURST: '1000',
+      // Scenarios poll the API while waiting, so the bucket is large unless a scenario sets one.
+      API_RATE_PER_SECOND: String(options.rateLimit?.perSecond ?? 1000),
+      API_RATE_BURST: String(options.rateLimit?.burst ?? 1000),
     }
     await migrateFromEnv({ DATABASE_OWNER_URL: db.ownerUrl, DATABASE_APP_URL: `postgres://${db.roles.app}@x/x`, DATABASE_SYSTEM_URL: `postgres://${db.roles.system}@x/x` })
     const config = await serverConfigFromEnv(env, { fetch: net.fetch })
@@ -94,16 +89,14 @@ export async function startInstall(options: InstallOptions = {}): Promise<Instal
       jane: { id: jane.id, key: jane.key },
       john: { id: john.id, key: john.key },
       async call(key, path, init = {}) {
+        const body = init.raw ?? (init.body !== undefined ? JSON.stringify(init.body) : undefined)
         const res = await running.app.http.request(`/v1${path}`, {
-          method: init.method ?? 'GET',
-          headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', ...init.headers },
-          ...(init.body !== undefined && { body: JSON.stringify(init.body) }),
+          method: init.method ?? (body === undefined ? 'GET' : 'POST'),
+          headers: { ...(key !== null && { authorization: `Bearer ${key}` }), 'content-type': 'application/json', ...init.headers },
+          ...(body !== undefined && { body }),
         })
         const text = await res.text()
         return { status: res.status, body: text ? JSON.parse(text) : null, headers: res.headers }
-      },
-      async facts() {
-        return (await running.bus.log()).map(({ seq, event }) => ({ seq, type: event.type, key: event.key, data: event.data, schemaVersion: event.schemaVersion ?? null }))
       },
       async stop() {
         try {

@@ -4,7 +4,7 @@
 import { testDatabaseUrl } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { eventually, startInstall, type Install } from '../src/install.ts'
-import { EVENTS, PATHS, WEBHOOKS } from '../src/paths.ts'
+import { PATHS, WEBHOOKS } from '../src/paths.ts'
 import { triagedCase, webhooksOf } from '../src/steps.ts'
 
 describe.skipIf(!testDatabaseUrl)('erasure', () => {
@@ -37,9 +37,9 @@ describe.skipIf(!testDatabaseUrl)('erasure', () => {
     const answers = Object.fromEntries(done.groups.map((g: { group: string; status: string }) => [g.group, g.status]))
     expect(answers).toMatchObject({ 'intake.erasure': 'erased', 'classify.erasure': 'erased', 'triage.erasure': 'erased', 'cases.erasure': 'erased', 'audit.erasure': 'erased', 'policy.erasure': 'nothing_held' })
     expect(done.groups.every((g: { status: string }) => ['erased', 'nothing_held'].includes(g.status))).toBe(true)
-    const requested = (await i.facts()).filter((f) => f.type === EVENTS.erasureRequested)
-    expect(requested).toHaveLength(1)
-    expect((await i.facts()).filter((f) => f.type === EVENTS.erased && f.key === started.body.id)).toHaveLength(done.groups.length)
+    // It reached every service that holds data, each once.
+    expect(Object.keys(answers).sort()).toEqual(['apps.erasure', 'audit.erasure', 'auth.erasure', 'cases.erasure', 'classify.erasure', 'delivery.erasure', 'intake.erasure', 'notifications.erasure', 'policy.erasure', 'triage.erasure'])
+    expect(done.groups).toHaveLength(Object.keys(answers).length)
 
     expect((await i.call(i.jane.key, PATHS.evidence(c.reportId))).status).toBe(410)
     const kept = (await i.call(i.jane.key, PATHS.case(c.id))).body
@@ -50,7 +50,7 @@ describe.skipIf(!testDatabaseUrl)('erasure', () => {
   })
 
   // A service that is down, in a topology where it runs on its own, is pending until it answers
-  // (the privacy unit tests cover it with a group that fails); this guard runs one process, so it
-  // waits for item 11 (each service boots alone).
+  // (the privacy unit tests cover it with a group that fails); this suite runs one process, so it
+  // waits for choosing the services a process runs (phase 2).
   it.todo('reports a service that is down as pending, not as done')
 })
