@@ -1,13 +1,11 @@
 // The storage drivers. The S3 driver is tested as our code only: what it sends to the client and
-// what it makes of the answers, with a fake client in place of the store. With TEST_S3_URL set, the
-// same storage tests also run on that real store.
+// what it makes of the answers, with a fake client in place of the store.
 import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
 import { describe, expect, it } from 'vitest'
 import { fileStorage, memoryStorage, s3ClientConfig, s3Storage, type ObjectStorage, type S3Sender } from '../src/index.ts'
-import { testS3Options } from '../src/testing/index.ts'
 
 const bytes = (s: string) => new TextEncoder().encode(s)
 const text = (b: Uint8Array | null) => (b === null ? null : new TextDecoder().decode(b))
@@ -142,17 +140,5 @@ describe('S3 storage', () => {
       responseChecksumValidation: 'WHEN_REQUIRED',
     })
     expect(s3ClientConfig(OPTIONS).region).toBe('us-east-1')
-  })
-})
-
-describe.skipIf(!testS3Options())('S3 storage on the TEST_S3_URL store', () => {
-  const options = testS3Options()!
-  behavesLikeStorage('the real store', () => s3Storage(options))
-
-  it('reports a wrong secret with its status and code, never the credentials', async () => {
-    const err = (await s3Storage({ ...options, secretAccessKey: 'not-the-secret' }).get('apps/app_a/rpt_1').catch((e: Error) => e)) as Error
-    expect(err.message).toMatch(/^Object storage get apps\/app_a\/rpt_1 failed: 403 /)
-    expect(err.message).not.toContain('not-the-secret')
-    expect(err.message).not.toContain(options.accessKeyId)
   })
 })

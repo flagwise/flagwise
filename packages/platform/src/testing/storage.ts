@@ -12,7 +12,7 @@ import { fileStorage, s3Storage, type ObjectStorage, type S3StorageOptions } fro
 export const testS3Url: string | undefined = process.env.TEST_S3_URL || undefined
 
 /** The S3 store TEST_S3_URL names, or undefined when it is not set. */
-export function testS3Options(url = testS3Url): S3StorageOptions | undefined {
+function testS3Options(url = testS3Url): S3StorageOptions | undefined {
   if (!url) return undefined
   const u = new URL(url)
   const bucket = u.pathname.replace(/^\/+|\/+$/g, '')
