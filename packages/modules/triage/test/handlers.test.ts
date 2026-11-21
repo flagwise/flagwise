@@ -96,6 +96,18 @@ describe('triage on the bus', () => {
     expect(triaged()).toHaveLength(1)
   })
 
+  it("weighs each reporter once, however many reports they made, with their accounts' ages", async () => {
+    const days = (d: number) => new Date(Date.parse(T0) - d * 24 * H).toISOString()
+    const facts = (reporterExternalId: string, reporterAccountCreatedAt: string | null) => ({ reporterExternalId, reporterAccountCreatedAt, reportedAccountCreatedAt: days(2) })
+    await publish('case.opened.v1', { caseId: 'case_1', reportId: 'rpt_1', subjectExternalId: 'u_john_doe', band: 'standard', facts: facts('u_jane_doe', days(400)), occurredAt: T0 })
+    await publish('case.report_attached.v1', { caseId: 'case_1', reportId: 'rpt_2', facts: facts('u_jane_doe', days(400)), occurredAt: T0 })
+    await publish('case.report_attached.v1', { caseId: 'case_1', reportId: 'rpt_3', facts: facts('u_jim_doe', new Date(Date.parse(T0) - H).toISOString()), occurredAt: T0 })
+    await publish('case.classified.v1', classification())
+    await bus.drain()
+    // P1 2000, a new reported account 100, reporters 1 + 0.5 (Jim's account is an hour old) times 20.
+    expect(triaged()[0]?.data).toMatchObject({ severity: 'P1', priority: 2130, applied: ['reported_new_account', 'reporter_new_account'], flags: [] })
+  })
+
   it("publishes case.untriaged when the LLM failed and the app's policy does not fall back to rules", async () => {
     await policy.keep(appRef, 1, { ...DEFAULT_POLICY, llm: { rulesOnly: false, fallbackToRules: false } })
     await open()

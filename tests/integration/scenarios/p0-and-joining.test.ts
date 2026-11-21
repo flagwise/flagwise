@@ -29,10 +29,13 @@ describe.skipIf(!testDatabaseUrl)('P0 pre-rules and reports joining a case', () 
   it('attaches a report to the open case of its account, and opens a new one for another band', async () => {
     const first = await triagedCase(i, { reported: 'u_jim_doe' })
     expect(first.triage.severity).not.toBe('P0')
+    const calls = i.net.llmCalls()
 
     const second = await fileReport(i, { reported: 'u_jim_doe', reporter: 'u_john_doe' })
     expect(await caseOf(i, second)).toBe(first.id)
     await caseWhen(i, first.id, (c) => c.report_count === 2, 'two reports')
+    // The case is classified once, however many reports join it.
+    expect(i.net.llmCalls()).toBe(calls)
 
     const urgent = await fileReport(i, { reported: 'u_jim_doe', category: 'harassment', text: 'i know where you live' })
     const urgentCase = await caseOf(i, urgent)
