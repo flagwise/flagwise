@@ -1,8 +1,8 @@
 {
-  "name": "@flagwise/behaviour",
+  "name": "@flagwise/integration-tests",
   "version": "0.0.0",
   "private": true,
-  "description": "Behaviour scenarios: the product installed fresh and used only from outside, as a tenant and an operator use it (black-box)",
+  "description": "Integration tests of the whole server: every service wired together, installed fresh and driven through its API, webhooks and setup commands",
   "license": "Apache-2.0",
   "type": "module",
   "dependencies": {
@@ -11,7 +11,6 @@
     "@flagwise/server": "workspace:*"
   },
   "scripts": {
-    "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   }
 }

@@ -1,4 +1,4 @@
-// Boundary rules: no service imports another; shared packages never import services or apps; the behaviour scenarios see the product only from outside.
+// Boundary rules: no service imports another; shared packages never import services or apps; the integration tests see the server only from outside.
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
   forbidden: [
@@ -24,10 +24,10 @@ module.exports = {
       to: { path: '^apps/' },
     },
     {
-      name: 'behaviour-sees-only-the-outside',
-      comment: 'The behaviour scenarios see Flagwise only from outside: the server, kernel and platform, never a service. They live in scenarios/, not test/, so this rule covers them.',
+      name: 'integration-tests-see-only-the-outside',
+      comment: 'The integration tests see the server only from outside: the server, kernel and platform, never a service. They live in tests/, not test/, so this rule covers them.',
       severity: 'error',
-      from: { path: '^behaviour/' },
+      from: { path: '^tests/' },
       to: { path: '^(packages/modules|packages/plugin-api)/' },
     },
     {

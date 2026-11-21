@@ -2,7 +2,7 @@ packages:
   - apps/*
   - packages/*
   - packages/modules/*
-  - behaviour
+  - tests/*
 ignoredBuiltDependencies:
   # Ships a prebuilt native binary as an optional dependency; its postinstall is not needed.
   - "@swc/core"

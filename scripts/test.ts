@@ -1,11 +1,11 @@
-// Runs the tests with a Postgres: TEST_DATABASE_URL when it is set (CI, a shared dev database),
-// else a throwaway one started here from the embedded-postgres binaries and removed afterwards, so
-// `pnpm test` and `pnpm verify` need no settings. The arguments go to pnpm before `test`: none runs
-// every package (-r), `--filter <pkg>` some; anything after `--` goes to vitest.
+// Runs the test suites (vitest.config.ts: unit, database, integration) from the root. The database
+// and integration suites get a Postgres: TEST_DATABASE_URL when it is set (CI, a shared dev
+// database), else a throwaway one started here from the embedded-postgres binaries and removed
+// afterwards, so `pnpm test` and `pnpm verify` need no settings. Arguments go to vitest.
 //
-//   node scripts/test.ts                         every package
-//   node scripts/test.ts --filter @flagwise/x    one package
-//   node scripts/test.ts -r -- --reporter=dot    every package, with vitest options
+//   node scripts/test.ts                                    every suite
+//   node scripts/test.ts --project unit                     one suite (no Postgres started)
+//   node scripts/test.ts --project database moderation      one suite, files whose path has `moderation`
 
 import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -15,9 +15,10 @@ import { join } from 'node:path'
 import EmbeddedPostgres from 'embedded-postgres'
 
 const args = process.argv.slice(2)
-const split = args.indexOf('--')
-const pnpmArgs = split === -1 ? args : args.slice(0, split)
-const vitestArgs = split === -1 ? [] : args.slice(split + 1)
+
+/** The suites the arguments name (`--project x` or `--project=x`); none means every suite. */
+const projects = args.flatMap((a, i) => (a === '--project' ? [args[i + 1] ?? ''] : a.startsWith('--project=') ? [a.slice('--project='.length)] : []))
+const needsPostgres = projects.length === 0 || projects.some((p) => p !== 'unit')
 
 /** A port nothing listens on right now. */
 const freePort = () =>
@@ -32,7 +33,7 @@ const freePort = () =>
 
 let stopPostgres = async () => {}
 const env = { ...process.env }
-if (!env['TEST_DATABASE_URL']) {
+if (needsPostgres && !env['TEST_DATABASE_URL']) {
   const dir = mkdtempSync(join(tmpdir(), 'flagwise-test-pg-'))
   const port = await freePort()
   const password = 'flagwise-test'
@@ -59,10 +60,8 @@ if (!env['TEST_DATABASE_URL']) {
 
 // Ctrl-C reaches the tests too; wait for them to stop, then remove the database.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => {})
-const pnpm = process.env['npm_execpath'] ? [process.execPath, process.env['npm_execpath']] : ['pnpm']
-// Options after the script's name go to the script (vitest); pnpm would pass a `--` on literally.
-const testArgs = [...(pnpmArgs.length > 0 ? pnpmArgs : ['-r']), 'run', 'test', ...vitestArgs]
-const child = spawn(pnpm[0]!, [...pnpm.slice(1), ...testArgs], { stdio: 'inherit', env })
+const vitest = join(import.meta.dirname, '../node_modules/vitest/vitest.mjs')
+const child = spawn(process.execPath, [vitest, 'run', ...args], { stdio: 'inherit', env })
 const code = await new Promise<number>((resolve) => child.on('exit', (c, signal) => resolve(c ?? (signal ? 1 : 0))))
 await stopPostgres()
 process.exitCode = code

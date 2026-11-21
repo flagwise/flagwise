@@ -21,7 +21,6 @@
     "openai": "7.41.0"
   },
   "scripts": {
-    "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   }
 }

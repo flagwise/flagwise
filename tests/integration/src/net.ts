@@ -2,8 +2,8 @@
 // receiver. The server reaches both through the fetch it is given, so the scenarios fake nothing
 // inside Flagwise.
 
-export const LLM_BASE_URL = 'http://llm.behaviour.test/v1'
-export const WEBHOOK_URL = 'https://hooks.behaviour.test/flagwise'
+export const LLM_BASE_URL = 'http://llm.integration.test/v1'
+export const WEBHOOK_URL = 'https://hooks.integration.test/flagwise'
 
 /** The LLM's answer to one classify call, or 'down' for a provider that refuses every call. */
 export type LlmAnswer =

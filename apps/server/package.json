@@ -37,7 +37,6 @@
     "start": "node --env-file-if-exists=../../.env src/main.ts",
     "dev": "node --env-file-if-exists=../../.env --watch-path=src --watch-path=../../packages src/main.ts",
     "cli": "node --env-file-if-exists=../../.env src/cli.ts",
-    "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   }
 }
