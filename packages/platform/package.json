@@ -12,11 +12,11 @@
     "./testing": "./src/testing/index.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1175.0",
     "@flagwise/kernel": "workspace:*",
-    "aws4fetch": "^1.0.20",
     "drizzle-orm": "^0.45.4",
-    "pg": "^8.23.1",
-    "hono": "^4.13.16"
+    "hono": "^4.13.16",
+    "pg": "^8.23.1"
   },
   "scripts": {
     "test": "vitest run --passWithNoTests",

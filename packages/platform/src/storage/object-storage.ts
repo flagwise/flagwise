@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { AwsClient } from 'aws4fetch'
+import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client, type S3ClientConfig } from '@aws-sdk/client-s3'
 
 export interface ObjectStorage {
   /** Writes the object, replacing any object with the same key. */
@@ -98,56 +98,76 @@ export interface S3Storage extends ObjectStorage {
   ensureBucket(): Promise<void>
 }
 
-/**
- * Talks to an S3-compatible store with path-style URLs (`{endpoint}/{bucket}/{key}`) and SigV4
- * signed requests. A response other than the expected ones throws an Error with the status and
- * the store's error code, never the credentials.
- */
-export function s3Storage(opts: S3StorageOptions): S3Storage {
-  if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(opts.bucket)) throw new RangeError(`Not a valid bucket name: ${JSON.stringify(opts.bucket)}`)
-  const client = new AwsClient({
-    accessKeyId: opts.accessKeyId,
-    secretAccessKey: opts.secretAccessKey,
-    service: 's3',
-    region: opts.region ?? 'us-east-1',
-  })
-  const base = `${opts.endpoint.replace(/\/+$/, '')}/${opts.bucket}`
-  const urlOf = (key: string) => `${base}/${key.split('/').map(encodeURIComponent).join('/')}`
+/** What the driver needs of an S3 client: sending a command. Tests pass their own. */
+export interface S3Sender {
+  send(command: object): Promise<unknown>
+}
 
-  const fail = async (what: string, res: Response): Promise<never> => {
-    const code = /<Code>([^<]*)<\/Code>/.exec(await res.text())?.[1]
-    throw new Error(`Object storage ${what} failed: ${res.status}${code ? ` ${code}` : ''}`)
+/**
+ * The client config for an S3-compatible store: path-style URLs (`{endpoint}/{bucket}/{key}`),
+ * which MinIO and most self-hosted stores need, and checksums only where an operation requires
+ * them, since some S3-compatible stores refuse the ones the SDK adds by default.
+ */
+export function s3ClientConfig(opts: S3StorageOptions): S3ClientConfig {
+  return {
+    endpoint: opts.endpoint,
+    region: opts.region ?? 'us-east-1',
+    credentials: { accessKeyId: opts.accessKeyId, secretAccessKey: opts.secretAccessKey },
+    forcePathStyle: true,
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
+  }
+}
+
+/** An S3 error's code and HTTP status, as the SDK reports them. */
+function s3Error(err: unknown): { name: string; status: number | undefined } {
+  const e = err as { name?: unknown; $metadata?: { httpStatusCode?: number } } | null
+  return { name: typeof e?.name === 'string' ? e.name : 'Error', status: e?.$metadata?.httpStatusCode }
+}
+
+/**
+ * Talks to an S3-compatible store through the official client (`client` replaces it in tests). A
+ * failure throws an Error with the operation, the status and the store's error code, never the
+ * credentials.
+ */
+export function s3Storage(opts: S3StorageOptions, client: S3Sender = new S3Client(s3ClientConfig(opts))): S3Storage {
+  if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(opts.bucket)) throw new RangeError(`Not a valid bucket name: ${JSON.stringify(opts.bucket)}`)
+  const Bucket = opts.bucket
+  const fail = (what: string, err: unknown): never => {
+    const { name, status } = s3Error(err)
+    throw new Error(`Object storage ${what} failed: ${status ?? 'no response'} ${name}`)
   }
 
   return {
     async put(key, body, contentType) {
       checkKey(key)
-      const res = await client.fetch(urlOf(key), { method: 'PUT', body, headers: { 'content-type': contentType } })
-      if (!res.ok) await fail(`put ${key}`, res)
-      await res.body?.cancel()
+      await client.send(new PutObjectCommand({ Bucket, Key: key, Body: body, ContentType: contentType })).catch((err) => fail(`put ${key}`, err))
     },
     async get(key) {
       checkKey(key)
-      const res = await client.fetch(urlOf(key))
-      if (res.status === 404) {
-        await res.body?.cancel()
-        return null
+      try {
+        const res = (await client.send(new GetObjectCommand({ Bucket, Key: key }))) as { Body?: { transformToByteArray(): Promise<Uint8Array> } }
+        return res.Body ? await res.Body.transformToByteArray() : new Uint8Array()
+      } catch (err) {
+        const { name, status } = s3Error(err)
+        if (name === 'NoSuchKey' || status === 404) return null
+        return fail(`get ${key}`, err)
       }
-      if (!res.ok) await fail(`get ${key}`, res)
-      return new Uint8Array(await res.arrayBuffer())
     },
     async delete(key) {
       checkKey(key)
-      const res = await client.fetch(urlOf(key), { method: 'DELETE' })
-      if (!res.ok && res.status !== 404) await fail(`delete ${key}`, res)
-      await res.body?.cancel()
+      try {
+        await client.send(new DeleteObjectCommand({ Bucket, Key: key }))
+      } catch (err) {
+        if (s3Error(err).status !== 404) fail(`delete ${key}`, err)
+      }
     },
     async ensureBucket() {
-      const res = await client.fetch(base, { method: 'PUT' })
-      if (res.ok) return void (await res.body?.cancel())
-      const text = await res.text()
-      if (res.status === 409 && text.includes('BucketAlreadyOwnedByYou')) return
-      throw new Error(`Object storage create bucket ${opts.bucket} failed: ${res.status}`)
+      try {
+        await client.send(new CreateBucketCommand({ Bucket }))
+      } catch (err) {
+        if (s3Error(err).name !== 'BucketAlreadyOwnedByYou') fail(`create bucket ${Bucket}`, err)
+      }
     },
   }
 }
