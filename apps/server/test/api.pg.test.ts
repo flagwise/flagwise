@@ -1,18 +1,19 @@
-// The flagging API end to end: API keys from auth, flagging on Postgres with evidence in the test
-// storage (local files, or the TEST_S3_URL store), and the cases module putting reports in cases
-// through the bus. Runs against a real Postgres (TEST_DATABASE_URL); skipped without it.
-import { manualClock, type ManualClock } from '@flagwise/kernel'
+// The API edge on Postgres: API keys checked by auth (401, 410 for a deleted app), scopes, rate
+// limits, Idempotency-Keys, problem+json and hidden 500s, in front of the services booted from their
+// own definitions, with evidence in the test storage (local files, or the TEST_S3_URL store).
+// Runs against a real Postgres (TEST_DATABASE_URL); skipped without it.
+import { auth, issueApiKey, pgAppCopies, pgKeyStore, revokeApiKey, type KeyDeps } from '@flagwise/auth'
+import { classify } from '@flagwise/classify'
 import { eventContract } from '@flagwise/contracts'
-import { createDatabase, createPgBus, createPgScheduler, pgTimers, memoryRateLimiter, migrate, pgUnitOfWork, withApps, withSystem, type Database, type ObjectStorage, type PgBus } from '@flagwise/platform'
+import { delivery } from '@flagwise/delivery'
+import { flagging, flaggingRoutes, pgFlaggingRunner } from '@flagwise/flagging'
+import { manualClock, newId, type ManualClock } from '@flagwise/kernel'
+import { moderation } from '@flagwise/moderation'
+import { createDatabase, createPgBus, createPgScheduler, memoryRateLimiter, migrate, withApps, type Database, type ObjectStorage, type PgBus, type ServiceRuntime } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, testStorage, type TestDatabase } from '@flagwise/platform/testing'
-import { moderationMigrations, pgCaseRepository, pgModerationPolicyCopy } from '@flagwise/moderation'
-import { deliveryMigrations, pgDeliveryDeps } from '@flagwise/delivery'
-import { flaggingMigrations, flaggingRoutes, pgFlaggingRunner, subscribeFlagging, type FlaggingDeps } from '@flagwise/flagging'
-import { pgTriageDeps, triageMigrations } from '@flagwise/triage'
-import { authMigrations, issueApiKey, pgAppCopies, pgKeyDirectory, pgKeyStore, resolveApiKey, revokeApiKey, type KeyDeps } from '@flagwise/auth'
+import { triage } from '@flagwise/triage'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createApp, type ApiDeps } from '../src/index.ts'
-import { composeServices } from './support/services.ts'
 
 const T0 = '2026-11-06T09:00:00.000Z'
 
@@ -25,14 +26,13 @@ const report = (over: Record<string, unknown> = {}) =>
     ...over,
   })
 
-describe.skipIf(!testDatabaseUrl)('flagging API on Postgres', () => {
+describe.skipIf(!testDatabaseUrl)('the API edge on Postgres', () => {
   let t: TestDatabase
   let storage: ObjectStorage
   let db: Database
   let bus: PgBus
   let clock: ManualClock
   let deps: ApiDeps
-  let flagging: FlaggingDeps
   let http: ReturnType<typeof createApp>['http']
   const keys = {} as Record<'live' | 'test' | 'actionsOnly' | 'revoked' | 'deletedApp' | 'otherApp', string>
   let n = 0
@@ -49,7 +49,7 @@ describe.skipIf(!testDatabaseUrl)('flagging API on Postgres', () => {
   beforeAll(async () => {
     t = await createTestDatabase()
     storage = testStorage()
-    await migrate(t.ownerUrl, [authMigrations, flaggingMigrations, moderationMigrations, deliveryMigrations, triageMigrations], t.roles)
+    await migrate(t.ownerUrl, [auth, flagging, classify, triage, moderation, delivery].map((s) => s.migrations!), t.roles)
     db = createDatabase({ appUrl: t.appUrl, systemUrl: t.systemUrl })
     bus = createPgBus(db, { retryDelayMs: () => 0, contract: eventContract })
     clock = manualClock(T0)
@@ -72,25 +72,17 @@ describe.skipIf(!testDatabaseUrl)('flagging API on Postgres', () => {
     })
     await apps.setDeletedAt('app_gone', clock.now())
 
-    flagging = { run: pgFlaggingRunner(db, bus), storage, clock, newReportId: () => `rpt_${++n}` }
-    composeServices({
-      bus,
-      scheduler: createPgScheduler(db, { clock }),
-      clock,
-      newCaseId: () => `case_${++n}`,
-      newDecisionId: () => `dec_${++n}`,
-      newActionRequestId: () => `acr_${++n}`,
-      newEventId: () => `evt_${++n}`,
-      cases: { uow: pgUnitOfWork(db, bus, (tx) => ({ cases: pgCaseRepository(tx), timers: pgTimers(tx, 'moderation') })), policy: pgModerationPolicyCopy(db) },
-      delivery: pgDeliveryDeps(db, bus, { clock, newActionRequestId: () => `acr_${++n}`, newEventId: () => `evt_${++n}` }),
-      triage: pgTriageDeps(db, bus),
-      classify: async () => ({ categoryId: 'scams_fraud.romance_scam', signals: [], injectionSuspected: false, preRuleP0: false, classifiedBy: 'llm' }),
-    })
-    subscribeFlagging(bus, flagging)
+    // The services a report passes through, each booted from its own definition, as the server does.
+    const runtime: ServiceRuntime = { db, bus, scheduler: createPgScheduler(db, { clock }), clock, onError: (err) => { throw err } }
+    const keyCheck = auth.boot(runtime).keys
+    const reports = flagging.boot(runtime, { storage })
+    classify.boot(runtime, { storage, llm: undefined, redact: true })
+    triage.boot(runtime)
+    moderation.boot(runtime)
+    delivery.boot(runtime, { secrets: null })
     // A consumer group is stored on the first drain and only gets events published after that.
     await bus.drain()
-    const resolver = { resolve: (key: string, now: Date) => withSystem(db, (tx) => resolveApiKey(pgKeyDirectory(tx), key, now)) }
-    deps = { keys: resolver, limiter: memoryRateLimiter(), rateLimit: { ratePerSecond: 50, burst: 100 }, clock, routes: [flaggingRoutes(flagging)] }
+    deps = { keys: keyCheck, limiter: memoryRateLimiter(), rateLimit: { ratePerSecond: 50, burst: 100 }, clock, routes: [reports.routes!] }
     http = createApp({ api: deps }).http
   })
   afterAll(async () => {
@@ -223,7 +215,7 @@ describe.skipIf(!testDatabaseUrl)('flagging API on Postgres', () => {
   it('hides internal errors behind a 500 and reports them to onError', async () => {
     const seen: string[] = []
     const broken: ObjectStorage = { ...storage, put: async () => Promise.reject(new Error('disk on fire at /var/secret')) }
-    const app = createApp({ api: { ...deps, routes: [flaggingRoutes({ ...flagging, storage: broken })], onError: (err, id) => void seen.push(`${id}: ${(err as Error).message}`) } }).http
+    const app = createApp({ api: { ...deps, routes: [flaggingRoutes({ run: pgFlaggingRunner(db, bus), storage: broken, clock, newReportId: () => newId('rpt', { clock }) })], onError: (err, id) => void seen.push(`${id}: ${(err as Error).message}`) } }).http
     const res = await app.request('/v1/flagging/reports', { method: 'POST', headers: { authorization: `Bearer ${keys.live}`, 'x-request-id': 'req-fire' }, body: report() })
     expect(res.status).toBe(500)
     expect(await res.json() as any).toEqual({ type: 'https://flagwise.dev/errors/internal_error', title: 'Internal error', status: 500, request_id: 'req-fire' })

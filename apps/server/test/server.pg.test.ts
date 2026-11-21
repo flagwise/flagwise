@@ -1,15 +1,13 @@
 // The install paths on a real Postgres, with separate role URLs (db:init, db:migrate, bootstrap) and
 // with one DATABASE_URL (bootstrap alone), then a report through the API and the event handlers with
 // the server's own wiring. Skipped without TEST_DATABASE_URL.
-import { pgCaseRepository } from '@flagwise/moderation'
-import { scopeOfApp, withApps } from '@flagwise/platform'
 import { createTestDatabase, testDatabaseUrl, testStorageEnv, type TestDatabase } from '@flagwise/platform/testing'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { sql } from 'drizzle-orm'
 import { bootstrap, createKey, createServer, deleteApp, initDatabaseFromEnv, migrateFromEnv, restoreApp, serverConfigFromEnv, type Bootstrapped, type Server } from '../src/index.ts'
 
-/** Sends a report from the key, runs the handlers, and returns the case it landed in. */
-async function reportToCase(server: Server, installed: Bootstrapped) {
+/** Sends a report from the app's live key, runs the handlers, and returns the case it landed in, as an admin key reads it. */
+async function reportToCase(server: Server, installed: Bootstrapped, adminKey: string) {
   const post = await server.app.http.request('/v1/flagging/reports', {
     method: 'POST',
     headers: { authorization: `Bearer ${installed.liveKey}`, 'content-type': 'application/json' },
@@ -28,14 +26,16 @@ async function reportToCase(server: Server, installed: Bootstrapped) {
   const get = await server.app.http.request(`/v1/flagging/reports/${id}`, { headers: { authorization: `Bearer ${installed.liveKey}` } })
   const report = (await get.json()) as { status: string; case_id: string }
   expect(report.status).toBe('assigned')
-  const appRef = { appId: installed.app.id, livemode: true }
-  return withApps(server.db, scopeOfApp(appRef), (tx) => pgCaseRepository(tx).findById(appRef, report.case_id))
+  const res = await server.app.http.request(`/v1/moderation/cases/${report.case_id}`, { headers: { authorization: `Bearer ${adminKey}` } })
+  expect(res.status).toBe(200)
+  return (await res.json()) as { id: string; state: string; report_ids: string[]; triage: { severity: string } | null }
 }
 
 describe.skipIf(!testDatabaseUrl)('the install path on Postgres', () => {
   let t: TestDatabase
   let env: Record<string, string>
   let installed: Bootstrapped
+  let adminKey: string
   let server: Server
 
   beforeAll(async () => {
@@ -53,6 +53,7 @@ describe.skipIf(!testDatabaseUrl)('the install path on Postgres', () => {
     expect(await migrateFromEnv(env)).toEqual([])
     const config = await serverConfigFromEnv(env)
     installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' })
+    adminKey = (await createKey(config, { appId: installed.app.id, livemode: true, scopes: ['admin'] })).key
     server = createServer(config)
     expect((await server.app.http.request('/readyz')).status).toBe(503)
     await server.prepare()
@@ -73,7 +74,7 @@ describe.skipIf(!testDatabaseUrl)('the install path on Postgres', () => {
     expect(installed.testKey).toMatch(/^fw_test_/)
     expect((await server.app.http.request('/readyz')).status).toBe(200)
 
-    const opened = await reportToCase(server, installed)
+    const opened = await reportToCase(server, installed, adminKey)
     // The reporter's own category is outside the taxonomy, so triage treats it as other.
     expect(opened).toMatchObject({ state: 'open', triage: { severity: 'P2' } })
     expect(await server.bus.deadLetters()).toEqual([])
@@ -166,11 +167,12 @@ describe.skipIf(!testDatabaseUrl)('the install path with one DATABASE_URL', () =
     expect(config.database.setup).toBe('single')
 
     const installed = await bootstrap(config, { appName: 'Jane Doe Dating iOS' })
+    const adminKey = (await createKey(config, { appId: installed.app.id, livemode: true, scopes: ['admin'] })).key
     server = createServer(config)
     // prepare, not start: a polling loop would race the drain below.
     await server.prepare()
     expect((await server.app.http.request('/readyz')).status).toBe(200)
-    expect(await reportToCase(server, installed)).toMatchObject({ state: 'open', triage: { severity: 'P2' } })
+    expect(await reportToCase(server, installed, adminKey)).toMatchObject({ state: 'open', triage: { severity: 'P2' } })
     expect(await server.bus.deadLetters()).toEqual([])
 
     expect((await server.db.app.execute(sql`SELECT current_user AS u`)).rows).toEqual([{ u: 'fw_app' }])
@@ -220,9 +222,9 @@ describe.skipIf(!testDatabaseUrl)('the case API', () => {
   })
 
   it('shows a case in the queue, its classification and evidence apart, and works it to a decision', async () => {
-    const opened = await reportToCase(server, installed)
-    const caseId = opened!.id
-    const reportId = opened!.reportIds[0]!
+    const opened = await reportToCase(server, installed, admin.key)
+    const caseId = opened.id
+    const reportId = opened.report_ids[0]!
 
     const queue = await json(await call(admin.key, '/moderation/cases'))
     expect(queue).toMatchObject({ object: 'list', next_cursor: null })

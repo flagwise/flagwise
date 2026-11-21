@@ -77,7 +77,7 @@ describe.skipIf(!testDatabaseUrl)('LLM retries on the server', () => {
       DATABASE_APP_URL: t.appUrl,
       DATABASE_SYSTEM_URL: t.systemUrl,
       ...testStorageEnv(),
-      // These tests poll the API; the rate limit is tested in flagging-api.
+      // These tests poll the API; the rate limit is tested in api.pg.test.ts.
       API_RATE_PER_SECOND: '1000',
       API_RATE_BURST: '1000',
     })

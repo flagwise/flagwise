@@ -64,7 +64,7 @@ describe.skipIf(!testDatabaseUrl)('the case loop on the server', () => {
       DATABASE_APP_URL: t.appUrl,
       DATABASE_SYSTEM_URL: t.systemUrl,
       STORAGE_DIR: mkdtempSync(join(tmpdir(), 'evidence-')),
-      // These tests poll the API; the rate limit is tested in flagging-api.
+      // These tests poll the API; the rate limit is tested in api.pg.test.ts.
       API_RATE_PER_SECOND: '1000',
       API_RATE_BURST: '1000',
     })
